@@ -65,5 +65,6 @@ HPE DL380 Gen9, 192 GB RAM, 2× 8-core CPU, 4× 1.65 TB + 4× 3.8 TB enterprise 
 
 ```bash
 cd backend && pytest
+cd frontend && npm ci && npm run build && npm test
 shellcheck -S warning scripts/*.sh
 ```
