@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 
 import { api, type GameDisk, type Machine, type MachineMode } from "../api";
+import { AgentState } from "../components/AgentState";
 import { ErrorBanner } from "../components/ErrorBanner";
 import { StatusBadge } from "../components/StatusBadge";
 import { useAsyncAction } from "../useAsyncAction";
@@ -135,6 +136,7 @@ export function MachinesPage({ disks, machines, reload }: Props) {
               <th>MAC</th>
               <th>Game disk</th>
               <th>Status</th>
+              <th>Agent</th>
               <th />
             </tr>
           </thead>
@@ -174,6 +176,9 @@ export function MachinesPage({ disks, machines, reload }: Props) {
                     </span>
                   )}
                   {m.last_error && <div className="error-text small">{m.last_error}</div>}
+                </td>
+                <td>
+                  <AgentState machine={m} />
                 </td>
                 <td className="actions">
                   {m.game_disk_id !== null && (

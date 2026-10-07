@@ -243,3 +243,12 @@ def test_list_machines_sorted(client):
     _machine(client)
     client.post("/api/v1/machines", json={"name": "pc00"})
     assert [m["name"] for m in client.get("/api/v1/machines").json()] == ["pc00", "pc01"]
+
+
+def test_timestamps_read_back_from_database_are_utc(client):
+    """SQLite drops the offset; the API must still send UTC ("Z") after a reload."""
+    m = _machine(client)
+    again = client.get(f"/api/v1/machines/{m['id']}").json()
+    for key in ("created_at", "updated_at"):
+        assert again[key].endswith("Z"), again[key]
+        assert again[key] == m[key]

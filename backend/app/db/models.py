@@ -8,6 +8,7 @@ import enum
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Enum,
     ForeignKey,
@@ -15,6 +16,7 @@ from sqlalchemy import (
     MetaData,
     String,
     Text,
+    TypeDecorator,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -30,6 +32,27 @@ NAMING_CONVENTION = {
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+class UTCDateTime(TypeDecorator):
+    """
+    Timezone-aware datetime that always comes back in UTC. SQLite drops the
+    offset, so without this a value read back from the database is naive and
+    the API would send it without "Z" (browsers then read it as local time).
+    """
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("naive datetime; use timezone-aware UTC values")
+        return value.astimezone(timezone.utc) if value is not None else None
+
+    def process_result_value(self, value: datetime | None, dialect) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
 
 
 def _str_enum(cls: type[enum.Enum]) -> Enum:
@@ -55,7 +78,7 @@ class GameDisk(Base):
     zvol_path: Mapped[str] = mapped_column(String(255), unique=True)
     size_gb: Mapped[int] = mapped_column(Integer)
     snapshot: Mapped[str | None] = mapped_column(String(64), default=None)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now)
 
     machines: Mapped[list["Machine"]] = relationship(back_populates="game_disk")
 
@@ -110,9 +133,15 @@ class Machine(Base):
     clone_snapshot: Mapped[str | None] = mapped_column(String(320), default=None)
     iscsi_target_iqn: Mapped[str | None] = mapped_column(String(223), default=None)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    # Reported by ggnet-agent in its heartbeat; never used for provisioning.
+    last_seen_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), default=None)
+    agent_version: Mapped[str | None] = mapped_column(String(32), default=None)
+    reported_iqn: Mapped[str | None] = mapped_column(String(223), default=None)
+    iscsi_connected: Mapped[bool | None] = mapped_column(Boolean, default=None)
+
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_now, onupdate=_now
+        UTCDateTime(), default=_now, onupdate=_now
     )
 
     @property

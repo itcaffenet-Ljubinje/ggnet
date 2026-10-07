@@ -33,6 +33,10 @@ export interface Machine {
   clone_snapshot: string | null;
   iscsi_target_iqn: string | null;
   outdated: boolean;
+  last_seen_at: string | null;
+  agent_version: string | null;
+  reported_iqn: string | null;
+  iscsi_connected: boolean | null;
   created_at: string;
   updated_at: string;
 }
