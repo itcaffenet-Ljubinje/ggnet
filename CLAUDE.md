@@ -1,7 +1,7 @@
 # ggNet — context for Claude Code
 
 ggNet is a diskless boot and game disk management system for gaming cafes, modeled after ggRock.
-It is installed **directly on a Proxmox VE host** (ProxMenux-style: install script + systemd service on its own port)
+It is installed **directly on a Proxmox VE 9+ host** (ProxMenux-style: install script + systemd service on its own port)
 and manages ZFS and the LIO iSCSI target on that host.
 
 ## Rules
@@ -41,7 +41,7 @@ Target clients: Windows 11, UEFI Secure Boot, TPM 2.0.
 
 | Path | Contents |
 |------|----------|
-| `backend/` | FastAPI + SQLAlchemy, Python 3.11+ (`app.main:app`) |
+| `backend/` | FastAPI + SQLAlchemy, Python 3.13+ (`app.main:app`) |
 | `frontend/` | React + TypeScript (Vite), dark mode UI, built to `frontend/dist/` and served by the backend |
 | `agent/` | `ggnet-agent` Windows service |
 | `scripts/` | `install_ggnet.sh`, `uninstall_ggnet.sh` |
