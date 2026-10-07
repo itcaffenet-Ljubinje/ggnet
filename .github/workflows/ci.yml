@@ -8,6 +8,11 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.13 = Proxmox VE 9 (Debian 13); newer Pythons for later PVE releases.
+        python: ["3.13", "3.14"]
     defaults:
       run:
         working-directory: backend
@@ -15,7 +20,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.11"   # Proxmox VE 8 (Debian 12)
+          python-version: ${{ matrix.python }}
           cache: pip
           cache-dependency-path: backend/requirements*.txt
       - run: pip install -r requirements-dev.txt

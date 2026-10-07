@@ -8,7 +8,7 @@ All code, comments, docstrings, log and error messages, commit messages, issues 
 
 | Path | Contents |
 |------|----------|
-| `backend/` | FastAPI + SQLAlchemy service (Python 3.11+) |
+| `backend/` | FastAPI + SQLAlchemy service (Python 3.13+, Proxmox VE 9+) |
 | `frontend/` | React + TypeScript web UI, built to `frontend/dist/` |
 | `agent/` | `ggnet-agent`, the Windows client service for Disk Mode |
 | `scripts/` | Proxmox install / uninstall scripts |

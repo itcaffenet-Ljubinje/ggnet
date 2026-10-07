@@ -104,6 +104,9 @@ done
 # ---------- 1. prerequisites ----------
 [[ $EUID -eq 0 ]] || die "Run as root."
 command -v pveversion >/dev/null || die "This is not a Proxmox VE host (pveversion not found)."
+PVE_MAJOR="$(pveversion | head -n1 | sed -n 's#^pve-manager/\([0-9]*\)\..*#\1#p')"
+[[ "$PVE_MAJOR" =~ ^[0-9]+$ ]] || die "Cannot read the Proxmox VE version from pveversion."
+(( PVE_MAJOR >= 9 )) || die "ggNet needs Proxmox VE 9 or newer (found $PVE_MAJOR)."
 command -v zpool >/dev/null || die "ZFS tools are not installed."
 if interactive && ! command -v whiptail >/dev/null; then
     apt-get install -y whiptail >/dev/null
