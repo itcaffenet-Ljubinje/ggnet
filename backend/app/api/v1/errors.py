@@ -7,7 +7,7 @@ from typing import NoReturn
 from fastapi import HTTPException
 
 
-def not_found(what: str, id_: int) -> NoReturn:
+def not_found(what: str, id_: int | str) -> NoReturn:
     raise HTTPException(404, detail={"error": f"{what} {id_} does not exist"})
 
 

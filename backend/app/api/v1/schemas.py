@@ -159,5 +159,50 @@ class MachineOut(BaseModel):
     clone_snapshot: str | None
     iscsi_target_iqn: str | None
     outdated: bool
+    last_seen_at: datetime | None
+    agent_version: str | None
+    reported_iqn: str | None
+    iscsi_connected: bool | None
     created_at: datetime
     updated_at: datetime
+
+
+# ── Agent ─────────────────────────────────────────────────────────────
+
+class AgentHeartbeat(BaseModel):
+    """Sent by ggnet-agent at boot and periodically."""
+
+    name: str                           # Windows computer name
+    agent_version: str = Field(max_length=32)
+    initiator_iqn: str | None = None    # the client's actual initiator IQN
+    iscsi_connected: bool = False
+
+    @field_validator("name")
+    @classmethod
+    def check_name(cls, v: str) -> str:
+        return _machine_name(v)
+
+    @field_validator("initiator_iqn")
+    @classmethod
+    def check_iqn(cls, v: str | None) -> str | None:
+        # Stored only for display, so any IQN-looking value is accepted as is.
+        if v is None or not v.strip():
+            return None
+        v = v.strip().lower()
+        if len(v) > 223 or not v.startswith("iqn."):
+            raise ValueError("invalid IQN")
+        return v
+
+
+class AgentConfig(BaseModel):
+    """What the agent should connect. `iscsi_target_iqn` is null until provisioned."""
+
+    machine_id: int
+    name: str
+    mode: MachineMode
+    status: MachineStatus
+    initiator_iqn: str                  # the IQN the server's ACL expects
+    iscsi_target_iqn: str | None
+    portal_ip: str
+    portal_port: int
+    game_disk: str | None
