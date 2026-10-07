@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from app.api.v1 import game_disks
 from app.config import get_config
 
 VERSION_FILE = Path(__file__).resolve().parents[2] / "VERSION"
@@ -23,6 +24,7 @@ def read_version() -> str:
 
 
 app = FastAPI(title="ggNet", version=read_version())
+app.include_router(game_disks.router, prefix="/api/v1")
 
 
 @app.get("/api/health")

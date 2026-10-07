@@ -8,12 +8,17 @@ canned responses, so manager logic is tested without a host.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Callable, Optional, Union
 
 import pytest
 
 from app.config import get_config
+from app.iscsi_manager import ISCSIConfig, ISCSIManager
+from app.services.provisioning import Provisioner
 from app.zfs_manager import ZFSLayout, ZFSManager
+
+from .fakehost import FakeHost
 
 Response = tuple[bool, str, str]
 
@@ -96,3 +101,72 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "destructive" in item.keywords:
             item.add_marker(skip)
+
+
+# ── Service + API (FakeHost, one SQLite database per test) ────────────
+
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+
+
+def alembic_config(url: str):
+    from alembic.config import Config
+
+    cfg = Config(str(BACKEND_DIR / "alembic.ini"))
+    cfg.set_main_option("sqlalchemy.url", url)
+    cfg.attributes["configure_logger"] = False
+    return cfg
+
+
+@pytest.fixture
+def host() -> FakeHost:
+    h = FakeHost()
+    # The tree setup_dataset_tree() leaves on the host.
+    layout = make_layout()
+    for ds in (layout.root_dataset, layout.images, layout.writebacks,
+               layout.snapshots, layout.iscsi_targets):
+        h.add_dataset(ds)
+    return h
+
+
+@pytest.fixture
+def prov(host: FakeHost) -> Provisioner:
+    return Provisioner(
+        ZFSManager(layout=make_layout(), runner=host),
+        ISCSIManager(config=ISCSIConfig(portal="192.168.10.1:3260"), runner=host),
+    )
+
+
+@pytest.fixture
+def db_url(tmp_path) -> str:
+    from alembic import command
+
+    url = f"sqlite:///{tmp_path / 'test.db'}"
+    command.upgrade(alembic_config(url), "head")   # schema ALWAYS from migrations
+    return url
+
+
+@pytest.fixture
+def client(db_url: str, prov: Provisioner):
+    from fastapi.testclient import TestClient
+    from sqlalchemy.orm import sessionmaker
+
+    from app.api.deps import get_provisioner
+    from app.db.session import get_db, make_engine
+    from app.main import app
+
+    engine = make_engine(db_url)
+    Session = sessionmaker(bind=engine, expire_on_commit=False)
+
+    def _db():
+        db = Session()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = _db
+    app.dependency_overrides[get_provisioner] = lambda: prov
+    with TestClient(app) as c:
+        yield c
+    app.dependency_overrides.clear()
+    engine.dispose()
