@@ -18,6 +18,7 @@ All code, comments, docstrings, log and error messages, commit messages, issues 
 ```bash
 cd backend && pytest
 cd frontend && npm ci && npm run build && npm test
+cd agent && dotnet test GgnetAgent.slnx
 shellcheck -S warning scripts/*.sh
 ```
 
