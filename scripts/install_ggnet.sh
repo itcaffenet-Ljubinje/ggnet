@@ -340,6 +340,10 @@ database = "sqlite:///$DATA_DIR/ggnet.db"
 EOF
 chmod 640 "$CONF_FILE"
 
+# ---------- 10b. database schema ----------
+info "Applying database migrations..."
+(cd "$INSTALL_DIR/backend" && GGNET_CONFIG="$CONF_FILE" "$INSTALL_DIR/venv/bin/alembic" upgrade head)
+
 # ---------- 11. systemd ----------
 cat >"$UNIT_FILE" <<EOF
 [Unit]
