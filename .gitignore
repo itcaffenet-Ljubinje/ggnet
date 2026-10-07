@@ -1,0 +1,42 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Node / React ---
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+npm-debug.log*
+
+# --- Secrets and local data (NEVER commit) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+config.local.toml
+backend/data/
+*.db
+*.sqlite3
+
+# --- Windows agent build ---
+agent/**/bin/
+agent/**/obj/
+
+# --- Release package ---
+dist/
+ggnet.tar.gz
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
