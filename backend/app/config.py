@@ -11,14 +11,15 @@ from typing import Any
 DEFAULT_CONFIG_PATH = "/etc/ggnet/config.toml"
 
 # Values for local development when config.toml does not exist.
+# Dev mode always uses the separate "-dev" tree, never the production ggnet tree.
 DEV_DEFAULTS: dict[str, Any] = {
     "storage": {
         "pool": "tank",
-        "root_dataset": "tank/ggnet",
-        "images": "tank/ggnet/images",
-        "writebacks": "tank/ggnet/writebacks",
-        "snapshots": "tank/ggnet/snapshots",
-        "iscsi_targets": "tank/ggnet/iscsi_targets",
+        "root_dataset": "tank/ggnet-dev",
+        "images": "tank/ggnet-dev/images",
+        "writebacks": "tank/ggnet-dev/writebacks",
+        "snapshots": "tank/ggnet-dev/snapshots",
+        "iscsi_targets": "tank/ggnet-dev/iscsi_targets",
     },
     "network": {"interface": "lo", "server_ip": "127.0.0.1", "cidr": "127.0.0.1/8"},
     "services": {"iscsi_portal": "127.0.0.1:3260", "dhcp_mode": "proxy"},
