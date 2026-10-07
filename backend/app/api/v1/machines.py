@@ -1,0 +1,234 @@
+"""
+API for client machines, with auto-provisioning.
+
+`game_disk_id` is the WANTED assignment, `status` is the actual host state:
+  idle         no disk, nothing on the host
+  provisioned  clone + iSCSI target exist
+  error        an operation failed; `last_error` says why, and
+               assign/reset/DELETE retry and clean up leftovers
+
+Only Disk Mode machines can be provisioned; Boot Mode comes later.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from fastapi import APIRouter, Depends, Response, status
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.api.deps import get_provisioner
+from app.api.v1.errors import conflict, host_failed, not_found
+from app.api.v1.schemas import MachineAssign, MachineCreate, MachineOut, MachineUpdate
+from app.db.models import GameDisk, Machine, MachineMode, MachineStatus
+from app.db.session import get_db
+from app.services.provisioning import ClientDisk, Provisioner, ProvisioningError
+
+logger = logging.getLogger("ggnet.api.machines")
+
+router = APIRouter(prefix="/machines", tags=["machines"])
+
+DUPLICATE = "A machine with that name, IQN or MAC address already exists"
+
+
+# ── Helpers ───────────────────────────────────────────────────────────
+
+def _get(db: Session, machine_id: int) -> Machine:
+    machine = db.get(Machine, machine_id)
+    if machine is None:
+        not_found("Machine", machine_id)
+    return machine
+
+
+def _published_disk(db: Session, disk_id: int) -> GameDisk:
+    disk = db.get(GameDisk, disk_id)
+    if disk is None:
+        not_found("Game disk", disk_id)
+    if not disk.published:
+        conflict(f"Game disk '{disk.name}' is not published; call /publish first")
+    return disk
+
+
+def _require_disk_mode(mode: MachineMode, name: str) -> None:
+    if mode is not MachineMode.DISK:
+        conflict(f"Machine '{name}' is in {mode.value} mode; only disk mode can get a game disk")
+
+
+def _has_host_state(m: Machine) -> bool:
+    """Whether the host may hold something for this machine (clone/target)."""
+    return m.status is not MachineStatus.IDLE or m.clone_zvol is not None
+
+
+def _set_provisioned(m: Machine, cd: ClientDisk) -> None:
+    m.status = MachineStatus.PROVISIONED
+    m.last_error = None
+    m.clone_zvol = cd.clone_zvol
+    m.clone_snapshot = cd.clone_snapshot
+    m.iscsi_target_iqn = cd.iscsi_target_iqn
+
+
+def _set_idle(m: Machine) -> None:
+    m.status = MachineStatus.IDLE
+    m.last_error = None
+    m.clone_zvol = m.clone_snapshot = m.iscsi_target_iqn = None
+
+
+def _fail(db: Session, m: Machine, e: ProvisioningError) -> None:
+    """Save the error BEFORE answering 502; the state must outlive the request."""
+    m.status = MachineStatus.ERROR
+    m.last_error = str(e)
+    db.commit()
+    host_failed(str(e), machine_id=m.id)
+
+
+def _deprovision(db: Session, prov: Provisioner, m: Machine) -> None:
+    try:
+        prov.deprovision(m.name, m.clone_zvol)
+    except ProvisioningError as e:
+        _fail(db, m, e)
+    _set_idle(m)
+
+
+def _provision(db: Session, prov: Provisioner, m: Machine, disk: GameDisk) -> None:
+    m.game_disk_id = disk.id
+    try:
+        cd = prov.provision(m.name, m.initiator_iqn, disk.snapshot_path)
+    except ProvisioningError as e:
+        # The clone may be left over (rollback failed); remember its path for cleanup.
+        m.clone_zvol = prov.client_path(m.name)
+        _fail(db, m, e)
+    _set_provisioned(m, cd)
+
+
+# ── Routes ────────────────────────────────────────────────────────────
+
+@router.get("", response_model=list[MachineOut])
+def list_machines(db: Session = Depends(get_db)):
+    return db.scalars(select(Machine).order_by(Machine.name)).all()
+
+
+@router.get("/{machine_id}", response_model=MachineOut)
+def get_machine(machine_id: int, db: Session = Depends(get_db)):
+    return _get(db, machine_id)
+
+
+@router.post("", response_model=MachineOut, status_code=status.HTTP_201_CREATED)
+def create_machine(
+    body: MachineCreate,
+    db: Session = Depends(get_db),
+    prov: Provisioner = Depends(get_provisioner),
+):
+    """Register a machine; with `game_disk_id` it is provisioned right away."""
+    disk = None
+    if body.game_disk_id is not None:
+        _require_disk_mode(body.mode, body.name)
+        disk = _published_disk(db, body.game_disk_id)
+
+    machine = Machine(name=body.name, mode=body.mode, initiator_iqn=body.initiator_iqn, mac=body.mac)
+    db.add(machine)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        conflict(DUPLICATE)
+
+    if disk is not None:
+        _provision(db, prov, machine, disk)
+        db.commit()
+    return machine
+
+
+@router.patch("/{machine_id}", response_model=MachineOut)
+def update_machine(machine_id: int, body: MachineUpdate, db: Session = Depends(get_db)):
+    machine = _get(db, machine_id)
+    changes = body.model_dump(exclude_unset=True)
+
+    # The name is in the clone path and target name, the IQN in the ACL;
+    # they cannot change on the host while the machine has a disk.
+    host_bound = {k for k in ("name", "initiator_iqn", "mode") if k in changes
+                  and changes[k] != getattr(machine, k)}
+    if host_bound and (_has_host_state(machine) or machine.game_disk_id is not None):
+        conflict(f"{', '.join(sorted(host_bound))} can only change while the machine has no disk")
+
+    for key, value in changes.items():
+        setattr(machine, key, value)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        conflict(DUPLICATE)
+    return machine
+
+
+@router.post("/{machine_id}/assign", response_model=MachineOut)
+def assign_disk(
+    machine_id: int,
+    body: MachineAssign,
+    db: Session = Depends(get_db),
+    prov: Provisioner = Depends(get_provisioner),
+):
+    """
+    Assign (or with `null` remove) a game disk. Changing the disk destroys
+    the old clone, so everything the client wrote is lost. The client must
+    be powered off or disconnected.
+    """
+    machine = _get(db, machine_id)
+    disk = None
+    if body.game_disk_id is not None:
+        _require_disk_mode(machine.mode, machine.name)
+        disk = _published_disk(db, body.game_disk_id)
+
+    if (disk is not None and machine.status is MachineStatus.PROVISIONED
+            and machine.game_disk_id == disk.id):
+        return machine   # already so; nothing is touched on the host
+
+    if _has_host_state(machine):
+        _deprovision(db, prov, machine)
+    machine.game_disk_id = None
+
+    if disk is not None:
+        _provision(db, prov, machine, disk)
+    db.commit()
+    return machine
+
+
+@router.post("/{machine_id}/reset", response_model=MachineOut)
+def reset_machine(
+    machine_id: int,
+    db: Session = Depends(get_db),
+    prov: Provisioner = Depends(get_provisioner),
+):
+    """
+    Return the machine's disk to a clean state of the disk's CURRENT
+    snapshot. The client must be powered off or disconnected.
+    """
+    machine = _get(db, machine_id)
+    if machine.game_disk_id is None:
+        conflict(f"Machine '{machine.name}' has no disk assigned")
+    disk = _published_disk(db, machine.game_disk_id)
+
+    clone = machine.clone_zvol or prov.client_path(machine.name)
+    try:
+        cd = prov.reset(machine.name, machine.initiator_iqn, clone, disk.snapshot_path)
+    except ProvisioningError as e:
+        machine.clone_zvol = clone
+        _fail(db, machine, e)
+    _set_provisioned(machine, cd)
+    db.commit()
+    return machine
+
+
+@router.delete("/{machine_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_machine(
+    machine_id: int,
+    db: Session = Depends(get_db),
+    prov: Provisioner = Depends(get_provisioner),
+):
+    machine = _get(db, machine_id)
+    if _has_host_state(machine):
+        _deprovision(db, prov, machine)
+    db.delete(machine)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
