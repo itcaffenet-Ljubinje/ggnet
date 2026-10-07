@@ -53,3 +53,18 @@ jobs:
         if: ${{ hashFiles('frontend/package.json') != '' }}
         working-directory: frontend
         run: npm test
+
+  agent:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+      - name: Test
+        run: dotnet test GgnetAgent.slnx
+      - name: Publish win-x64
+        run: dotnet publish src/GgnetAgent -c Release -r win-x64 -o publish

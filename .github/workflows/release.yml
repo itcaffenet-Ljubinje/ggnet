@@ -45,7 +45,21 @@ jobs:
           fi
           tar -czf ggnet.tar.gz -C dist ggnet
 
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Package ggnet-agent-win-x64.zip
+        run: |
+          dotnet publish agent/src/GgnetAgent -c Release -r win-x64 -o dist/agent \
+            -p:Version="${GITHUB_REF_NAME#v}"
+          mkdir -p dist/ggnet-agent
+          cp dist/agent/ggnet-agent.exe agent/scripts/*.ps1 agent/README.md dist/ggnet-agent/
+          (cd dist && zip -r ../ggnet-agent-win-x64.zip ggnet-agent)
+
       - uses: softprops/action-gh-release@v3
         with:
-          files: ggnet.tar.gz
+          files: |
+            ggnet.tar.gz
+            ggnet-agent-win-x64.zip
           generate_release_notes: true

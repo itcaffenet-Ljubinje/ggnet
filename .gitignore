@@ -30,6 +30,7 @@ backend/data/
 # --- Windows agent build ---
 agent/**/bin/
 agent/**/obj/
+agent/publish/
 
 # --- Release package ---
 dist/

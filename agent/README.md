@@ -1,6 +1,55 @@
 # ggnet-agent
 
 Windows service for Disk Mode: on startup it connects the iSCSI game disk (D:) and sends heartbeats to the server.
+C#/.NET 10, published as one self-contained `ggnet-agent.exe` (no .NET install on clients).
+
+## What it does
+
+Every 30 seconds (and at startup) the agent:
+
+1. reads the PC's iSCSI initiator name and checks that its game disk session is still up;
+2. sends a heartbeat to the server and gets back the wanted target;
+3. makes the PC match it, using the built-in Windows iSCSI initiator (PowerShell cmdlets):
+   - **connect**: add the portal, log in (non-persistent), bring the disk online and
+     writable (the SAN policy keeps it offline), and give its data partition the drive letter;
+   - **disconnect** a target the server no longer assigns (disk removed or switched in the UI);
+   - **rename the initiator** to the IQN the server's ACL expects, before connecting
+     (domain PCs use `iqn.1991-05.com.microsoft:<fqdn>`). Turn off with `ManageInitiatorName`.
+
+If the server is unreachable the disk stays connected, so players keep playing.
+When the service stops (including Windows shutdown) it disconnects the disk.
+Errors are logged and retried on the next heartbeat.
+
+Logs: Event Viewer → Windows Logs → Application, source `ggnet-agent`.
+
+## Install on a client PC
+
+1. Register the PC in the ggNet web UI (its Windows computer name, lowercase) and assign a game disk.
+2. Copy `ggnet-agent.exe` and `scripts/install.ps1` into one folder on the PC.
+3. In an elevated PowerShell in that folder:
+
+   ```powershell
+   Set-ExecutionPolicy -Scope Process Bypass
+   .\install.ps1 -ServerUrl http://<ggnet-server-ip>:8088
+   ```
+
+   Use `-DriveLetter G` if `D:` is already taken (DVD drive, second partition).
+
+The same command updates an existing install. `scripts/uninstall.ps1` removes it.
+
+Settings (`C:\Program Files\ggnet-agent\appsettings.json`, section `Agent`):
+`ServerUrl`, `DriveLetter` (D-Z), `HeartbeatSeconds` (5-3600), `ManageInitiatorName`.
+
+## Build and test
+
+```bash
+cd agent
+dotnet test GgnetAgent.slnx
+dotnet publish src/GgnetAgent -c Release -r win-x64 -o publish   # publish/ggnet-agent.exe
+```
+
+The tests run on Linux too: the iSCSI and PowerShell parts sit behind interfaces,
+and the scripts are tested for the values they embed.
 
 ## Server protocol
 
