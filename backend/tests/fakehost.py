@@ -154,6 +154,8 @@ class FakeHost:
             name = a[-1]
             if name not in self.datasets:
                 return self._err(f"cannot open '{name}': dataset does not exist")
+            if a[-2] == "readonly":
+                return self._ok("on" if self.datasets[name]["readonly"] else "off")
             return self._ok("-")
 
         if sub == "clone":

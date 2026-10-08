@@ -165,7 +165,9 @@ export function MachinesPage({ disks, machines, reload }: Props) {
                 <td>{m.mode === "disk" ? "Disk" : "Boot"}</td>
                 <td className="mono">{m.mac ?? "—"}</td>
                 <td>
-                  {m.mode === "disk" ? (
+                  {m.status === "editing" ? (
+                    <span className="muted">Editing {diskName(m.editing_disk_id)}</span>
+                  ) : m.mode === "disk" ? (
                     <select
                       aria-label={`Game disk for ${m.name}`}
                       value={m.game_disk_id ?? ""}
@@ -226,7 +228,8 @@ export function MachinesPage({ disks, machines, reload }: Props) {
                     type="button"
                     className="danger"
                     onClick={() => remove(m)}
-                    disabled={busy !== null}
+                    disabled={busy !== null || m.status === "editing"}
+                    title={m.status === "editing" ? "Finish editing the game disk first" : undefined}
                   >
                     {busy === `delete-${m.id}` ? "Deleting…" : "Delete"}
                   </button>

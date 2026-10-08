@@ -122,3 +122,92 @@ def test_delete_host_failure_keeps_record(client, host):
     assert client.delete(f"/api/v1/game-disks/{d['id']}").status_code == 502
     assert client.get(f"/api/v1/game-disks/{d['id']}").status_code == 200
     assert host.snapshots[SNAP] == {"ggnet:protected"}   # hold restored
+
+
+# ── Edit master (fill a draft on one PC) ─────────────────────────────
+
+IQN = "iqn.1991-05.com.microsoft:pc01"
+TARGET = "iqn.2025-05.net.ggnet:storage"
+
+
+def _machine(client, name="pc01", **body) -> dict:
+    r = client.post("/api/v1/machines", json={"name": name, **body})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def test_edit_master_full_cycle(client, host):
+    d = _disk(client, publish=False)
+    m = _machine(client)
+
+    r = client.post(f"/api/v1/game-disks/{d['id']}/edit", json={"machine_id": m["id"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["editor_id"] == m["id"]
+    # The draft zvol itself is the PC's game disk; nothing is cloned.
+    assert host.visible(IQN) == [f"/dev/zvol/{MASTER}"]
+    m = client.get(f"/api/v1/machines/{m['id']}").json()
+    assert (m["status"], m["editing_disk_id"], m["iscsi_target_iqn"]) == ("editing", d["id"], TARGET)
+
+    # The agent gets the target, so the PC connects the master as D:.
+    r = client.post("/api/v1/agent/heartbeat", json={"name": "pc01", "agent_version": "0.1.1"})
+    assert (r.json()["iscsi_target_iqn"], r.json()["game_disk"]) == (TARGET, "cs2")
+
+    # Nothing may pull the master away while it is being edited.
+    assert client.post(f"/api/v1/game-disks/{d['id']}/publish").status_code == 409
+    assert client.delete(f"/api/v1/game-disks/{d['id']}").status_code == 409
+    assert client.post(f"/api/v1/machines/{m['id']}/assign", json={"game_disk_id": None}).status_code == 409
+    assert client.delete(f"/api/v1/machines/{m['id']}").status_code == 409
+
+    host.sessions.add(IQN)
+    r = client.post(f"/api/v1/game-disks/{d['id']}/finish-edit")
+    assert r.status_code == 409 and "shut it down" in r.text
+    assert host.visible(IQN) == [f"/dev/zvol/{MASTER}"]
+
+    host.sessions.discard(IQN)
+    r = client.post(f"/api/v1/game-disks/{d['id']}/finish-edit")
+    assert r.status_code == 200 and r.json()["editor_id"] is None
+    assert host.visible(IQN) == [] and not host.backstores
+    m = client.get(f"/api/v1/machines/{m['id']}").json()
+    assert (m["status"], m["editing_disk_id"], m["iscsi_target_iqn"]) == ("idle", None, None)
+
+    r = client.post(f"/api/v1/game-disks/{d['id']}/publish")
+    assert r.status_code == 200 and r.json()["snapshot"] == "base"
+
+
+def test_edit_is_idempotent_and_one_editor_per_disk(client, host):
+    d = _disk(client, publish=False)
+    m1 = _machine(client)
+    m2 = _machine(client, name="pc02")
+    url = f"/api/v1/game-disks/{d['id']}/edit"
+    assert client.post(url, json={"machine_id": m1["id"]}).status_code == 200
+    assert client.post(url, json={"machine_id": m1["id"]}).status_code == 200
+    r = client.post(url, json={"machine_id": m2["id"]})
+    assert r.status_code == 409 and "pc01" in r.text
+    assert host.visible("iqn.1991-05.com.microsoft:pc02") == []
+
+
+def test_edit_refused_for_published_disk_or_busy_machine(client):
+    published = _disk(client)
+    draft = _disk(client, name="draft", publish=False)
+    m = _machine(client, game_disk_id=published["id"])
+    r = client.post(f"/api/v1/game-disks/{published['id']}/edit", json={"machine_id": m["id"]})
+    assert r.status_code == 409 and "Apply Writebacks" in r.text
+    r = client.post(f"/api/v1/game-disks/{draft['id']}/edit", json={"machine_id": m["id"]})
+    assert r.status_code == 409 and "remove its disk first" in r.text
+    r = client.post(f"/api/v1/game-disks/{draft['id']}/edit", json={"machine_id": 999})
+    assert r.status_code == 404
+
+
+def test_edit_host_failure_leaves_machine_idle(client, host):
+    d = _disk(client, publish=False)
+    m = _machine(client)
+    host.fail_on[("targetcli", "/backstores/block", "create")] = "device busy"
+    r = client.post(f"/api/v1/game-disks/{d['id']}/edit", json={"machine_id": m["id"]})
+    assert r.status_code == 502 and "device busy" in r.text
+    assert client.get(f"/api/v1/machines/{m['id']}").json()["status"] == "idle"
+    assert client.get(f"/api/v1/game-disks/{d['id']}").json()["editor_id"] is None
+
+
+def test_finish_edit_without_editor(client):
+    d = _disk(client, publish=False)
+    assert client.post(f"/api/v1/game-disks/{d['id']}/finish-edit").status_code == 409

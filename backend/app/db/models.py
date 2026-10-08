@@ -69,6 +69,9 @@ class GameDisk(Base):
     Master image (shared disk). Until `snapshot` is set the disk is a draft
     and must not be assigned to machines. After publish_master(), `snapshot`
     is the name of the current snapshot (`base`, later `vN`).
+
+    A draft is filled through one machine (`editor`): the draft zvol itself
+    is mapped as that machine's game disk until editing is finished.
     """
 
     __tablename__ = "game_disks"
@@ -80,7 +83,16 @@ class GameDisk(Base):
     snapshot: Mapped[str | None] = mapped_column(String(64), default=None)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now)
 
-    machines: Mapped[list["Machine"]] = relationship(back_populates="game_disk")
+    machines: Mapped[list["Machine"]] = relationship(
+        back_populates="game_disk", foreign_keys="Machine.game_disk_id"
+    )
+    editor: Mapped["Machine | None"] = relationship(
+        back_populates="editing_disk", foreign_keys="Machine.editing_disk_id"
+    )
+
+    @property
+    def editor_id(self) -> int | None:
+        return self.editor.id if self.editor else None
 
     @property
     def published(self) -> bool:
@@ -99,6 +111,7 @@ class MachineMode(str, enum.Enum):
 class MachineStatus(str, enum.Enum):
     IDLE = "idle"                  # no disk assigned
     PROVISIONED = "provisioned"    # clone exists and is mapped on the shared target
+    EDITING = "editing"            # a draft master is mapped as its game disk
     ERROR = "error"                # a host operation failed; see last_error
 
 
@@ -122,7 +135,17 @@ class Machine(Base):
     game_disk_id: Mapped[int | None] = mapped_column(
         ForeignKey("game_disks.id", ondelete="RESTRICT"), default=None, index=True
     )
-    game_disk: Mapped[GameDisk | None] = relationship(back_populates="machines")
+    game_disk: Mapped[GameDisk | None] = relationship(
+        back_populates="machines", foreign_keys=[game_disk_id]
+    )
+    # The draft master this machine is filling (status `editing`); at most
+    # one editor per disk.
+    editing_disk_id: Mapped[int | None] = mapped_column(
+        ForeignKey("game_disks.id", ondelete="RESTRICT"), default=None, unique=True
+    )
+    editing_disk: Mapped[GameDisk | None] = relationship(
+        back_populates="editor", foreign_keys=[editing_disk_id]
+    )
 
     status: Mapped[MachineStatus] = mapped_column(
         _str_enum(MachineStatus), default=MachineStatus.IDLE

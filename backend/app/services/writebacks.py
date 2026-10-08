@@ -97,7 +97,8 @@ def discard(db: Session, prov: Provisioner, m: Machine, reason: str) -> bool:
 def observe(db: Session, prov: Provisioner, m: Machine, settings: WritebackSettings,
             now: datetime | None = None) -> None:
     """One watcher step for one machine: record its session state, discard if due."""
-    if not _managed(m):
+    editing = m.status is MachineStatus.EDITING
+    if not (_managed(m) or editing):
         return
     now = now or _now()
     active = prov.session_active(m.initiator_iqn, m.iscsi_target_iqn)
@@ -106,6 +107,10 @@ def observe(db: Session, prov: Provisioner, m: Machine, settings: WritebackSetti
     if active != m.session_active:
         m.session_active = active
         m.session_changed_at = now
+    if editing:
+        # The PC is filling a draft master: only show whether it is connected.
+        db.commit()
+        return
     if active:
         m.writeback_dirty = True
         db.commit()
@@ -151,7 +156,9 @@ def tick(make_session: Callable[[], Session], prov: Provisioner,
     """One watcher round over all machines."""
     with make_session() as db:
         ids = db.scalars(
-            select(Machine.id).where(Machine.status == MachineStatus.PROVISIONED)
+            select(Machine.id).where(
+                Machine.status.in_([MachineStatus.PROVISIONED, MachineStatus.EDITING])
+            )
         ).all()
         for machine_id in ids:
             m = db.get(Machine, machine_id)

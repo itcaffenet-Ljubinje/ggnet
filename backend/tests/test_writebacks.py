@@ -309,3 +309,24 @@ def test_run_pipe():
     assert not ok and err
     ok, _, err = r.run_pipe(["printf", "x"], ["sh", "-c", "cat >/dev/null; echo bad >&2; exit 3"])
     assert (ok, err) == (False, "bad")
+
+
+# ── Editing a draft master ────────────────────────────────────────────
+
+def test_watcher_tracks_editing_machine_but_never_discards(client, host, prov, make_session):
+    d = client.post("/api/v1/game-disks", json={"name": "draft", "size_gb": 10}).json()
+    m = client.post("/api/v1/machines", json={"name": "pc01"}).json()
+    assert client.post(f"/api/v1/game-disks/{d['id']}/edit", json={"machine_id": m["id"]}).status_code == 200
+    calls = len(host.calls)
+
+    host.sessions.add(_iqn("pc01"))
+    _tick(make_session, prov, T0)
+    assert _get(client, m)["session_active"] is True
+
+    host.sessions.discard(_iqn("pc01"))
+    _tick(make_session, prov, T0 + timedelta(minutes=5))
+    got = _get(client, m)
+    assert (got["session_active"], got["status"]) == (False, "editing")
+    # Only session reads; the draft stays mapped and nothing is cloned.
+    assert all(c[0] == "cat" for c in host.calls[calls:])
+    assert host.visible(_iqn("pc01")) == ["/dev/zvol/tank/ggnet/images/draft"]

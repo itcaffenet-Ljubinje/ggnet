@@ -204,7 +204,8 @@ td.actions button + button {
   border-color: var(--danger);
 }
 
-.badge-warn {
+.badge-warn,
+.badge-editing {
   color: var(--warn);
   border-color: var(--warn);
 }

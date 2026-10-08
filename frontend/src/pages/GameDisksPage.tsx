@@ -14,8 +14,15 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
   const { busy, error, setError, run } = useAsyncAction();
   const [name, setName] = useState("");
   const [sizeGb, setSizeGb] = useState("100");
+  // Per draft disk: the machine picked to fill it on.
+  const [editOn, setEditOn] = useState<Record<number, string>>({});
 
   const assigned = (id: number) => machines.filter((m) => m.game_disk_id === id).length;
+  const machine = (id: number | null) => machines.find((m) => m.id === id);
+  // A draft can be filled only on a disk-mode PC that has no game disk.
+  const free = machines.filter(
+    (m) => m.mode === "disk" && m.status === "idle" && m.game_disk_id === null,
+  );
 
   async function create(e: FormEvent) {
     e.preventDefault();
@@ -31,6 +38,25 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
       "Fill it with data first; after publishing it cannot be changed.";
     if (!window.confirm(msg)) return;
     await run(`publish-${disk.id}`, () => api.publishDisk(disk.id));
+    await reload();
+  }
+
+  async function startEdit(disk: GameDisk) {
+    const m = machine(Number(editOn[disk.id]));
+    if (!m) return;
+    const msg =
+      `Edit "${disk.name}" on ${m.name}?\n\n` +
+      "The master becomes that PC's game disk (through ggnet-agent). Initialize and format it " +
+      "in Disk Management, install the games, then shut the PC down and click Finish editing.";
+    if (!window.confirm(msg)) return;
+    await run(`edit-${disk.id}`, () => api.startEdit(disk.id, m.id));
+    await reload();
+  }
+
+  async function finishEdit(disk: GameDisk) {
+    const name = machine(disk.editor_id)?.name ?? "the PC";
+    if (!window.confirm(`Finish editing "${disk.name}"?\n\nThe master is removed from ${name}.`)) return;
+    await run(`finish-${disk.id}`, () => api.finishEdit(disk.id));
     await reload();
   }
 
@@ -93,6 +119,10 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
                 <td>
                   {d.published ? (
                     <span className="badge badge-provisioned">Published @{d.snapshot}</span>
+                  ) : d.editor_id !== null ? (
+                    <span className="badge badge-editing">
+                      Editing on {machine(d.editor_id)?.name ?? `#${d.editor_id}`}
+                    </span>
                   ) : (
                     <span className="badge badge-idle">Draft</span>
                   )}
@@ -100,9 +130,45 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
                 <td>{assigned(d.id)}</td>
                 <td className="mono muted">{d.zvol_path}</td>
                 <td className="actions">
-                  {!d.published && (
-                    <button type="button" onClick={() => publish(d)} disabled={busy !== null}>
-                      {busy === `publish-${d.id}` ? "Publishing…" : "Publish"}
+                  {!d.published && d.editor_id === null && (
+                    <>
+                      <select
+                        aria-label={`PC to edit ${d.name} on`}
+                        value={editOn[d.id] ?? ""}
+                        onChange={(e) => setEditOn({ ...editOn, [d.id]: e.target.value })}
+                        disabled={busy !== null}
+                      >
+                        <option value="">PC…</option>
+                        {free.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => startEdit(d)}
+                        disabled={busy !== null || !editOn[d.id]}
+                      >
+                        {busy === `edit-${d.id}` ? "Starting…" : "Edit on PC"}
+                      </button>
+                      <button type="button" onClick={() => publish(d)} disabled={busy !== null}>
+                        {busy === `publish-${d.id}` ? "Publishing…" : "Publish"}
+                      </button>
+                    </>
+                  )}
+                  {d.editor_id !== null && (
+                    <button
+                      type="button"
+                      onClick={() => finishEdit(d)}
+                      disabled={busy !== null || machine(d.editor_id)?.session_active === true}
+                      title={
+                        machine(d.editor_id)?.session_active
+                          ? `Shut down ${machine(d.editor_id)?.name} first`
+                          : undefined
+                      }
+                    >
+                      {busy === `finish-${d.id}` ? "Finishing…" : "Finish editing"}
                     </button>
                   )}
                   <button

@@ -68,7 +68,12 @@ class GameDiskOut(BaseModel):
     size_gb: int
     snapshot: str | None
     published: bool
+    editor_id: int | None
     created_at: datetime
+
+
+class GameDiskEdit(BaseModel):
+    machine_id: int   # the PC the draft is filled on
 
 
 # ── Machine ───────────────────────────────────────────────────────────
@@ -157,6 +162,7 @@ class MachineOut(BaseModel):
     initiator_iqn: str
     mac: str | None
     game_disk_id: int | None
+    editing_disk_id: int | None
     status: MachineStatus
     last_error: str | None
     clone_zvol: str | None

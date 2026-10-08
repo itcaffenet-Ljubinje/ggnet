@@ -4,7 +4,9 @@ API for client machines, with auto-provisioning.
 `game_disk_id` is the WANTED assignment, `status` is the actual host state:
   idle         no disk, nothing on the host
   provisioned  clone exists and is mapped on the shared iSCSI target
-  error        an operation failed; `last_error` says why, and
+  editing      a draft master is mapped instead (game disk /edit); no
+               assign or delete until /finish-edit
+  error       an operation failed; `last_error` says why, and
                assign/reset/DELETE retry and clean up leftovers
 
 Writebacks are discarded automatically by the server after every disconnect
@@ -64,6 +66,11 @@ def _published_disk(db: Session, disk_id: int) -> GameDisk:
 def _require_disk_mode(mode: MachineMode, name: str) -> None:
     if mode is not MachineMode.DISK:
         conflict(f"Machine '{name}' is in {mode.value} mode; only disk mode can get a game disk")
+
+
+def _not_editing(m: Machine) -> None:
+    if m.status is MachineStatus.EDITING:
+        conflict(f"'{m.name}' is editing game disk '{m.editing_disk.name}'; finish editing first")
 
 
 def _has_host_state(m: Machine) -> bool:
@@ -196,6 +203,7 @@ def assign_disk(
     be powered off or disconnected.
     """
     machine = _get(db, machine_id)
+    _not_editing(machine)
     disk = None
     if body.game_disk_id is not None:
         _require_disk_mode(machine.mode, machine.name)
@@ -333,6 +341,7 @@ def delete_machine(
     prov: Provisioner = Depends(get_provisioner),
 ):
     machine = _get(db, machine_id)
+    _not_editing(machine)
     if _has_host_state(machine):
         _deprovision(db, prov, machine)
     db.delete(machine)
