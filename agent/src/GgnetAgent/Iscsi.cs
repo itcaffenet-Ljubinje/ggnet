@@ -116,12 +116,18 @@ public sealed class WindowsIscsiInitiator(IScriptRunner runner) : IIscsiInitiato
                 } else {
                     New-IscsiTargetPortal -TargetPortalAddress '{{portalIp}}' -TargetPortalPortNumber {{portalPort}} | Out-Null
                 }
-                Connect-IscsiTarget -NodeAddress '{{targetIqn}}' -TargetPortalAddress '{{portalIp}}' -TargetPortalPortNumber {{portalPort}} -IsPersistent $false | Out-Null
+                # Log in only once: after a service restart or a failed earlier
+                # attempt the session can already exist, and a second login fails.
+                $loggedIn = Get-IscsiTarget | Where-Object { $_.NodeAddress -eq '{{targetIqn}}' -and $_.IsConnected }
+                if (-not $loggedIn) {
+                    Connect-IscsiTarget -NodeAddress '{{targetIqn}}' -TargetPortalAddress '{{portalIp}}' -TargetPortalPortNumber {{portalPort}} -IsPersistent $false | Out-Null
+                }
 
                 # Windows needs a moment to show the disk after the login.
                 $disk = $null
                 for ($i = 0; $i -lt {{DiskWaitSeconds}} -and -not $disk; $i++) {
-                    $disk = Get-IscsiSession -TargetNodeAddress '{{targetIqn}}' | Get-Disk -ErrorAction SilentlyContinue
+                    $disk = Get-IscsiSession | Where-Object TargetNodeAddress -eq '{{targetIqn}}' |
+                        Get-Disk -ErrorAction SilentlyContinue | Select-Object -First 1
                     if (-not $disk) { Start-Sleep -Seconds 1 }
                 }
                 if (-not $disk) { throw "Connected to {{targetIqn}} but no disk appeared" }

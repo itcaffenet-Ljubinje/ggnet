@@ -75,6 +75,53 @@ public class AgentWorkerTests
     }
 
     [Fact]
+    public async Task Keeps_the_disk_when_the_heartbeat_times_out()
+    {
+        var worker = Worker();
+        await worker.TickAsync(CancellationToken.None);
+
+        _server.Throw = new TaskCanceledException("HttpClient.Timeout elapsed");
+        await worker.TickAsync(CancellationToken.None);
+
+        Assert.DoesNotContain(_iscsi.Calls, c => c.StartsWith("disconnect"));
+        Assert.Equal(Target, worker.ConnectedTarget);
+    }
+
+    [Fact]
+    public async Task Keeps_the_disk_when_the_server_answers_with_an_error()
+    {
+        var worker = Worker();
+        await worker.TickAsync(CancellationToken.None);
+
+        _server.Status = HttpStatusCode.InternalServerError;
+        _server.Body = "boom";
+        await worker.TickAsync(CancellationToken.None);   // logged, not thrown
+
+        Assert.DoesNotContain(_iscsi.Calls, c => c.StartsWith("disconnect"));
+        Assert.Equal(Target, worker.ConnectedTarget);
+    }
+
+    [Fact]
+    public async Task Reconnects_once_the_server_is_back_after_a_dropped_session()
+    {
+        var worker = Worker();
+        await worker.TickAsync(CancellationToken.None);
+
+        // Server (and so the target) restarts: the session drops and heartbeats fail.
+        _server.Throw = new HttpRequestException("connection refused");
+        _iscsi.Connected.Clear();
+        await worker.TickAsync(CancellationToken.None);
+        Assert.Null(worker.ConnectedTarget);
+        Assert.Single(_iscsi.Calls, c => c.StartsWith("connect "));
+
+        _server.Throw = null;
+        await worker.TickAsync(CancellationToken.None);
+        Assert.Equal(2, _iscsi.Calls.Count(c => c.StartsWith("connect ")));
+        Assert.Equal(Target, worker.ConnectedTarget);
+        Assert.Contains("\"iscsi_connected\":false", _server.Requests[^1].Body);
+    }
+
+    [Fact]
     public async Task Does_nothing_for_an_unregistered_machine()
     {
         _server.Status = HttpStatusCode.NotFound;
