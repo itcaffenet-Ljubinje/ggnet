@@ -13,7 +13,8 @@ public sealed class AgentWorker(
     IIscsiInitiator iscsi,
     IOptions<AgentOptions> options,
     ILogger<AgentWorker> logger,
-    TimeProvider time) : BackgroundService
+    TimeProvider time,
+    Func<TimeSpan>? uptime = null) : BackgroundService
 {
     internal static readonly string Version =
         typeof(AgentWorker).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
@@ -22,9 +23,11 @@ public sealed class AgentWorker(
     private readonly AgentOptions _options = options.Value;
     private readonly string _machineName = Environment.MachineName.ToLowerInvariant();
 
-    // The service starts with Windows, so its start time identifies this boot.
-    // (Not the kernel uptime: Fast Startup keeps it running across shutdowns.)
-    private DateTimeOffset? _startedAt;
+    // Windows boot time (now minus uptime), so restarting or updating the
+    // agent service is not taken for a reboot (which discards the writeback).
+    // Fast Startup would keep it across shutdowns; install.ps1 turns that off.
+    private readonly Func<TimeSpan> _uptime = uptime ?? (() => TimeSpan.FromMilliseconds(Environment.TickCount64));
+    private DateTimeOffset? _bootedAt;
 
     /// <summary>The ggNet target this agent connected (sessions are not persistent across reboots).</summary>
     internal string? ConnectedTarget { get; private set; }
@@ -67,7 +70,11 @@ public sealed class AgentWorker(
     {
         try
         {
-            _startedAt ??= time.GetUtcNow();
+            if (_bootedAt is null)
+            {
+                var boot = time.GetUtcNow() - _uptime();
+                _bootedAt = boot.AddTicks(-(boot.Ticks % TimeSpan.TicksPerSecond));   // whole seconds
+            }
             string? initiator = await iscsi.GetInitiatorNameAsync(ct);
 
             // The session can drop (server reset, network); forget it so it is reconnected.
@@ -81,7 +88,7 @@ public sealed class AgentWorker(
             try
             {
                 config = await server.HeartbeatAsync(
-                    new Heartbeat(_machineName, Version, initiator, ConnectedTarget is not null, _startedAt,
+                    new Heartbeat(_machineName, Version, initiator, ConnectedTarget is not null, _bootedAt,
                         DriveLetter), ct);
             }
             catch (Exception e) when (e is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
@@ -141,20 +148,17 @@ public sealed class AgentWorker(
         }
     }
 
-    /// <summary>On service stop / Windows shutdown, log out of the target cleanly.</summary>
+    /// <summary>
+    /// The game disk stays connected when the service stops: a service restart
+    /// (update, crash recovery) must not pull it from running games, and a
+    /// Windows shutdown ends the session anyway. uninstall.ps1 disconnects it.
+    /// </summary>
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         await base.StopAsync(cancellationToken);
-        if (ConnectedTarget is null) return;
-        try
+        if (ConnectedTarget is not null)
         {
-            logger.LogInformation("Stopping: disconnecting {Target}", ConnectedTarget);
-            await iscsi.DisconnectAsync(ConnectedTarget, cancellationToken);
-            Forget();
-        }
-        catch (Exception e)
-        {
-            logger.LogWarning("Disconnect on stop failed: {Error}", e.Message);
+            logger.LogInformation("Stopping; {Target} stays connected", ConnectedTarget);
         }
     }
 }

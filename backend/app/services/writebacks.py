@@ -145,7 +145,8 @@ def on_heartbeat(db: Session, prov: Provisioner, m: Machine, booted_at: datetime
     if not (new_boot and settings.auto_discard and _managed(m) and _needs_discard(m)):
         return
     # The agent connects only after this answer; a live session means the
-    # disk is still in use (e.g. the agent service restarted, not Windows).
+    # disk is still in use (e.g. an agent older than 0.1.5, whose boot time
+    # was its service start, restarted without Windows).
     if prov.session_active(m.initiator_iqn, m.iscsi_target_iqn) is not False:
         return
     discard(db, prov, m, "client rebooted")

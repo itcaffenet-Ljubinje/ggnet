@@ -5,8 +5,9 @@ namespace GgnetAgent;
 
 /// <summary>Body of POST /api/v1/agent/heartbeat (see agent/README.md).</summary>
 /// <param name="BootedAt">
-/// When this agent process started (UTC), i.e. this Windows boot. A newer value
-/// tells the server the PC restarted, so it discards the old writeback first.
+/// When Windows booted (UTC). A newer value tells the server the PC restarted,
+/// so it discards the old writeback first; restarting only the agent service
+/// keeps the same value.
 /// </param>
 public sealed record Heartbeat(
     string Name,

@@ -17,7 +17,10 @@ Every 30 seconds (and at startup) the agent:
      (domain PCs use `iqn.1991-05.com.microsoft:<fqdn>`). Turn off with `ManageInitiatorName`.
 
 If the server is unreachable the disk stays connected, so players keep playing.
-When the service stops (including Windows shutdown) it disconnects the disk.
+When the service stops the disk stays connected, so restarting or updating the agent does not pull it
+from running games (Windows shutdown ends the session; `uninstall.ps1` disconnects it).
+`install.ps1` turns Fast Startup off: with it, "Shut down" is a hibernation and the PC would come back
+with the old boot time.
 Errors are logged and retried on the next heartbeat.
 
 Logs: Event Viewer → Windows Logs → Application, source `ggnet-agent`.
@@ -79,7 +82,7 @@ The agent talks to the ggNet backend over HTTP (no authentication yet; JWT is pl
   IQN that does not match the server's ACL is visible.
 - `iscsi_connected`: whether the game disk target is currently connected.
 - `drive_letter`: the letter the game disk actually got (only while connected).
-- `booted_at`: when the agent service started, i.e. this Windows boot. When it changes the server
+- `booted_at`: when Windows booted (restarting the agent service keeps it). When it changes the server
   discards the PC's old writeback before answering, so every boot gets a clean game disk
   (unless the machine has Keep Writeback).
 
