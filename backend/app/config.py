@@ -25,6 +25,8 @@ DEV_DEFAULTS: dict[str, Any] = {
     "services": {"iscsi_portal": "127.0.0.1:3260", "iscsi_target_name": "storage-dev", "dhcp_mode": "proxy"},
     "web": {"bind": "127.0.0.1", "port": 8088, "frontend_dist": "../frontend/dist"},
     "paths": {"data_dir": "./data", "database": "sqlite:///./data/ggnet.db"},
+    # Dev mode never discards anything on its own.
+    "writebacks": {"auto_discard": False, "grace_seconds": 30, "poll_seconds": 5},
 }
 
 

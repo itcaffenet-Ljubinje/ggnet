@@ -31,7 +31,6 @@ Names come from `[storage]` in `/etc/ggnet/config.toml`; nothing is hard-coded. 
 │   ├── pc01                clone of images/cs2@v3      → Disk Mode, mapped LUN 0
 │   ├── pc02-os             clone of images/win11-os@v2 → Boot Mode, mapped LUN 0
 │   └── pc02-game           clone of images/cs2@v3      → Boot Mode, mapped LUN 1
-├── maintenance/            Super Client clones (sync=standard, kept across reboots)   [planned]
 ├── snapshots/
 └── iscsi_targets/
 ```
@@ -45,8 +44,7 @@ same ARC blocks. A clone only costs the space of what that PC wrote since its la
 |---|---|---|---|---|
 | game master (`images/<game>`) | `64k` | `lz4` | `standard` | `readonly=on` after publish |
 | OS master (`images/<os>`) | `16k` | `lz4` | `standard` | `readonly=on` after publish |
-| PC writeback (`writebacks/*`) | inherited from origin | inherited | **`disabled`** | destroyed and re-cloned on reset |
-| Super Client clone (`maintenance/*`) | inherited | inherited | **`standard`** | admin work must survive a power loss |
+| PC writeback (`writebacks/*`) | inherited from origin | inherited | **`disabled`** | discarded on every disconnect unless Keep Writeback |
 
 Why these values:
 
@@ -57,8 +55,9 @@ Why these values:
   trade-off.
 - `lz4`: costs almost nothing and gives up early on data that is already compressed, so it is safe for game
   files too. `zstd` saves a little more space on OS images for more CPU; not worth it for hot game data.
-- `sync=disabled` on writebacks only: these are thrown away on every reset anyway, so losing the last seconds of
-  writes on a host crash is acceptable. Masters and Super Client clones keep `sync=standard`.
+- `sync=disabled` on writebacks: they are thrown away on every disconnect anyway. A PC with **Keep Writeback**
+  is switched to `sync=standard` while the flag is on, because the admin's game installs on it must survive a
+  host crash. Masters keep `sync=standard`.
 - `volblocksize` is fixed at creation and a clone inherits it from its origin. Changing it later means a new
   master and copying the data.
 
@@ -139,55 +138,83 @@ in ARC are the same.
 
 ---
 
-## 3. Image versions and Super Client (planned)
+## 3. Writebacks and image versions (ggRock model, planned)
 
-Masters are versioned with ZFS snapshots. `GameDisk.snapshot` (and later `OsImage.snapshot`) holds the
-**active** version; PCs are cloned from it on their next reset. Older versions stay as instant rollback.
+There is no Super Client mode and no manual Reset button. A PC's writeback is discarded **by the server** every
+time the PC disconnects, shuts down or restarts. The only exception is a PC with **Keep Writeback** ticked: its
+writeback survives reboots, and the admin turns its changes into a new image version with **Apply Writebacks**.
+
+### Automatic reset
+
+The server decides from the PC's iSCSI session, which LIO exposes in configfs:
+
+```
+/sys/kernel/config/target/iscsi/<target>/tpgt_1/acls/<initiator>/info
+    "No active iSCSI Session for Initiator Endpoint: ..."   → disconnected
+    "InitiatorName: ... Session State: TARG_SESS_STATE_LOGGED_IN"   → connected
+```
+
+A watcher in the backend reads this for every PC every few seconds and keeps the last state in the database
+(`session_connected`, `session_since`). Rules:
+
+| Event | Keep Writeback off | Keep Writeback on |
+|---|---|---|
+| Session ends (shutdown, restart, cable) and stays down for the grace period (default 30 s) | discard writeback: detach → `zfs destroy` → `zfs clone` from the image's active snapshot → attach | nothing |
+| Agent starts on Windows boot (`POST /api/v1/agent/boot`, Disk Mode) and has no session | same discard, before the agent logs in | nothing |
+| iPXE asks for its script (Boot Mode) | same discard, before `sanboot` | nothing |
+| Writeback of a powered-off Keep Writeback PC is older than "Inactive writebacks" hours | n/a | discard (retention, below) |
+
+The grace period stops a short network blip from wiping a disk that Windows still has mounted; the agent's boot
+time covers a fast restart that reconnects within the grace period. That boot time is when the ggnet-agent service
+started (`booted_at` in the heartbeat), not the kernel uptime, because Windows Fast Startup resumes the kernel on a
+cold boot. A newer `booted_at` with no live iSCSI session discards the writeback before the agent logs in again. A discard also moves the PC to the image's
+current active snapshot, or to its pinned snapshot (below). All of this runs under the provisioner lock and only
+ever touches that one PC's ACL, backstore and clone.
+
+### Image versions
+
+Masters are versioned with ZFS snapshots: `@base`, `@v2`, `@v3`, ... Each image has one **active** snapshot.
+PCs are cloned from it at their next discard, so a new version reaches every PC at its next reboot.
 
 ```
 images/cs2@base  @v2  @v3(active)
-                         └── writebacks/pc01 ... pc17      normal PCs
-                         └── maintenance/cs2               Super Client (one PC, writable, kept)
+                         ├── writebacks/pc01 ... pc16      discarded on every disconnect
+                         └── writebacks/pc17               Keep Writeback: admin installs/updates games here
 ```
 
-**Start Super Client** on a powered-off PC:
+**Apply Writebacks** (overflow menu of a powered-off PC with Keep Writeback):
 
 ```bash
-zfs clone -o sync=standard tank/ggnet/images/cs2@v3 tank/ggnet/maintenance/cs2
-# detach the PC's normal writeback, attach maintenance/cs2 as its game LUN
-```
-
-The PC boots normally, the admin installs or updates games. The maintenance clone is not reset on boot.
-
-**Save as new version** (PC powered off):
-
-```bash
-zfs snapshot tank/ggnet/maintenance/cs2@pub
-zfs set readonly=off tank/ggnet/images/cs2
-zfs send -i tank/ggnet/images/cs2@v3 tank/ggnet/maintenance/cs2@pub \
-  | zfs recv -F tank/ggnet/images/cs2
-zfs rename tank/ggnet/images/cs2@pub tank/ggnet/images/cs2@v4
+zfs snapshot tank/ggnet/writebacks/pc17@apply
+zfs send -i tank/ggnet/images/cs2@v3 tank/ggnet/writebacks/pc17@apply | zfs recv tank/ggnet/images/cs2
+zfs rename tank/ggnet/images/cs2@apply tank/ggnet/images/cs2@v4
 zfs hold ggnet:protected tank/ggnet/images/cs2@v4
-zfs set readonly=on tank/ggnet/images/cs2
-# then: active = v4, destroy maintenance/cs2, re-clone the Super Client PC normally
+# active = v4; pc17's writeback is re-cloned from @v4 (same content), Keep Writeback stays on
 ```
 
-The incremental send writes only the changed blocks into the master, so `@v4` is a real snapshot of the master
-(not a clone dependency), and `@v3` stays intact. Publishing is refused if the active version changed after
-the maintenance clone was made.
+The incremental send writes only the changed blocks into the master, so `@v4` is a normal snapshot of the master
+with no dependency on pc17, and `@v3` stays intact. `zfs recv` works on a `readonly=on` zvol, so the master is
+never writable. Apply is refused when `@v3` is no longer the newest snapshot of the master (someone applied
+in between, as ggRock does); the admin then discards the PC's writeback and redoes the change.
 
-**Discard changes**: `zfs destroy tank/ggnet/maintenance/cs2`, re-clone the PC normally. The master is untouched.
+PCs that are running when a new version is applied keep their current snapshot until they reboot. The Machines
+page shows this with the ggRock status icons: on the active snapshot; on an older one and will move on reboot;
+pinned or Keep Writeback, will not move.
 
-**Rollback**: set active back to `@v3`. Each PC moves to `@v3` on its next reset. Keep the last 3 versions plus
-any version a clone still uses; older ones are released and destroyed.
+**Per-PC snapshot pin** (Settings → Advanced): a PC can be pinned to a non-active snapshot of its image, for
+testing a version or rolling one PC back. **Rollback for everyone** = make an older snapshot active.
 
-### Reset on every boot
+### Retention (Settings → Array)
 
-Writebacks should be clean on every boot, not only when the admin clicks Reset:
+As in ggRock's "Automated Snapshot and Writeback Removal", an hourly job in the backend:
 
-- **Disk Mode**: at Windows startup the agent calls `POST /api/v1/agent/boot` before logging in. The server
-  resets that PC's clone if it is not a Super Client and has no active session, then answers with the target.
-- **Boot Mode**: the iPXE script request (`/boot/ipxe?mac=...`) resets the PC's clones before answering.
+| Setting | Default | Effect |
+|---|---|---|
+| Reserved disk space | 15 % | `refreservation` on `<pool>/ggnet/reserved`, so writebacks can never fill the SSDs completely |
+| Warning threshold | 80 % | banner in the UI when the pool is fuller than this |
+| Unutilized snapshots | 14 days | a snapshot not active, not pinned and not the origin of any clone for this long is deleted… |
+| Unprotected snapshots | 3 | …except the newest N snapshots of each image, which are always kept |
+| Inactive writebacks | 24 hours | a Keep Writeback PC that has been off this long gets its writeback discarded |
 
 ---
 
@@ -239,8 +266,8 @@ Secure Boot off. Disk Mode PCs are not affected.
 `GET /api/v1/boot/ipxe?mac=aa-bb-cc-dd-ee-ff` returns one of three scripts. iSCSI root path format:
 `iscsi:<server>::<port>:<lun>:<target-iqn>`.
 
-Normal boot and Super Client use the same script; what differs is which clone the PC's ACL maps, which the
-server sets up before answering:
+Every boot uses the same script. Which clone is behind LUN 0 (a fresh writeback, a kept one, or a pinned
+snapshot) is decided by the server before it answers:
 
 ```
 #!ipxe
@@ -275,29 +302,29 @@ Disk Mode PC that PXE-boots by mistake: the same `exit` script, so it falls thro
 
 ## 5. Web UI
 
-React + Vite, served by the backend on port 8088. Pages:
+React + Vite, served by the backend on port 8088. Layout follows ggRock's Machines and Images tabs.
 
-**Machines** (exists: list, add, assign disk, reset, delete)
-- Columns: name, mode (Disk / Boot), status, IP and MAC, game disk + version, OS image + version (Boot Mode),
-  writeback size (`used` of its clones), agent online / iSCSI connected, last boot.
-- Row actions: Reset, Assign disk, Super Client on/off, Wake-on-LAN, Restart, Shut down, Delete.
-- Banner when a PC runs an older version than the active one ("outdated", already computed by the API).
+**Machines**
+- Columns: Name, Status (online/off, Keep Writeback, agent missing, no image set, link below 1 Gbit/s),
+  IP, Game Image (+ OS image in Boot Mode) with the snapshot status icon, Uptime, Sent, Received, Speed,
+  Link Speed; MAC optional. Sent/Received come from LIO's per-LUN statistics in configfs, link speed from the
+  agent.
+- Overflow menu: Turn On (Wake-on-LAN), Shutdown, Reboot (through the agent), Apply Writebacks (only when the PC
+  is off and has Keep Writeback), Settings, Delete. No Reset: discarding is automatic.
+- Settings dialog: Main (name, read-only IP and MAC, mode, game image, OS image, hide), Hardware (NIC, GPU, CPU,
+  motherboard, reported by the agent), Advanced (Keep Writeback, snapshot pin per image).
+- Bulk: select PCs → Turn On, Turn Off, Reboot, Edit Selected (images, Keep Writeback, pins, hide).
 
-**Game Disks** (exists: create, publish, delete)
-- Name, size (grow only), drive letter, active version, number of PCs on it.
-- Version list with comment, author, date, size; actions: set active (rollback), delete old version.
-- "Start Super Client" (pick a powered-off PC), "Save as new version", "Discard changes".
+**Images**
+- Create a game image (name, size, drive letter, make default), import `.vhd`/`.vhdx` (Boot Mode system image).
+- Per image: active snapshot, snapshot list (date, size, PCs using it), make active, delete.
+- Backup / restore: `zfs send` of the image with its snapshots to a file on a local disk or over SSH to another
+  ggNet server, and back. Same idea as ggRock's `ggrock-img send/receive`.
 
-**OS Images** (Boot Mode)
-- Upload `.vhd`/`.vhdx`, versions as for game disks, Super Client flow, which PCs use which version.
+**Server**: pool size/used/free/health and last scrub, ARC size and hit ratio, IOPS and throughput per zvol,
+network throughput of the iSCSI interface.
 
-**Server** (monitor)
-- Pool: size, used, free, health, last scrub (`zpool list`, `zpool status`).
-- ARC: size, target, hit ratio (`/proc/spl/kstat/zfs/arcstats`).
-- IOPS and throughput per zvol (`zpool iostat -v`), network throughput of the iSCSI interface
-  (`/sys/class/net/<if>/statistics`), active iSCSI sessions per PC (configfs).
-
-**Settings**: service IP and portal, iSCSI target name, default drive letter, proxyDHCP on/off.
+**Settings**: service IP and portal, iSCSI target name, default drive letter, proxyDHCP on/off, retention.
 
 ---
 
@@ -306,8 +333,9 @@ React + Vite, served by the backend on port 8088. Pages:
 | Step | State |
 |---|---|
 | ZFS manager, game disks API, machines API, agent heartbeat, Disk Mode UI | done |
-| One shared iSCSI target with per-PC ACLs and mapped LUNs | **done (this change)** |
-| Game disk versions, Super Client, rollback, reset on boot (Disk Mode) | next |
+| One shared iSCSI target with per-PC ACLs and mapped LUNs | done |
+| Automatic writeback discard, Keep Writeback, Apply Writebacks, image versions, snapshot pin | next |
+| Retention job, Machines/Images UI per the ggRock docs, WoL / shutdown / reboot | next |
 | ZFS property defaults from section 1, Server monitor page | next |
 | Boot Mode: OS images, proxyDHCP, iPXE build, per-MAC script, Add Machines wizard | after Disk Mode |
 | JWT auth + TLS | last |

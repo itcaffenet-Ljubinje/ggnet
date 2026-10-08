@@ -5,6 +5,7 @@ The API lives under /api; the React build (frontend/dist) is served from the sam
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -23,7 +24,26 @@ def read_version() -> str:
         return "dev"
 
 
-app = FastAPI(title="ggNet", version=read_version())
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Run the writeback watcher next to the API (off in dev defaults and tests)."""
+    from app.api.deps import get_provisioner
+    from app.db.session import get_sessionmaker
+    from app.services.writebacks import WritebackSettings, WritebackWatcher
+
+    settings = WritebackSettings.from_config(get_config())
+    watcher = None
+    if settings.auto_discard:
+        watcher = WritebackWatcher(get_sessionmaker(), get_provisioner(), settings)
+        watcher.start()
+    try:
+        yield
+    finally:
+        if watcher is not None:
+            watcher.stop()
+
+
+app = FastAPI(title="ggNet", version=read_version(), lifespan=lifespan)
 app.include_router(game_disks.router, prefix="/api/v1")
 app.include_router(machines.router, prefix="/api/v1")
 app.include_router(agent.router, prefix="/api/v1")

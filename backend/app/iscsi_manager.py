@@ -44,6 +44,7 @@ logger = logging.getLogger("ggnet.iscsi")
 
 DEFAULT_IQN_PREFIX = "iqn.2025-05.net.ggnet"
 DEFAULT_TARGET_NAME = "storage"
+DEFAULT_CONFIGFS = "/sys/kernel/config/target/iscsi"
 
 # Slots a machine can have, in the order of their mapped LUN numbers in Boot Mode.
 SLOTS = ("os", "game")
@@ -94,6 +95,7 @@ class ISCSIConfig:
     portal: str                           # services.iscsi_portal, "IP:port"
     iqn_prefix: str = DEFAULT_IQN_PREFIX
     target_name: str = DEFAULT_TARGET_NAME
+    configfs: str = DEFAULT_CONFIGFS       # where LIO exposes sessions
 
     @classmethod
     def from_config(cls, cfg: Optional[Mapping[str, Any]] = None) -> "ISCSIConfig":
@@ -104,6 +106,7 @@ class ISCSIConfig:
             portal=str(services["iscsi_portal"]),
             iqn_prefix=str(services.get("iscsi_iqn_prefix") or DEFAULT_IQN_PREFIX),
             target_name=str(services.get("iscsi_target_name") or DEFAULT_TARGET_NAME),
+            configfs=str(services.get("iscsi_configfs") or DEFAULT_CONFIGFS),
         )
 
 
@@ -215,6 +218,29 @@ class ISCSIManager:
         if not ok:
             return None
         return {int(n) for n in _LUN_LINE_RE.findall(out)}
+
+    def session_active(self, initiator_iqn: str, target_iqn: Optional[str] = None) -> Optional[bool]:
+        """
+        Whether the initiator is logged in to the shared target right now,
+        from LIO's configfs `info` of its ACL:
+          "No active iSCSI Session for Initiator Endpoint: ..." → False
+          "... Session State: TARG_SESS_STATE_LOGGED_IN ..."   → True
+        None when it cannot be read (no ACL, LIO not loaded): callers must
+        not treat "unknown" as "disconnected".
+
+        `target_iqn` defaults to the shared target; pass a machine's recorded
+        target to read a machine still on its old per-client target.
+        """
+        target = target_iqn or self.target_iqn()
+        if not (self._valid_initiator(initiator_iqn) and self._valid_initiator(target)):
+            return None
+        path = f"{self.cfg.configfs}/{target}/tpgt_1/acls/{initiator_iqn}/info"
+        ok, out, _ = self._run(["cat", path], quiet=True)
+        if not ok:
+            return None
+        if "No active iSCSI Session" in out:
+            return False
+        return "TARG_SESS_STATE_LOGGED_IN" in out
 
     # ── Shared target ─────────────────────────────────────────────────
 

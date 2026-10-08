@@ -10,6 +10,7 @@ parallel zfs/targetcli calls on the same zvol would collide.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from dataclasses import dataclass
 
@@ -21,6 +22,16 @@ logger = logging.getLogger("ggnet.provisioning")
 
 class ProvisioningError(Exception):
     """A host operation failed. The message is shown to the user."""
+
+
+_VERSION_RE = re.compile(r"^v(\d+)$")
+
+
+def next_version(snapshots: list[str]) -> str:
+    """Name of the next image version: `base` counts as v1, so base → v2 → v3 ..."""
+    numbers = [1 if s == "base" else int(m.group(1))
+               for s in snapshots if s == "base" or (m := _VERSION_RE.match(s))]
+    return f"v{max(numbers, default=0) + 1}"
 
 
 @dataclass
@@ -157,3 +168,37 @@ class Provisioner:
             self._detach(machine_name, initiator_iqn)
             if self.zfs.dataset_exists(clone) and not self.zfs.destroy(clone, recursive=True):
                 raise self._fail(f"Deleting clone {clone} failed")
+
+    # ── Writeback lifecycle ───────────────────────────────────────────
+
+    def session_active(self, initiator_iqn: str, target_iqn: str | None = None) -> bool | None:
+        """Live LIO session state of a machine; None when unknown."""
+        return self.iscsi.session_active(initiator_iqn, target_iqn)
+
+    def set_keep_writeback(self, clone_zvol: str, keep: bool) -> None:
+        """
+        A kept writeback holds the admin's installs, so it gets sync=standard;
+        a disposable one sync=disabled (it is thrown away anyway).
+        """
+        with self.lock:
+            self._clear()
+            if self.zfs.dataset_exists(clone_zvol) and not self.zfs.set_property(
+                clone_zvol, "sync", "standard" if keep else "disabled"
+            ):
+                raise self._fail(f"Setting sync on {clone_zvol} failed")
+
+    def apply_writebacks(self, clone_zvol: str, master: str, base_snap: str) -> str:
+        """
+        Make the clone's content the next version of `master` (ggRock
+        "Apply Writebacks"). Returns the new snapshot name. The machine must
+        be powered off; the caller re-clones it from the new version.
+        """
+        with self.lock:
+            self._clear()
+            snaps = self.zfs.list_snapshots(master)
+            if snaps is None:
+                raise self._fail(f"Listing versions of {master} failed")
+            new = next_version(snaps)
+            if not self.zfs.apply_clone(clone_zvol, master, base_snap, new):
+                raise self._fail(f"Applying {clone_zvol} to {master} failed")
+        return new

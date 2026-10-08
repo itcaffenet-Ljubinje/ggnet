@@ -331,6 +331,82 @@ class ZFSManager:
         logger.error("Destroying master %s failed, holds restored", zvol_path)
         return False
 
+    def list_snapshots(self, dataset: str) -> Optional[list[str]]:
+        """
+        Snapshot names (the part after '@') of one dataset, oldest first.
+        None if they cannot be listed.
+        """
+        if not self._is_managed(dataset, allow_snapshot=False):
+            return None
+        ok, out, _ = self._run([
+            "zfs", "list", "-H", "-t", "snapshot", "-o", "name",
+            "-s", "createtxg", "-d", "1", dataset,
+        ])
+        if not ok:
+            return None
+        return [line.partition("@")[2] for line in out.splitlines() if "@" in line]
+
+    def apply_clone(self, clone: str, master: str, base_snap: str, new_snap: str) -> bool:
+        """
+        Turn a client's writeback into a new version of its master
+        (ggRock "Apply Writebacks"):
+
+            clone@ggnet-apply → zfs send -i master@base_snap | zfs recv master
+            → master@ggnet-apply renamed to master@new_snap → hold
+
+        Only the changed blocks are written into the master; master@new_snap
+        is an ordinary snapshot with no dependency on the clone. Refused when
+        base_snap is not the master's newest snapshot (another version was
+        applied in between). The master stays readonly=on throughout; zfs recv
+        is not blocked by it.
+        """
+        tmp = "ggnet-apply"
+        base = f"{master}@{base_snap}"
+        if not (self._is_managed(clone, allow_snapshot=False)
+                and self._is_managed(master, allow_snapshot=False)
+                and self._is_managed(base) and _COMPONENT_RE.match(new_snap)):
+            return False
+
+        snaps = self.list_snapshots(master)
+        if snaps is None:
+            return False
+        if not snaps or snaps[-1] != base_snap:
+            self.runner.last_error = (
+                f"{base} is not the newest version of {master} (newest: "
+                f"{snaps[-1] if snaps else 'none'}); discard this writeback and redo the change"
+            )
+            logger.error(self.runner.last_error)
+            return False
+        if new_snap in snaps:
+            self.runner.last_error = f"{master}@{new_snap} already exists"
+            return False
+
+        # A leftover from an interrupted apply; it is ours, so drop it.
+        self._run(["zfs", "destroy", f"{clone}@{tmp}"], quiet=True)
+        if not self.snapshot(clone, tmp):
+            return False
+        ok, _, err = self.runner.run_pipe(
+            ["zfs", "send", "-i", base, f"{clone}@{tmp}"],
+            ["zfs", "recv", master],
+        )
+        if not ok:
+            logger.error("Applying %s to %s failed: %s", clone, master, err)
+            self._run(["zfs", "destroy", f"{clone}@{tmp}"], quiet=True)
+            self.runner.last_error = err
+            return False
+        steps = [
+            ["zfs", "rename", f"{master}@{tmp}", f"{master}@{new_snap}"],
+            ["zfs", "hold", "ggnet:protected", f"{master}@{new_snap}"],
+        ]
+        for step in steps:
+            ok, _, err = self._run(step)
+            if not ok:
+                logger.error("Apply of %s left %s in place: %s", clone, step, err)
+                return False
+        self._run(["zfs", "destroy", f"{clone}@{tmp}"], quiet=True)
+        logger.info("Applied writeback %s to %s as @%s", clone, master, new_snap)
+        return True
+
     def zvol_device_path(self, zvol_path: str) -> str:
         """Path to the block device, input for the iSCSI backstore."""
         return f"/dev/zvol/{zvol_path}"
