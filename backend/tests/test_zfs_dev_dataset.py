@@ -50,8 +50,10 @@ def test_master_clone_reset_cycle(dev_zfs):
         assert zfs.get_property(master, "readonly") == "on"
 
         assert zfs.clone(snap, client)
-        assert [c["zvol"] for c in zfs.list_clients()] == [client]
-        assert zfs.list_clients()[0]["cloned_from"] == snap
+        # Other clones (e.g. from real-PC tests) may live in the dev tree too.
+        ours = [c for c in zfs.list_clients() if c["zvol"] == client]
+        assert len(ours) == 1
+        assert ours[0]["cloned_from"] == snap
 
         # The master must not be destroyable while a clone exists.
         assert not zfs.destroy_master(master)

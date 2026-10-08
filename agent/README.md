@@ -33,7 +33,11 @@ Logs: Event Viewer → Windows Logs → Application, source `ggnet-agent`.
    .\install.ps1 -ServerUrl http://<ggnet-server-ip>:8088
    ```
 
-   Use `-DriveLetter G` if `D:` is already taken (DVD drive, second partition).
+   `-DriveLetter G` picks another preferred letter (default `D`). If the preferred letter is taken on a PC
+   (DVD drive, second partition, USB stick), the agent keeps the letter Windows already gave the game disk,
+   or takes the first free one (preferred..Z, then D upward), and logs a warning. Keep the same letter on
+   every PC where you can: games and launchers (e.g. Steam library folders) remember the path they were
+   installed to.
 
 The same command updates an existing install. `scripts/uninstall.ps1` removes it.
 

@@ -10,6 +10,7 @@ export function disk(overrides: Partial<GameDisk> = {}): GameDisk {
     size_gb: 100,
     snapshot: "base",
     published: true,
+    editor_id: null,
     created_at: "2026-10-07T12:00:00Z",
     ...overrides,
   };
@@ -23,6 +24,7 @@ export function machine(overrides: Partial<Machine> = {}): Machine {
     initiator_iqn: "iqn.1991-05.com.microsoft:pc01",
     mac: null,
     game_disk_id: null,
+    editing_disk_id: null,
     status: "idle",
     last_error: null,
     clone_zvol: null,

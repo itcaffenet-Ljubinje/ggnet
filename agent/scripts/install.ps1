@@ -26,10 +26,11 @@ if (-not [Uri]::TryCreate($ServerUrl, 'Absolute', [ref]$uri) -or $uri.Scheme -no
 }
 if (-not (Test-Path $Source)) { throw "ggnet-agent.exe not found next to this script" }
 
-# Warn early: the game disk needs this drive letter to be free.
+# Warn early: the game disk prefers this drive letter.
 $used = Get-Volume -DriveLetter $DriveLetter -ErrorAction SilentlyContinue
 if ($used) {
-    Write-Warning "Drive ${DriveLetter}: is already used ($($used.FileSystemLabel) $($used.DriveType)); the game disk cannot take it. Use -DriveLetter."
+    Write-Warning ("Drive ${DriveLetter}: is already used ($($used.FileSystemLabel) $($used.DriveType)); " +
+        "the game disk will get the next free letter. Use -DriveLetter to pick another one.")
 }
 
 $service = Get-Service $ServiceName -ErrorAction SilentlyContinue

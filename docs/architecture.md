@@ -171,6 +171,19 @@ cold boot. A newer `booted_at` with no live iSCSI session discards the writeback
 current active snapshot, or to its pinned snapshot (below). All of this runs under the provisioner lock and only
 ever touches that one PC's ACL, backstore and clone.
 
+### Filling a new master (Edit on PC)
+
+A new game disk starts as an empty, writable **draft** zvol. To fill it, **Edit on PC** maps the draft zvol itself
+(no clone) as the game disk of one Disk Mode PC that has no game disk; the machine's status becomes `editing`.
+ggnet-agent connects it as usual; on first use the admin initializes and formats it in Disk Management (the agent
+assigns the drive letter once a data partition exists) and installs the games. Then the PC is shut down and
+**Finish editing** unmaps the draft (refused while the PC still has an iSCSI session), and **Publish** takes `@base`,
+holds it and sets `readonly=on`.
+
+While a draft is being edited, it cannot be published or deleted, and the editing PC cannot get a game disk or be
+deleted. The writeback watcher only records the editing PC's session state; it never discards anything there,
+because there is no writeback: every write goes straight into the draft.
+
 ### Image versions
 
 Masters are versioned with ZFS snapshots: `@base`, `@v2`, `@v3`, ... Each image has one **active** snapshot.

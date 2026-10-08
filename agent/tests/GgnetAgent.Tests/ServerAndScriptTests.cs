@@ -50,8 +50,37 @@ public class ScriptTests
     {
         var script = WindowsIscsiInitiator.Scripts.Connect("192.168.0.10", 3260, Target, "D");
         Assert.Contains($"Connect-IscsiTarget -NodeAddress '{Target}' -TargetPortalAddress '192.168.0.10' -TargetPortalPortNumber 3260 -IsPersistent $false", script);
-        Assert.Contains("-NewDriveLetter 'D'", script);
+        Assert.Contains("$letter = 'D'", script);
+        Assert.Contains("-NewDriveLetter $letter", script);
         Assert.Contains("Set-Disk -Number $disk.Number -IsOffline $false", script);
+    }
+
+    [Fact]
+    public void Connect_script_falls_back_to_a_free_letter_when_the_preferred_is_taken()
+    {
+        var script = WindowsIscsiInitiator.Scripts.Connect("192.168.0.10", 3260, Target, "F");
+        // Keep the letter Windows gave the partition, else try F..Z, then D, E.
+        Assert.Contains("if ($mine -ne $letter -and $used -contains $letter) {", script);
+        Assert.Contains("[char[]]'FGHIJKLMNOPQRSTUVWXYZDE'", script);
+        Assert.Contains("throw \"No free drive letter for the game disk\"", script);
+        // The letter used is the script's output.
+        Assert.EndsWith("$letter", script.TrimEnd());
+    }
+
+    [Theory]
+    [InlineData("D", "DEFGHIJKLMNOPQRSTUVWXYZ")]
+    [InlineData("G", "GHIJKLMNOPQRSTUVWXYZDEF")]
+    [InlineData("Z", "ZDEFGHIJKLMNOPQRSTUVWXY")]
+    public void Letter_order_starts_at_the_preferred_letter_and_never_uses_a_to_c(string preferred, string order)
+    {
+        Assert.Equal(order, WindowsIscsiInitiator.Scripts.LetterOrder(preferred));
+    }
+
+    [Fact]
+    public async Task Connect_returns_the_letter_from_the_last_output_line()
+    {
+        var iscsi = new WindowsIscsiInitiator(new RecordingRunner("some warning\r\nE"));
+        Assert.Equal("E", await iscsi.ConnectAsync("192.168.0.10", 3260, Target, "D", CancellationToken.None));
     }
 
     [Fact]

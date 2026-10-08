@@ -112,6 +112,29 @@ class Provisioner:
             if not ok:
                 raise self._fail(f"Deleting {zvol_path} failed")
 
+    def start_edit(self, machine_name: str, initiator_iqn: str, zvol_path: str) -> str:
+        """
+        Map a DRAFT master as the machine's game disk so it can be filled on
+        that PC. Returns the target IQN. The caller makes sure the disk is a
+        draft and the machine has nothing else mapped.
+        """
+        with self.lock:
+            self._clear()
+            if self.zfs.get_property(zvol_path, "readonly") != "off":
+                raise self._fail(f"{zvol_path} is not a writable draft")
+            iqn = self.iscsi.attach(
+                machine_name, initiator_iqn, [Disk("game", self.zfs.zvol_device_path(zvol_path))]
+            )
+            if iqn is None:
+                raise self._fail("Exposing the master over iSCSI failed", self.iscsi.runner)
+        return iqn
+
+    def finish_edit(self, machine_name: str, initiator_iqn: str) -> None:
+        """Unmap the master from the editing machine. The client must be shut down."""
+        with self.lock:
+            self._clear()
+            self._detach(machine_name, initiator_iqn)
+
     # ── Machines ──────────────────────────────────────────────────────
 
     def provision(self, machine_name: str, initiator_iqn: str, snapshot_path: str) -> ClientDisk:

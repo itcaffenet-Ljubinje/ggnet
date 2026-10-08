@@ -14,11 +14,12 @@ export interface GameDisk {
   size_gb: number;
   snapshot: string | null;
   published: boolean;
+  editor_id: number | null;
   created_at: string;
 }
 
 export type MachineMode = "disk" | "boot";
-export type MachineStatus = "idle" | "provisioned" | "error";
+export type MachineStatus = "idle" | "provisioned" | "editing" | "error";
 
 export interface Machine {
   id: number;
@@ -27,6 +28,7 @@ export interface Machine {
   initiator_iqn: string;
   mac: string | null;
   game_disk_id: number | null;
+  editing_disk_id: number | null;
   status: MachineStatus;
   last_error: string | null;
   clone_zvol: string | null;
@@ -108,6 +110,9 @@ export const api = {
   createDisk: (name: string, size_gb: number) =>
     request<GameDisk>("POST", "/v1/game-disks", { name, size_gb }),
   publishDisk: (id: number) => request<GameDisk>("POST", `/v1/game-disks/${id}/publish`),
+  startEdit: (id: number, machine_id: number) =>
+    request<GameDisk>("POST", `/v1/game-disks/${id}/edit`, { machine_id }),
+  finishEdit: (id: number) => request<GameDisk>("POST", `/v1/game-disks/${id}/finish-edit`),
   deleteDisk: (id: number) => request<void>("DELETE", `/v1/game-disks/${id}`),
 
   listMachines: () => request<Machine[]>("GET", "/v1/machines"),

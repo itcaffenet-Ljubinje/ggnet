@@ -3,6 +3,7 @@ import type { MachineStatus } from "../api";
 const LABELS: Record<MachineStatus, string> = {
   idle: "Idle",
   provisioned: "Ready",
+  editing: "Editing master",
   error: "Error",
 };
 

@@ -57,15 +57,17 @@ def heartbeat(
     db.refresh(machine)
     on_heartbeat(db, prov, machine, body.booted_at, body.iscsi_connected, settings)
 
-    provisioned = machine.status is MachineStatus.PROVISIONED
+    # While editing, the draft master is the machine's game disk.
+    mapped = machine.status in (MachineStatus.PROVISIONED, MachineStatus.EDITING)
+    disk = machine.game_disk or machine.editing_disk
     return AgentConfig(
         machine_id=machine.id,
         name=machine.name,
         mode=machine.mode,
         status=machine.status,
         initiator_iqn=machine.initiator_iqn,
-        iscsi_target_iqn=machine.iscsi_target_iqn if provisioned else None,
+        iscsi_target_iqn=machine.iscsi_target_iqn if mapped else None,
         portal_ip=prov.iscsi.portal_ip,
         portal_port=prov.iscsi.portal_port,
-        game_disk=machine.game_disk.name if machine.game_disk else None,
+        game_disk=disk.name if disk else None,
     )

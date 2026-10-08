@@ -102,6 +102,18 @@ public class AgentWorkerTests
     }
 
     [Fact]
+    public async Task Stays_connected_when_the_disk_gets_another_letter()
+    {
+        _iscsi.GivenLetter = "E";   // D: is a DVD drive on this PC
+        var worker = Worker();
+        await worker.TickAsync(CancellationToken.None);
+        await worker.TickAsync(CancellationToken.None);
+
+        Assert.Equal(Target, worker.ConnectedTarget);
+        Assert.Single(_iscsi.Calls, c => c.StartsWith("connect "));
+    }
+
+    [Fact]
     public async Task Keeps_the_disk_when_the_server_answers_with_an_error()
     {
         var worker = Worker();
