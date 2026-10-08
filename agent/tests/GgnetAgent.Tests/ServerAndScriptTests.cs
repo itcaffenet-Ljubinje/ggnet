@@ -54,6 +54,27 @@ public class ScriptTests
         Assert.Contains("Set-Disk -Number $disk.Number -IsOffline $false", script);
     }
 
+    [Fact]
+    public void Connect_script_logs_in_only_when_not_already_logged_in()
+    {
+        // Found on a real Windows 11 PC: a second Connect-IscsiTarget fails with
+        // "The target has already been logged in via an iSCSI session".
+        var script = WindowsIscsiInitiator.Scripts.Connect("192.168.0.10", 3260, Target, "D");
+        var guard = script.IndexOf($"$_.NodeAddress -eq '{Target}' -and $_.IsConnected", StringComparison.Ordinal);
+        var login = script.IndexOf("Connect-IscsiTarget", StringComparison.Ordinal);
+        Assert.True(guard >= 0 && guard < login);
+        Assert.Contains("if (-not $loggedIn) {", script);
+    }
+
+    [Fact]
+    public void Connect_script_filters_sessions_with_where_object()
+    {
+        // Get-IscsiSession has no -TargetNodeAddress parameter (real PC error).
+        var script = WindowsIscsiInitiator.Scripts.Connect("192.168.0.10", 3260, Target, "D");
+        Assert.DoesNotContain("Get-IscsiSession -", script);
+        Assert.Contains($"Get-IscsiSession | Where-Object TargetNodeAddress -eq '{Target}'", script);
+    }
+
     [Theory]
     [InlineData("192.168.0.10", 3260, "iqn.2025-05.net.ggnet:client-pc01'; whoami; '", "D")]
     [InlineData("192.168.0.10'; whoami; '", 3260, Target, "D")]
