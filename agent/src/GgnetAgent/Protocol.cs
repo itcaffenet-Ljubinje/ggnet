@@ -13,7 +13,8 @@ public sealed record Heartbeat(
     string AgentVersion,
     string? InitiatorIqn,
     bool IscsiConnected,
-    DateTimeOffset? BootedAt = null);
+    DateTimeOffset? BootedAt = null,
+    string? DriveLetter = null);   // the letter the game disk got, while connected
 
 /// <summary>The server's answer: what this PC should connect.</summary>
 public sealed record AgentConfig(
@@ -25,7 +26,8 @@ public sealed record AgentConfig(
     string? IscsiTargetIqn,
     string PortalIp,
     int PortalPort,
-    string? GameDisk);
+    string? GameDisk,
+    string? DriveLetter = null);   // the letter the game disk should get (set per machine in the UI)
 
 internal static class Protocol
 {

@@ -29,6 +29,8 @@ export interface Machine {
   mac: string | null;
   game_disk_id: number | null;
   editing_disk_id: number | null;
+  drive_letter: string;
+  reported_drive_letter: string | null;
   status: MachineStatus;
   last_error: string | null;
   clone_zvol: string | null;
@@ -54,6 +56,7 @@ export interface MachineCreate {
   initiator_iqn?: string | null;
   mac?: string | null;
   game_disk_id?: number | null;
+  drive_letter?: string;
 }
 
 export class ApiError extends Error {
@@ -121,6 +124,8 @@ export const api = {
     request<Machine>("PATCH", `/v1/machines/${id}`, body),
   assignDisk: (id: number, game_disk_id: number | null) =>
     request<Machine>("POST", `/v1/machines/${id}/assign`, { game_disk_id }),
+  setDriveLetterAll: (drive_letter: string) =>
+    request<Machine[]>("PUT", "/v1/machines/drive-letter", { drive_letter }),
   setKeepWriteback: (id: number, enabled: boolean) =>
     request<Machine>("PUT", `/v1/machines/${id}/keep-writeback`, { enabled }),
   applyWritebacks: (id: number) => request<Machine>("POST", `/v1/machines/${id}/apply-writebacks`),

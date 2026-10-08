@@ -4,7 +4,7 @@ namespace GgnetAgent.Tests;
 
 public class PlannerTests
 {
-    private static readonly AgentAction ConnectTarget = new AgentAction.Connect("192.168.0.10", 3260, Target);
+    private static readonly AgentAction ConnectTarget = new AgentAction.Connect("192.168.0.10", 3260, Target, "D");
 
     [Fact]
     public void Connects_when_provisioned_and_nothing_is_connected()
@@ -16,7 +16,40 @@ public class PlannerTests
     [Fact]
     public void Does_nothing_when_already_connected()
     {
-        Assert.Empty(Planner.Plan(Config(), new LocalState(ExpectedIqn, Target), true));
+        Assert.Empty(Planner.Plan(Config(), new LocalState(ExpectedIqn, Target, "D"), true));
+    }
+
+    [Fact]
+    public void Uses_the_letter_the_server_sets_for_this_machine()
+    {
+        var actions = Planner.Plan(Config() with { DriveLetter = "G" }, new LocalState(ExpectedIqn, null), true, "D");
+        Assert.Equal([new AgentAction.Connect("192.168.0.10", 3260, Target, "G")], actions);
+    }
+
+    [Fact]
+    public void Falls_back_to_the_local_letter_when_the_server_sends_none()
+    {
+        var actions = Planner.Plan(Config(), new LocalState(ExpectedIqn, null), true, "F");
+        Assert.Equal([new AgentAction.Connect("192.168.0.10", 3260, Target, "F")], actions);
+    }
+
+    [Fact]
+    public void Moves_a_connected_disk_when_the_letter_changes()
+    {
+        var local = new LocalState(ExpectedIqn, Target, "D");
+        var actions = Planner.Plan(Config() with { DriveLetter = "E" }, local, true);
+        // No disconnect: the idempotent connect script only changes the letter.
+        Assert.Equal([new AgentAction.Connect("192.168.0.10", 3260, Target, "E")], actions);
+    }
+
+    [Theory]
+    [InlineData("C")]
+    [InlineData("d")]
+    [InlineData("D'; whoami; '")]
+    public void Rejects_an_invalid_drive_letter_from_the_server(string letter)
+    {
+        var config = Config() with { DriveLetter = letter };
+        Assert.Throws<ServerException>(() => Planner.Plan(config, new LocalState(ExpectedIqn, null), true));
     }
 
     [Fact]
@@ -40,7 +73,7 @@ public class PlannerTests
         const string other = "iqn.2025-05.net.ggnet:client-pc02";
         var actions = Planner.Plan(Config(other), new LocalState(ExpectedIqn, Target), true);
         Assert.Equal(
-            [new AgentAction.Disconnect(Target), new AgentAction.Connect("192.168.0.10", 3260, other)],
+            [new AgentAction.Disconnect(Target), new AgentAction.Connect("192.168.0.10", 3260, other, "D")],
             actions);
     }
 

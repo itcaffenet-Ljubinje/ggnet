@@ -19,6 +19,11 @@ _MAC_RE = re.compile(r"^[0-9a-f]{2}([:-]?[0-9a-f]{2}){5}$")
 
 WINDOWS_IQN_PREFIX = "iqn.1991-05.com.microsoft:"
 
+# Game disk drive letter on the client; A-C are floppy and system drives.
+_DRIVE_LETTER_RE = re.compile(r"^[D-Z]$")
+# Boot Mode: Windows itself is C:, the game disk is always D:.
+BOOT_MODE_LETTER = "Boot Mode machines always get the game disk as D:"
+
 
 def _machine_name(v: str) -> str:
     v = v.strip().lower()
@@ -31,6 +36,13 @@ def _iqn(v: str) -> str:
     v = v.strip().lower()
     if not _IQN_RE.match(v):
         raise ValueError("invalid IQN (expected e.g. iqn.1991-05.com.microsoft:pc01)")
+    return v
+
+
+def _drive_letter(v: str) -> str:
+    v = v.strip().rstrip(":").upper()
+    if not _DRIVE_LETTER_RE.match(v):
+        raise ValueError("drive letter: one letter D-Z")
     return v
 
 
@@ -84,11 +96,17 @@ class MachineCreate(BaseModel):
     initiator_iqn: str | None = None   # empty → iqn.1991-05.com.microsoft:<name>
     mac: str | None = None
     game_disk_id: int | None = None    # set → provision right away
+    drive_letter: str = "D"            # game disk letter on the PC (Disk Mode)
 
     @field_validator("name")
     @classmethod
     def check_name(cls, v: str) -> str:
         return _machine_name(v)
+
+    @field_validator("drive_letter")
+    @classmethod
+    def check_drive_letter(cls, v: str) -> str:
+        return _drive_letter(v)
 
     @field_validator("initiator_iqn")
     @classmethod
@@ -104,19 +122,30 @@ class MachineCreate(BaseModel):
     def default_iqn(self):
         if self.initiator_iqn is None:
             self.initiator_iqn = WINDOWS_IQN_PREFIX + self.name
+        if self.mode is MachineMode.BOOT and self.drive_letter != "D":
+            raise ValueError(BOOT_MODE_LETTER)
         return self
 
 
 class MachineUpdate(BaseModel):
     """
     Partial update: only the fields sent are changed (`"mac": null` clears
-    the MAC). Name, IQN and mode only while the machine has no disk.
+    the MAC). Name, IQN and mode only while the machine has no disk; the
+    drive letter at any time (the agent moves the disk on its next heartbeat).
     """
 
     name: str | None = None
     mode: MachineMode | None = None
     initiator_iqn: str | None = None
     mac: str | None = None
+    drive_letter: str | None = None
+
+    @field_validator("drive_letter")
+    @classmethod
+    def check_drive_letter(cls, v: str | None) -> str | None:
+        if v is None:
+            raise ValueError("drive letter cannot be empty")
+        return _drive_letter(v)
 
     @field_validator("name")
     @classmethod
@@ -149,6 +178,17 @@ class KeepWriteback(BaseModel):
     enabled: bool
 
 
+class DriveLetterAll(BaseModel):
+    """Set the game disk letter of every Disk Mode machine at once."""
+
+    drive_letter: str
+
+    @field_validator("drive_letter")
+    @classmethod
+    def check_drive_letter(cls, v: str) -> str:
+        return _drive_letter(v)
+
+
 class MachineAssign(BaseModel):
     game_disk_id: int | None   # None → remove the disk (deprovision)
 
@@ -163,6 +203,8 @@ class MachineOut(BaseModel):
     mac: str | None
     game_disk_id: int | None
     editing_disk_id: int | None
+    drive_letter: str
+    reported_drive_letter: str | None
     status: MachineStatus
     last_error: str | None
     clone_zvol: str | None
@@ -192,6 +234,12 @@ class AgentHeartbeat(BaseModel):
     initiator_iqn: str | None = None    # the client's actual initiator IQN
     iscsi_connected: bool = False
     booted_at: datetime | None = None   # Windows boot time (UTC); newer = the PC restarted
+    drive_letter: str | None = None     # the letter the game disk actually got
+
+    @field_validator("drive_letter")
+    @classmethod
+    def check_drive_letter(cls, v: str | None) -> str | None:
+        return _drive_letter(v) if v else None
 
     @field_validator("booted_at")
     @classmethod
@@ -229,3 +277,4 @@ class AgentConfig(BaseModel):
     portal_ip: str
     portal_port: int
     game_disk: str | None
+    drive_letter: str                   # the letter the game disk should get

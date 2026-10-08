@@ -29,6 +29,15 @@ public sealed class AgentWorker(
     /// <summary>The ggNet target this agent connected (sessions are not persistent across reboots).</summary>
     internal string? ConnectedTarget { get; private set; }
 
+    /// <summary>The letter the connection was made for, and the one the disk actually got.</summary>
+    internal string? RequestedLetter { get; private set; }
+    internal string? DriveLetter { get; private set; }
+
+    private void Forget()
+    {
+        ConnectedTarget = RequestedLetter = DriveLetter = null;
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         logger.LogInformation("ggnet-agent {Version} for {Machine}, server {Server}",
@@ -65,22 +74,23 @@ public sealed class AgentWorker(
             if (ConnectedTarget is not null && !await iscsi.IsConnectedAsync(ConnectedTarget, ct))
             {
                 logger.LogWarning("Target {Target} is no longer connected", ConnectedTarget);
-                ConnectedTarget = null;
+                Forget();
             }
 
             AgentConfig? config = null;
             try
             {
                 config = await server.HeartbeatAsync(
-                    new Heartbeat(_machineName, Version, initiator, ConnectedTarget is not null, _startedAt), ct);
+                    new Heartbeat(_machineName, Version, initiator, ConnectedTarget is not null, _startedAt,
+                        DriveLetter), ct);
             }
             catch (Exception e) when (e is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
             {
                 logger.LogWarning("Server {Server} unreachable: {Error}", _options.ServerUrl, e.Message);
             }
 
-            var actions = Planner.Plan(config, new LocalState(initiator, ConnectedTarget),
-                _options.ManageInitiatorName);
+            var actions = Planner.Plan(config, new LocalState(initiator, ConnectedTarget, RequestedLetter),
+                _options.ManageInitiatorName, _options.DriveLetter);
             foreach (var action in actions)
             {
                 await ApplyAsync(action, ct);
@@ -108,18 +118,20 @@ public sealed class AgentWorker(
             case AgentAction.Disconnect a:
                 logger.LogInformation("Disconnecting {Target}", a.TargetIqn);
                 await iscsi.DisconnectAsync(a.TargetIqn, ct);
-                ConnectedTarget = null;
+                Forget();
                 break;
 
             case AgentAction.Connect a:
                 logger.LogInformation("Connecting {Target} on {Ip}:{Port} as {Drive}:",
-                    a.TargetIqn, a.PortalIp, a.PortalPort, _options.DriveLetter);
-                var letter = await iscsi.ConnectAsync(a.PortalIp, a.PortalPort, a.TargetIqn, _options.DriveLetter, ct);
+                    a.TargetIqn, a.PortalIp, a.PortalPort, a.DriveLetter);
+                var letter = await iscsi.ConnectAsync(a.PortalIp, a.PortalPort, a.TargetIqn, a.DriveLetter, ct);
                 ConnectedTarget = a.TargetIqn;
-                if (!string.Equals(letter, _options.DriveLetter, StringComparison.OrdinalIgnoreCase))
+                RequestedLetter = a.DriveLetter;
+                DriveLetter = IscsiNames.IsDriveLetter(letter) ? letter : null;
+                if (!string.Equals(letter, a.DriveLetter, StringComparison.OrdinalIgnoreCase))
                 {
                     logger.LogWarning("{Drive}: is taken; the game disk is {Letter}: instead",
-                        _options.DriveLetter, letter);
+                        a.DriveLetter, letter);
                 }
                 break;
         }
@@ -134,7 +146,7 @@ public sealed class AgentWorker(
         {
             logger.LogInformation("Stopping: disconnecting {Target}", ConnectedTarget);
             await iscsi.DisconnectAsync(ConnectedTarget, cancellationToken);
-            ConnectedTarget = null;
+            Forget();
         }
         catch (Exception e)
         {

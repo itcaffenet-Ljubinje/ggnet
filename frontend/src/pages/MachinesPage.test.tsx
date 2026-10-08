@@ -143,4 +143,51 @@ describe("MachinesPage", () => {
     await userEvent.selectOptions(screen.getByLabelText("Game disk for pc01"), "1");
     expect(await screen.findByRole("alert")).toHaveTextContent("Creating the iSCSI target failed");
   });
+
+  it("changes one machine's letter without asking while it is offline", async () => {
+    const fetchMock = stubFetch(200, machine({ drive_letter: "G" }));
+    const confirm = vi.spyOn(window, "confirm");
+    render(<MachinesPage disks={[]} machines={[machine()]} reload={vi.fn().mockResolvedValue(undefined)} />);
+
+    await userEvent.selectOptions(screen.getByLabelText("Drive letter for pc01"), "G");
+    expect(confirm).not.toHaveBeenCalled();
+    expect(calls(fetchMock)).toEqual([
+      { url: "/api/v1/machines/1", method: "PATCH", body: { drive_letter: "G" } },
+    ]);
+  });
+
+  it("asks before moving the disk of a running PC", async () => {
+    const fetchMock = stubFetch();
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<MachinesPage disks={[]} machines={[machine({ iscsi_connected: true })]} reload={vi.fn()} />);
+    await userEvent.selectOptions(screen.getByLabelText("Drive letter for pc01"), "E");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("sets the letter for all disk mode PCs", async () => {
+    const fetchMock = stubFetch(200, []);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<MachinesPage disks={[]} machines={[machine()]} reload={vi.fn().mockResolvedValue(undefined)} />);
+
+    await userEvent.selectOptions(screen.getByLabelText("Game disk letter for all Disk Mode PCs"), "F");
+    await userEvent.click(screen.getByRole("button", { name: "Apply to all" }));
+    expect(calls(fetchMock)).toEqual([
+      { url: "/api/v1/machines/drive-letter", method: "PUT", body: { drive_letter: "F" } },
+    ]);
+  });
+
+  it("shows the letter the PC actually got; boot mode is always D:", () => {
+    render(
+      <MachinesPage
+        disks={[]}
+        machines={[
+          machine({ drive_letter: "D", reported_drive_letter: "E" }),
+          machine({ id: 2, name: "boot01", mode: "boot", initiator_iqn: "iqn.1991-05.com.microsoft:boot01" }),
+        ]}
+        reload={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Got E:")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Drive letter for boot01")).toBeNull();
+  });
 });

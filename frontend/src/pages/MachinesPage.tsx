@@ -13,6 +13,9 @@ interface Props {
 }
 
 const CLIENT_OFF = "The client PC must be powered off or disconnected.";
+// Game disk letters; A-C are floppy and system drives.
+const LETTERS = "DEFGHIJKLMNOPQRSTUVWXYZ".split("");
+const MOVES_NOW = "Running PCs move the game disk within a minute; close games on them first.";
 
 export function MachinesPage({ disks, machines, reload }: Props) {
   const { busy, error, setError, run } = useAsyncAction();
@@ -21,6 +24,7 @@ export function MachinesPage({ disks, machines, reload }: Props) {
   const [iqn, setIqn] = useState("");
   const [mode, setMode] = useState<MachineMode>("disk");
   const [diskId, setDiskId] = useState("");
+  const [allLetter, setAllLetter] = useState("D");
 
   const published = disks.filter((d) => d.published);
   const diskName = (id: number | null) => disks.find((d) => d.id === id)?.name ?? "—";
@@ -55,6 +59,22 @@ export function MachinesPage({ disks, machines, reload }: Props) {
       if (!window.confirm(`${msg}\n\n${CLIENT_OFF}`)) return;
     }
     await run(`assign-${m.id}`, () => api.assignDisk(m.id, target));
+    await reload();
+  }
+
+  async function setLetter(m: Machine, letter: string) {
+    if (m.iscsi_connected && !window.confirm(`Move the game disk of ${m.name} to ${letter}:?\n\n${MOVES_NOW}`)) {
+      return;
+    }
+    await run(`letter-${m.id}`, () => api.updateMachine(m.id, { drive_letter: letter }));
+    await reload();
+  }
+
+  async function setLetterAll() {
+    if (!window.confirm(`Set the game disk letter of every Disk Mode PC to ${allLetter}:?\n\n${MOVES_NOW}`)) {
+      return;
+    }
+    await run("letter-all", () => api.setDriveLetterAll(allLetter));
     await reload();
   }
 
@@ -139,6 +159,24 @@ export function MachinesPage({ disks, machines, reload }: Props) {
         </button>
       </form>
 
+      {machines.some((m) => m.mode === "disk") && (
+        <div className="card form-row">
+          <label>
+            Game disk letter for all Disk Mode PCs
+            <select value={allLetter} onChange={(e) => setAllLetter(e.target.value)}>
+              {LETTERS.map((l) => (
+                <option key={l} value={l}>
+                  {l}:
+                </option>
+              ))}
+            </select>
+          </label>
+          <button type="button" onClick={setLetterAll} disabled={busy !== null}>
+            {busy === "letter-all" ? "Applying…" : "Apply to all"}
+          </button>
+        </div>
+      )}
+
       {machines.length === 0 ? (
         <p className="empty">No machines yet.</p>
       ) : (
@@ -149,6 +187,7 @@ export function MachinesPage({ disks, machines, reload }: Props) {
               <th>Mode</th>
               <th>MAC</th>
               <th>Game disk</th>
+              <th>Drive</th>
               <th>Status</th>
               <th>Agent</th>
               <th>Keep writeback</th>
@@ -183,6 +222,34 @@ export function MachinesPage({ disks, machines, reload }: Props) {
                     </select>
                   ) : (
                     <span className="muted">—</span>
+                  )}
+                </td>
+                <td>
+                  {m.mode === "disk" ? (
+                    <select
+                      aria-label={`Drive letter for ${m.name}`}
+                      value={m.drive_letter}
+                      onChange={(e) => setLetter(m, e.target.value)}
+                      disabled={busy !== null}
+                    >
+                      {LETTERS.map((l) => (
+                        <option key={l} value={l}>
+                          {l}:
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="muted">D:</span>
+                  )}
+                  {m.reported_drive_letter && m.reported_drive_letter !== m.drive_letter && (
+                    <div>
+                      <span
+                        className="badge badge-warn"
+                        title={`${m.drive_letter}: is taken on this PC, so the game disk got ${m.reported_drive_letter}:`}
+                      >
+                        Got {m.reported_drive_letter}:
+                      </span>
+                    </div>
                   )}
                 </td>
                 <td>

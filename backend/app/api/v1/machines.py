@@ -28,6 +28,8 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_provisioner
 from app.api.v1.errors import conflict, host_failed, not_found
 from app.api.v1.schemas import (
+    BOOT_MODE_LETTER,
+    DriveLetterAll,
     KeepWriteback,
     MachineAssign,
     MachineCreate,
@@ -137,6 +139,18 @@ def list_machines(db: Session = Depends(get_db)):
     return db.scalars(select(Machine).order_by(Machine.name)).all()
 
 
+@router.put("/drive-letter", response_model=list[MachineOut])
+def set_drive_letter_all(body: DriveLetterAll, db: Session = Depends(get_db)):
+    """
+    Give every Disk Mode machine the same game disk letter. The agents move
+    the disk on their next heartbeat; nothing changes on the server host.
+    """
+    for m in db.scalars(select(Machine).where(Machine.mode == MachineMode.DISK)):
+        m.drive_letter = body.drive_letter
+    db.commit()
+    return db.scalars(select(Machine).order_by(Machine.name)).all()
+
+
 @router.get("/{machine_id}", response_model=MachineOut)
 def get_machine(machine_id: int, db: Session = Depends(get_db)):
     return _get(db, machine_id)
@@ -154,7 +168,8 @@ def create_machine(
         _require_disk_mode(body.mode, body.name)
         disk = _published_disk(db, body.game_disk_id)
 
-    machine = Machine(name=body.name, mode=body.mode, initiator_iqn=body.initiator_iqn, mac=body.mac)
+    machine = Machine(name=body.name, mode=body.mode, initiator_iqn=body.initiator_iqn, mac=body.mac,
+                      drive_letter=body.drive_letter)
     db.add(machine)
     try:
         db.commit()
@@ -179,6 +194,11 @@ def update_machine(machine_id: int, body: MachineUpdate, db: Session = Depends(g
                   and changes[k] != getattr(machine, k)}
     if host_bound and (_has_host_state(machine) or machine.game_disk_id is not None):
         conflict(f"{', '.join(sorted(host_bound))} can only change while the machine has no disk")
+
+    if changes.get("mode", machine.mode) is MachineMode.BOOT:
+        if changes.get("drive_letter", "D") != "D":
+            conflict(BOOT_MODE_LETTER)
+        changes["drive_letter"] = "D"
 
     for key, value in changes.items():
         setattr(machine, key, value)

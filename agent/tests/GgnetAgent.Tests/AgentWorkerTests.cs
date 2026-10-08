@@ -114,6 +114,25 @@ public class AgentWorkerTests
     }
 
     [Fact]
+    public async Task Moves_the_disk_when_the_admin_changes_the_letter_and_reports_it()
+    {
+        _server.Body = ConfigJson.Replace("\"game_disk\": \"cs2\"", "\"game_disk\": \"cs2\", \"drive_letter\": \"G\"");
+        var worker = Worker();
+        await worker.TickAsync(CancellationToken.None);
+        Assert.Equal($"connect {Target} 192.168.0.10:3260 G:", _iscsi.Calls[^1]);
+
+        await worker.TickAsync(CancellationToken.None);   // same letter: nothing to do
+        Assert.Single(_iscsi.Calls, c => c.StartsWith("connect "));
+        Assert.Contains("\"drive_letter\":\"G\"", _server.Requests[^1].Body);
+
+        _server.Body = _server.Body.Replace("\"drive_letter\": \"G\"", "\"drive_letter\": \"E\"");
+        await worker.TickAsync(CancellationToken.None);
+        Assert.Equal($"connect {Target} 192.168.0.10:3260 E:", _iscsi.Calls[^1]);
+        Assert.DoesNotContain(_iscsi.Calls, c => c.StartsWith("disconnect"));
+        Assert.Equal("E", worker.DriveLetter);
+    }
+
+    [Fact]
     public async Task Keeps_the_disk_when_the_server_answers_with_an_error()
     {
         var worker = Worker();

@@ -147,6 +147,9 @@ class Machine(Base):
         back_populates="editor", foreign_keys=[editing_disk_id]
     )
 
+    # Game disk letter on the PC (Disk Mode; Boot Mode is always D:).
+    drive_letter: Mapped[str] = mapped_column(String(1), default="D", server_default="D")
+
     status: Mapped[MachineStatus] = mapped_column(
         _str_enum(MachineStatus), default=MachineStatus.IDLE
     )
@@ -173,6 +176,7 @@ class Machine(Base):
     agent_version: Mapped[str | None] = mapped_column(String(32), default=None)
     reported_iqn: Mapped[str | None] = mapped_column(String(223), default=None)
     iscsi_connected: Mapped[bool | None] = mapped_column(Boolean, default=None)
+    reported_drive_letter: Mapped[str | None] = mapped_column(String(1), default=None)
 
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now)
     updated_at: Mapped[datetime] = mapped_column(
