@@ -25,10 +25,23 @@ public sealed class ScriptException(string message) : Exception(message);
 /// <summary>Runs scripts with Windows PowerShell (always present on Windows 11).</summary>
 public sealed class PowerShellRunner : IScriptRunner
 {
+    /// <summary>
+    /// The whole script as one -EncodedCommand (base64 UTF-16LE), so it is
+    /// parsed like a .ps1 file and nothing in it is read as a separate
+    /// command-line argument. Not `-Command -`: PowerShell reads stdin like an
+    /// interactive console, and a multi-line statement at the end of the
+    /// input (with no empty line after it) was never run.
+    /// </summary>
+    internal static string Arguments(string script)
+    {
+        var full = "$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\n" + script;
+        return "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand "
+               + Convert.ToBase64String(Encoding.Unicode.GetBytes(full));
+    }
+
     public async Task<string> RunAsync(string script, CancellationToken ct)
     {
-        var psi = new ProcessStartInfo("powershell.exe",
-            "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -")
+        var psi = new ProcessStartInfo("powershell.exe", Arguments(script))
         {
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
@@ -40,8 +53,7 @@ public sealed class PowerShellRunner : IScriptRunner
         };
         using var process = Process.Start(psi) ?? throw new ScriptException("Cannot start powershell.exe");
 
-        // The script goes in through stdin, so nothing in it is parsed as a command-line argument.
-        await process.StandardInput.WriteAsync("$ErrorActionPreference = 'Stop'\n" + script);
+        // Nothing to read: an open stdin can make PowerShell wait for input.
         process.StandardInput.Close();
 
         var stdout = process.StandardOutput.ReadToEndAsync(ct);
@@ -141,10 +153,13 @@ public sealed class WindowsIscsiInitiator(IScriptRunner runner) : IIscsiInitiato
                 if ($disk.IsOffline) { Set-Disk -Number $disk.Number -IsOffline $false }
                 if ($disk.IsReadOnly) { Set-Disk -Number $disk.Number -IsReadOnly $false }
 
-                $part = Get-Partition -DiskNumber $disk.Number |
+                # An empty disk (a new master) has no partitions; Get-Partition then errors.
+                $part = Get-Partition -DiskNumber $disk.Number -ErrorAction SilentlyContinue |
                     Where-Object { $_.Type -ne 'Reserved' -and $_.Type -ne 'System' } |
                     Sort-Object Size -Descending | Select-Object -First 1
-                if (-not $part) { throw "Disk $($disk.Number) has no data partition" }
+                if (-not $part) {
+                    throw "Disk $($disk.Number) has no data partition; initialize and format it in Disk Management"
+                }
 
                 # Prefer the configured letter. When another drive holds it (DVD,
                 # second partition, USB stick), keep the letter Windows already gave

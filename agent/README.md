@@ -17,7 +17,10 @@ Every 30 seconds (and at startup) the agent:
      (domain PCs use `iqn.1991-05.com.microsoft:<fqdn>`). Turn off with `ManageInitiatorName`.
 
 If the server is unreachable the disk stays connected, so players keep playing.
-When the service stops (including Windows shutdown) it disconnects the disk.
+When the service stops the disk stays connected, so restarting or updating the agent does not pull it
+from running games (Windows shutdown ends the session; `uninstall.ps1` disconnects it).
+`install.ps1` turns Fast Startup off: with it, "Shut down" is a hibernation and the PC would come back
+with the old boot time.
 Errors are logged and retried on the next heartbeat.
 
 Logs: Event Viewer → Windows Logs → Application, source `ggnet-agent`.
@@ -33,11 +36,13 @@ Logs: Event Viewer → Windows Logs → Application, source `ggnet-agent`.
    .\install.ps1 -ServerUrl http://<ggnet-server-ip>:8088
    ```
 
-   `-DriveLetter G` picks another preferred letter (default `D`). If the preferred letter is taken on a PC
-   (DVD drive, second partition, USB stick), the agent keeps the letter Windows already gave the game disk,
-   or takes the first free one (preferred..Z, then D upward), and logs a warning. Keep the same letter on
-   every PC where you can: games and launchers (e.g. Steam library folders) remember the path they were
-   installed to.
+   The game disk letter is set per machine in the web UI (Machines → Drive, or "Apply to all"); the agent
+   moves a connected disk when it changes. `-DriveLetter` is only used with a server that sends no letter.
+   If the wanted letter is taken on a PC (DVD drive, second partition, USB stick), the agent keeps the letter
+   Windows already gave the game disk, or takes the first free one (wanted..Z, then D upward), logs a
+   warning and reports it; the UI then shows "Got E:". Keep the same letter on every PC where you can:
+   games and launchers (e.g. Steam library folders) remember the path they were installed to.
+   Boot Mode machines always get the game disk as D: (Windows itself is C:).
 
 The same command updates an existing install. `scripts/uninstall.ps1` removes it.
 
@@ -67,7 +72,8 @@ The agent talks to the ggNet backend over HTTP (no authentication yet; JWT is pl
   "agent_version": "0.1.0",
   "initiator_iqn": "iqn.1991-05.com.microsoft:pc01",
   "iscsi_connected": true,
-  "booted_at": "2026-10-08T07:58:12.4810000+00:00"
+  "booted_at": "2026-10-08T07:58:12.4810000+00:00",
+  "drive_letter": "D"
 }
 ```
 
@@ -75,7 +81,8 @@ The agent talks to the ggNet backend over HTTP (no authentication yet; JWT is pl
 - `initiator_iqn`: the client's actual iSCSI initiator name, shown in the UI so an
   IQN that does not match the server's ACL is visible.
 - `iscsi_connected`: whether the game disk target is currently connected.
-- `booted_at`: when the agent service started, i.e. this Windows boot. When it changes the server
+- `drive_letter`: the letter the game disk actually got (only while connected).
+- `booted_at`: when Windows booted (restarting the agent service keeps it). When it changes the server
   discards the PC's old writeback before answering, so every boot gets a clean game disk
   (unless the machine has Keep Writeback).
 
@@ -91,12 +98,15 @@ Response `200`:
   "iscsi_target_iqn": "iqn.2025-05.net.ggnet:client-pc01",
   "portal_ip": "192.168.0.10",
   "portal_port": 3260,
-  "game_disk": "steam-main"
+  "game_disk": "steam-main",
+  "drive_letter": "D"
 }
 ```
 
-- Connect only when `iscsi_target_iqn` is not null (the machine is `provisioned`).
-  It is null while the machine has no disk or is in `error`.
+- Connect only when `iscsi_target_iqn` is not null (the machine is `provisioned`, or
+  `editing` a draft game disk). It is null while the machine has no disk or is in `error`.
+- `drive_letter` (D-Z) is the letter the game disk should get; when it changes while
+  connected, move the disk to it (no reconnect).
 - The server's ACL allows only `initiator_iqn`; the agent must use that initiator name.
 - If `iscsi_target_iqn` changes or becomes null (disk switched, removed or reset in
   the UI), disconnect the old target before connecting a new one.

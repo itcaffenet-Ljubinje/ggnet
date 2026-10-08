@@ -4,13 +4,15 @@ public abstract record AgentAction
 {
     public sealed record SetInitiatorName(string CurrentIqn, string NewIqn) : AgentAction;
     public sealed record Disconnect(string TargetIqn) : AgentAction;
-    public sealed record Connect(string PortalIp, int PortalPort, string TargetIqn) : AgentAction;
+    /// <summary>Connect the target (or, when already connected, just move it to DriveLetter).</summary>
+    public sealed record Connect(string PortalIp, int PortalPort, string TargetIqn, string DriveLetter) : AgentAction;
 }
 
 /// <summary>What the agent knows about this PC before acting.</summary>
 public sealed record LocalState(
     string? InitiatorIqn,
-    string? ConnectedTarget);   // the ggNet target this agent connected, if still connected
+    string? ConnectedTarget,        // the ggNet target this agent connected, if still connected
+    string? RequestedLetter = null); // the drive letter that connection was made for
 
 /// <summary>
 /// Decides what to do from the server's answer and the local state. Pure, so
@@ -19,7 +21,7 @@ public sealed record LocalState(
 public static class Planner
 {
     public static IReadOnlyList<AgentAction> Plan(
-        AgentConfig? config, LocalState local, bool manageInitiatorName)
+        AgentConfig? config, LocalState local, bool manageInitiatorName, string localLetter = "D")
     {
         // Server unreachable: keep whatever is connected; players keep playing.
         if (config is null) return [];
@@ -32,13 +34,32 @@ public static class Planner
         {
             actions.Add(new AgentAction.Disconnect(local.ConnectedTarget));
         }
-        if (wanted is null || local.ConnectedTarget == wanted) return actions;
+        if (wanted is null) return actions;
 
         if (!IscsiNames.IsIqn(wanted) || !IscsiNames.IsPortalIp(config.PortalIp)
             || !IscsiNames.IsPort(config.PortalPort))
         {
             throw new ServerException(
                 $"Server sent an invalid target ({wanted} on {config.PortalIp}:{config.PortalPort})");
+        }
+
+        // The admin picks the letter per machine in the UI; servers older than
+        // that send none, and then the local setting applies.
+        var letter = config.DriveLetter ?? localLetter;
+        if (!IscsiNames.IsDriveLetter(letter))
+        {
+            throw new ServerException($"Server sent an invalid drive letter: {letter}");
+        }
+
+        if (local.ConnectedTarget == wanted)
+        {
+            // Connected; the connect script is idempotent, so running it again
+            // only moves the disk to the newly chosen letter.
+            if (local.RequestedLetter != letter)
+            {
+                actions.Add(new AgentAction.Connect(config.PortalIp, config.PortalPort, wanted, letter));
+            }
+            return actions;
         }
 
         // The server's ACL only lets in the expected IQN; renaming the initiator
@@ -53,7 +74,7 @@ public static class Planner
             actions.Add(new AgentAction.SetInitiatorName(local.InitiatorIqn, config.InitiatorIqn));
         }
 
-        actions.Add(new AgentAction.Connect(config.PortalIp, config.PortalPort, wanted));
+        actions.Add(new AgentAction.Connect(config.PortalIp, config.PortalPort, wanted, letter));
         return actions;
     }
 }

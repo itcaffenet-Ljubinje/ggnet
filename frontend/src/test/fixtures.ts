@@ -25,6 +25,8 @@ export function machine(overrides: Partial<Machine> = {}): Machine {
     mac: null,
     game_disk_id: null,
     editing_disk_id: null,
+    drive_letter: "D",
+    reported_drive_letter: null,
     status: "idle",
     last_error: null,
     clone_zvol: null,

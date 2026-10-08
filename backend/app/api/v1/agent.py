@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_provisioner, get_writeback_settings
 from app.api.v1.errors import not_found
 from app.api.v1.schemas import AgentConfig, AgentHeartbeat
-from app.db.models import Machine, MachineStatus
+from app.db.models import Machine, MachineMode, MachineStatus
 from app.db.session import get_db
 from app.services.provisioning import Provisioner
 from app.services.writebacks import WritebackSettings, on_heartbeat
@@ -50,6 +50,7 @@ def heartbeat(
             agent_version=body.agent_version,
             reported_iqn=body.initiator_iqn,
             iscsi_connected=body.iscsi_connected,
+            reported_drive_letter=body.drive_letter if body.iscsi_connected else None,
             updated_at=Machine.updated_at,
         )
     )
@@ -70,4 +71,5 @@ def heartbeat(
         portal_ip=prov.iscsi.portal_ip,
         portal_port=prov.iscsi.portal_port,
         game_disk=disk.name if disk else None,
+        drive_letter=machine.drive_letter if machine.mode is MachineMode.DISK else "D",
     )

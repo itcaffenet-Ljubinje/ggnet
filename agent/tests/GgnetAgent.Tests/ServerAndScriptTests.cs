@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using System.Text.Json;
 using static GgnetAgent.Tests.Samples;
 
@@ -65,6 +66,26 @@ public class ScriptTests
         Assert.Contains("throw \"No free drive letter for the game disk\"", script);
         // The letter used is the script's output.
         Assert.EndsWith("$letter", script.TrimEnd());
+    }
+
+    [Fact]
+    public void Runner_passes_the_whole_script_as_one_encoded_command()
+    {
+        // Real PC: with `-Command -` the last multi-line block never printed the letter.
+        var args = PowerShellRunner.Arguments("$a = 1 +\n  2\n$a");
+        const string flag = "-EncodedCommand ";
+        Assert.StartsWith("-NoProfile -NonInteractive -ExecutionPolicy Bypass " + flag, args);
+        Assert.DoesNotContain("-Command", args);
+        var decoded = Encoding.Unicode.GetString(Convert.FromBase64String(args[(args.IndexOf(flag) + flag.Length)..]));
+        Assert.Equal("$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\n$a = 1 +\n  2\n$a", decoded);
+    }
+
+    [Fact]
+    public void Connect_script_explains_an_empty_disk()
+    {
+        var script = WindowsIscsiInitiator.Scripts.Connect("192.168.0.10", 3260, Target, "D");
+        Assert.Contains("Get-Partition -DiskNumber $disk.Number -ErrorAction SilentlyContinue", script);
+        Assert.Contains("initialize and format it in Disk Management", script);
     }
 
     [Theory]

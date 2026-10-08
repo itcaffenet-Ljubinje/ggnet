@@ -33,6 +33,14 @@ if ($used) {
         "the game disk will get the next free letter. Use -DriveLetter to pick another one.")
 }
 
+# Fast Startup makes "Shut down" a hibernation, so Windows keeps its boot time
+# and the server cannot tell a new boot from the old one. Cafe PCs boot cold.
+$power = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power'
+if ((Get-ItemProperty $power -ErrorAction SilentlyContinue).HiberbootEnabled -ne 0) {
+    Set-ItemProperty $power -Name HiberbootEnabled -Value 0 -Type DWord
+    Write-Host "Fast Startup turned off."
+}
+
 $service = Get-Service $ServiceName -ErrorAction SilentlyContinue
 if ($service -and $service.Status -ne 'Stopped') {
     Write-Host "Stopping $ServiceName..."

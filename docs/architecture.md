@@ -165,9 +165,10 @@ A watcher in the backend reads this for every PC every few seconds and keeps the
 | Writeback of a powered-off Keep Writeback PC is older than "Inactive writebacks" hours | n/a | discard (retention, below) |
 
 The grace period stops a short network blip from wiping a disk that Windows still has mounted; the agent's boot
-time covers a fast restart that reconnects within the grace period. That boot time is when the ggnet-agent service
-started (`booted_at` in the heartbeat), not the kernel uptime, because Windows Fast Startup resumes the kernel on a
-cold boot. A newer `booted_at` with no live iSCSI session discards the writeback before the agent logs in again. A discard also moves the PC to the image's
+time covers a fast restart that reconnects within the grace period. That boot time is when Windows booted
+(`booted_at` in the heartbeat), so restarting or updating the agent service is not a reboot; the agent also keeps
+the disk connected when its service stops. `install.ps1` turns Windows Fast Startup off, because with it "Shut down"
+hibernates the kernel and the next start keeps the old boot time. A newer `booted_at` with no live iSCSI session discards the writeback before the agent logs in again. A discard also moves the PC to the image's
 current active snapshot, or to its pinned snapshot (below). All of this runs under the provisioner lock and only
 ever touches that one PC's ACL, backstore and clone.
 
