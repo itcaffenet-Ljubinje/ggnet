@@ -114,8 +114,13 @@ public sealed class AgentWorker(
             case AgentAction.Connect a:
                 logger.LogInformation("Connecting {Target} on {Ip}:{Port} as {Drive}:",
                     a.TargetIqn, a.PortalIp, a.PortalPort, _options.DriveLetter);
-                await iscsi.ConnectAsync(a.PortalIp, a.PortalPort, a.TargetIqn, _options.DriveLetter, ct);
+                var letter = await iscsi.ConnectAsync(a.PortalIp, a.PortalPort, a.TargetIqn, _options.DriveLetter, ct);
                 ConnectedTarget = a.TargetIqn;
+                if (!string.Equals(letter, _options.DriveLetter, StringComparison.OrdinalIgnoreCase))
+                {
+                    logger.LogWarning("{Drive}: is taken; the game disk is {Letter}: instead",
+                        _options.DriveLetter, letter);
+                }
                 break;
         }
     }

@@ -9,7 +9,8 @@ public interface IIscsiInitiator
     Task<string?> GetInitiatorNameAsync(CancellationToken ct);
     Task SetInitiatorNameAsync(string currentIqn, string newIqn, CancellationToken ct);
     Task<bool> IsConnectedAsync(string targetIqn, CancellationToken ct);
-    Task ConnectAsync(string portalIp, int portalPort, string targetIqn, string driveLetter, CancellationToken ct);
+    /// <summary>Connects the target and returns the drive letter the game disk got.</summary>
+    Task<string> ConnectAsync(string portalIp, int portalPort, string targetIqn, string driveLetter, CancellationToken ct);
     Task DisconnectAsync(string targetIqn, CancellationToken ct);
 }
 
@@ -76,8 +77,12 @@ public sealed class WindowsIscsiInitiator(IScriptRunner runner) : IIscsiInitiato
     public async Task<bool> IsConnectedAsync(string targetIqn, CancellationToken ct) =>
         await runner.RunAsync(Scripts.IsConnected(targetIqn), ct) == "True";
 
-    public Task ConnectAsync(string portalIp, int portalPort, string targetIqn, string driveLetter, CancellationToken ct) =>
-        runner.RunAsync(Scripts.Connect(portalIp, portalPort, targetIqn, driveLetter), ct);
+    public async Task<string> ConnectAsync(string portalIp, int portalPort, string targetIqn, string driveLetter, CancellationToken ct)
+    {
+        var letter = await runner.RunAsync(Scripts.Connect(portalIp, portalPort, targetIqn, driveLetter), ct);
+        // The letter is the script's last output line.
+        return letter.Split('\n')[^1].Trim();
+    }
 
     public Task DisconnectAsync(string targetIqn, CancellationToken ct) =>
         runner.RunAsync(Scripts.Disconnect(targetIqn), ct);
@@ -140,10 +145,39 @@ public sealed class WindowsIscsiInitiator(IScriptRunner runner) : IIscsiInitiato
                     Where-Object { $_.Type -ne 'Reserved' -and $_.Type -ne 'System' } |
                     Sort-Object Size -Descending | Select-Object -First 1
                 if (-not $part) { throw "Disk $($disk.Number) has no data partition" }
-                if ($part.DriveLetter -ne '{{driveLetter}}') {
-                    Set-Partition -DiskNumber $disk.Number -PartitionNumber $part.PartitionNumber -NewDriveLetter '{{driveLetter}}'
+
+                # Prefer the configured letter. When another drive holds it (DVD,
+                # second partition, USB stick), keep the letter Windows already gave
+                # the partition, else take the first free one. Prints the letter used.
+                $used = @(Get-CimInstance Win32_LogicalDisk | ForEach-Object { [string]$_.DeviceID[0] }) +
+                    @(Get-Partition | Where-Object { $_.DriveLetter -match '^[A-Za-z]$' } |
+                        ForEach-Object { [string]$_.DriveLetter })
+                $mine = if ($part.DriveLetter -match '^[A-Za-z]$') { ([string]$part.DriveLetter).ToUpper() } else { '' }
+                $letter = '{{driveLetter}}'
+                if ($mine -ne $letter -and $used -contains $letter) {
+                    $letter = $mine
+                    if (-not $letter) {
+                        $letter = [char[]]'{{LetterOrder(driveLetter)}}' | ForEach-Object { [string]$_ } |
+                            Where-Object { $used -notcontains $_ } | Select-Object -First 1
+                    }
+                    if (-not $letter) { throw "No free drive letter for the game disk" }
                 }
+                if ($mine -ne $letter) {
+                    Set-Partition -DiskNumber $disk.Number -PartitionNumber $part.PartitionNumber -NewDriveLetter $letter
+                }
+                $letter
                 """;
+        }
+
+        /// <summary>
+        /// Letters to try when the preferred one is taken: from the preferred
+        /// letter to Z, then from D up to it (A-C are never used).
+        /// </summary>
+        public static string LetterOrder(string preferred)
+        {
+            var all = "DEFGHIJKLMNOPQRSTUVWXYZ";
+            var i = all.IndexOf(preferred, StringComparison.Ordinal);
+            return all[i..] + all[..i];
         }
 
         public static string Disconnect(string targetIqn)

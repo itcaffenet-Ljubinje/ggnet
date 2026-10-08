@@ -48,6 +48,8 @@ internal sealed class FakeIscsi : IIscsiInitiator
     public HashSet<string> Connected { get; } = [];
     public List<string> Calls { get; } = [];
     public Exception? FailConnect { get; set; }
+    /// <summary>The letter the disk "gets"; null means the requested one.</summary>
+    public string? GivenLetter { get; set; }
 
     public Task<string?> GetInitiatorNameAsync(CancellationToken ct) => Task.FromResult(InitiatorName);
 
@@ -61,12 +63,12 @@ internal sealed class FakeIscsi : IIscsiInitiator
     public Task<bool> IsConnectedAsync(string targetIqn, CancellationToken ct) =>
         Task.FromResult(Connected.Contains(targetIqn));
 
-    public Task ConnectAsync(string portalIp, int portalPort, string targetIqn, string driveLetter, CancellationToken ct)
+    public Task<string> ConnectAsync(string portalIp, int portalPort, string targetIqn, string driveLetter, CancellationToken ct)
     {
         Calls.Add($"connect {targetIqn} {portalIp}:{portalPort} {driveLetter}:");
         if (FailConnect is not null) throw FailConnect;
         Connected.Add(targetIqn);
-        return Task.CompletedTask;
+        return Task.FromResult(GivenLetter ?? driveLetter);
     }
 
     public Task DisconnectAsync(string targetIqn, CancellationToken ct)
