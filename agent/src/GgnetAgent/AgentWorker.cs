@@ -128,7 +128,11 @@ public sealed class AgentWorker(
                 ConnectedTarget = a.TargetIqn;
                 RequestedLetter = a.DriveLetter;
                 DriveLetter = IscsiNames.IsDriveLetter(letter) ? letter : null;
-                if (!string.Equals(letter, a.DriveLetter, StringComparison.OrdinalIgnoreCase))
+                if (DriveLetter is null)
+                {
+                    logger.LogWarning("The connect script did not report the game disk's drive letter");
+                }
+                else if (DriveLetter != a.DriveLetter)
                 {
                     logger.LogWarning("{Drive}: is taken; the game disk is {Letter}: instead",
                         a.DriveLetter, letter);
