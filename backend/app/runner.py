@@ -61,3 +61,48 @@ class CommandRunner:
                     "Command failed [%s]: %s", " ".join(str_cmd), result.stderr.strip()
                 )
         return ok, result.stdout.strip(), result.stderr.strip()
+
+    def run_pipe(
+        self,
+        producer: list[str],
+        consumer: list[str],
+        timeout: Optional[int] = None,
+    ) -> tuple[bool, str, str]:
+        """
+        Run `producer | consumer` without a shell (e.g. zfs send | zfs recv).
+        Succeeds only if BOTH commands exit 0. Returns (success, stdout of the
+        consumer, stderr of whichever failed).
+        """
+        timeout = timeout or self.timeout
+        p_cmd = [str(c) for c in producer]
+        c_cmd = [str(c) for c in consumer]
+        shown = f"{' '.join(p_cmd)} | {' '.join(c_cmd)}"
+        try:
+            prod = subprocess.Popen(p_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except FileNotFoundError as e:
+            self.last_error = str(e)
+            return False, "", str(e)
+        try:
+            cons = subprocess.run(
+                c_cmd, stdin=prod.stdout, capture_output=True, text=True, timeout=timeout
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            prod.kill()
+            prod.wait()
+            err = "timeout" if isinstance(e, subprocess.TimeoutExpired) else str(e)
+            logger.error("Pipe failed (%s): %s", err, shown)
+            self.last_error = f"{err}: {shown}"
+            return False, "", err
+        finally:
+            if prod.stdout:
+                prod.stdout.close()
+        prod_err = prod.stderr.read().decode(errors="replace").strip() if prod.stderr else ""
+        prod.wait()
+
+        if prod.returncode != 0 or cons.returncode != 0:
+            err = (prod_err if prod.returncode != 0 else cons.stderr.strip()) \
+                or f"exit code {prod.returncode}/{cons.returncode}"
+            self.last_error = err
+            logger.error("Pipe failed [%s]: %s", shown, err)
+            return False, "", err
+        return True, cons.stdout.strip(), ""

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -140,6 +140,10 @@ class MachineUpdate(BaseModel):
         return _mac(v)
 
 
+class KeepWriteback(BaseModel):
+    enabled: bool
+
+
 class MachineAssign(BaseModel):
     game_disk_id: int | None   # None → remove the disk (deprovision)
 
@@ -163,6 +167,11 @@ class MachineOut(BaseModel):
     agent_version: str | None
     reported_iqn: str | None
     iscsi_connected: bool | None
+    keep_writeback: bool
+    writeback_dirty: bool
+    session_active: bool | None
+    session_changed_at: datetime | None
+    booted_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
@@ -176,6 +185,14 @@ class AgentHeartbeat(BaseModel):
     agent_version: str = Field(max_length=32)
     initiator_iqn: str | None = None    # the client's actual initiator IQN
     iscsi_connected: bool = False
+    booted_at: datetime | None = None   # Windows boot time (UTC); newer = the PC restarted
+
+    @field_validator("booted_at")
+    @classmethod
+    def utc(cls, v: datetime | None) -> datetime | None:
+        if v is not None and v.tzinfo is None:
+            v = v.replace(tzinfo=timezone.utc)
+        return v
 
     @field_validator("name")
     @classmethod

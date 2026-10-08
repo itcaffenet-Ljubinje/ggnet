@@ -37,6 +37,20 @@ public class AgentWorkerTests
     }
 
     [Fact]
+    public async Task Sends_the_same_boot_time_on_every_heartbeat()
+    {
+        var worker = Worker();
+        await worker.TickAsync(CancellationToken.None);
+        await worker.TickAsync(CancellationToken.None);
+
+        string BootedAt(int i) =>
+            System.Text.Json.JsonDocument.Parse(_server.Requests[i].Body)
+                .RootElement.GetProperty("booted_at").GetString()!;
+        Assert.False(string.IsNullOrEmpty(BootedAt(0)));
+        Assert.Equal(BootedAt(0), BootedAt(1));
+    }
+
+    [Fact]
     public async Task Disconnects_when_the_disk_is_removed_in_the_ui()
     {
         var worker = Worker();

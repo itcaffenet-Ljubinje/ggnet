@@ -5,8 +5,9 @@ The agent posts a heartbeat at boot and periodically; the answer tells it
 which iSCSI target to connect and on which portal. Machines must be
 registered first (UI / /machines); unknown names get 404.
 
-No authentication yet (planned with JWT); the heartbeat only records what
-the agent reports and never changes anything on the host.
+No authentication yet (planned with JWT). The heartbeat records what the
+agent reports; the only host change it can cause is the automatic writeback
+discard after a reboot (app.services.writebacks), before the agent logs in.
 """
 
 from __future__ import annotations
@@ -17,12 +18,13 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_provisioner
+from app.api.deps import get_provisioner, get_writeback_settings
 from app.api.v1.errors import not_found
 from app.api.v1.schemas import AgentConfig, AgentHeartbeat
 from app.db.models import Machine, MachineStatus
 from app.db.session import get_db
 from app.services.provisioning import Provisioner
+from app.services.writebacks import WritebackSettings, on_heartbeat
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -32,6 +34,7 @@ def heartbeat(
     body: AgentHeartbeat,
     db: Session = Depends(get_db),
     prov: Provisioner = Depends(get_provisioner),
+    settings: WritebackSettings = Depends(get_writeback_settings),
 ):
     machine = db.scalar(select(Machine).where(Machine.name == body.name))
     if machine is None:
@@ -52,6 +55,7 @@ def heartbeat(
     )
     db.commit()
     db.refresh(machine)
+    on_heartbeat(db, prov, machine, body.booted_at, body.iscsi_connected, settings)
 
     provisioned = machine.status is MachineStatus.PROVISIONED
     return AgentConfig(

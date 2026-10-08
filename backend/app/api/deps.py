@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from app.config import get_config
 from app.iscsi_manager import ISCSIManager
 from app.services.provisioning import Provisioner
+from app.services.writebacks import WritebackSettings
 from app.zfs_manager import ZFSManager
 
 
@@ -13,3 +15,7 @@ from app.zfs_manager import ZFSManager
 def get_provisioner() -> Provisioner:
     """One Provisioner (and one lock) for the whole process; config from config.toml."""
     return Provisioner(ZFSManager(), ISCSIManager())
+
+
+def get_writeback_settings() -> WritebackSettings:
+    return WritebackSettings.from_config(get_config())

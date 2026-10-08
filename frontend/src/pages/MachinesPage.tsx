@@ -58,10 +58,24 @@ export function MachinesPage({ disks, machines, reload }: Props) {
     await reload();
   }
 
-  async function reset(m: Machine) {
-    const msg = `Reset ${m.name} to a clean copy of "${diskName(m.game_disk_id)}"?\n\n${CLIENT_OFF}`;
+  async function keep(m: Machine, enabled: boolean) {
+    if (!enabled) {
+      const msg =
+        `Stop keeping the writeback of ${m.name}?\n\n` +
+        "Changes not applied yet are discarded the next time it disconnects.";
+      if (!window.confirm(msg)) return;
+    }
+    await run(`keep-${m.id}`, () => api.setKeepWriteback(m.id, enabled));
+    await reload();
+  }
+
+  async function apply(m: Machine) {
+    const msg =
+      `Apply the writeback of ${m.name} to "${diskName(m.game_disk_id)}"?\n\n` +
+      "It becomes the new version of the game disk. Every other PC gets it at its next reboot.\n\n" +
+      `${m.name} must be powered off.`;
     if (!window.confirm(msg)) return;
-    await run(`reset-${m.id}`, () => api.resetMachine(m.id));
+    await run(`apply-${m.id}`, () => api.applyWritebacks(m.id));
     await reload();
   }
 
@@ -137,6 +151,7 @@ export function MachinesPage({ disks, machines, reload }: Props) {
               <th>Game disk</th>
               <th>Status</th>
               <th>Agent</th>
+              <th>Keep writeback</th>
               <th />
             </tr>
           </thead>
@@ -171,7 +186,14 @@ export function MachinesPage({ disks, machines, reload }: Props) {
                 <td>
                   <StatusBadge status={m.status} />
                   {m.outdated && (
-                    <span className="badge badge-warn" title="Reset to move to the new snapshot">
+                    <span
+                      className="badge badge-warn"
+                      title={
+                        m.keep_writeback
+                          ? "Keeps its writeback, so it stays on its version"
+                          : "Moves to the new version at its next reboot"
+                      }
+                    >
                       Update available
                     </span>
                   )}
@@ -180,10 +202,24 @@ export function MachinesPage({ disks, machines, reload }: Props) {
                 <td>
                   <AgentState machine={m} />
                 </td>
+                <td>
+                  <input
+                    type="checkbox"
+                    aria-label={`Keep writeback of ${m.name}`}
+                    checked={m.keep_writeback}
+                    onChange={(e) => keep(m, e.target.checked)}
+                    disabled={busy !== null || m.mode !== "disk"}
+                  />
+                </td>
                 <td className="actions">
-                  {m.game_disk_id !== null && (
-                    <button type="button" onClick={() => reset(m)} disabled={busy !== null}>
-                      {busy === `reset-${m.id}` ? "Resetting…" : "Reset"}
+                  {m.keep_writeback && m.status === "provisioned" && (
+                    <button
+                      type="button"
+                      onClick={() => apply(m)}
+                      disabled={busy !== null || m.session_active === true}
+                      title={m.session_active ? `Shut down ${m.name} first` : undefined}
+                    >
+                      {busy === `apply-${m.id}` ? "Applying…" : "Apply writebacks"}
                     </button>
                   )}
                   <button

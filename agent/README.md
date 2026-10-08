@@ -62,7 +62,8 @@ The agent talks to the ggNet backend over HTTP (no authentication yet; JWT is pl
   "name": "pc01",
   "agent_version": "0.1.0",
   "initiator_iqn": "iqn.1991-05.com.microsoft:pc01",
-  "iscsi_connected": true
+  "iscsi_connected": true,
+  "booted_at": "2026-10-08T07:58:12.4810000+00:00"
 }
 ```
 
@@ -70,6 +71,9 @@ The agent talks to the ggNet backend over HTTP (no authentication yet; JWT is pl
 - `initiator_iqn`: the client's actual iSCSI initiator name, shown in the UI so an
   IQN that does not match the server's ACL is visible.
 - `iscsi_connected`: whether the game disk target is currently connected.
+- `booted_at`: when the agent service started, i.e. this Windows boot. When it changes the server
+  discards the PC's old writeback before answering, so every boot gets a clean game disk
+  (unless the machine has Keep Writeback).
 
 Response `200`:
 

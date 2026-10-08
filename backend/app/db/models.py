@@ -133,6 +133,18 @@ class Machine(Base):
     clone_snapshot: Mapped[str | None] = mapped_column(String(320), default=None)
     iscsi_target_iqn: Mapped[str | None] = mapped_column(String(223), default=None)
 
+    # Writeback lifecycle (ggRock model): the server discards the writeback
+    # after every disconnect unless keep_writeback is set.
+    keep_writeback: Mapped[bool] = mapped_column(Boolean, default=False)
+    # The client wrote (was connected) since the clone was made; a clean
+    # clone is never discarded again.
+    writeback_dirty: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Last iSCSI session state seen in LIO (None = never read) and since when.
+    session_active: Mapped[bool | None] = mapped_column(Boolean, default=None)
+    session_changed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), default=None)
+    # Windows boot time reported by the agent; a newer value means a new boot.
+    booted_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), default=None)
+
     # Reported by ggnet-agent in its heartbeat; never used for provisioning.
     last_seen_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), default=None)
     agent_version: Mapped[str | None] = mapped_column(String(32), default=None)

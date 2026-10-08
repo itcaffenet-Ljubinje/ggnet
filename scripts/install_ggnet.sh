@@ -334,6 +334,13 @@ tftp_root = "$DATA_DIR/tftp"
 http_root = "$DATA_DIR/http"
 http_port = 80
 
+[writebacks]
+# Discard each client's writeback after it disconnects (shutdown/restart),
+# unless the machine has Keep Writeback. grace_seconds rides out network blips.
+auto_discard = true
+grace_seconds = 30
+poll_seconds = 5
+
 [web]
 bind = "$WEB_BIND"
 port = $WEB_PORT

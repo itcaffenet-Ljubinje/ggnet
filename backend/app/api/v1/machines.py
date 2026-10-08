@@ -7,6 +7,10 @@ API for client machines, with auto-provisioning.
   error        an operation failed; `last_error` says why, and
                assign/reset/DELETE retry and clean up leftovers
 
+Writebacks are discarded automatically by the server after every disconnect
+(app.services.writebacks); `keep_writeback` keeps them, and
+/apply-writebacks turns a kept writeback into the disk's next version.
+
 Only Disk Mode machines can be provisioned; Boot Mode comes later.
 """
 
@@ -21,7 +25,13 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_provisioner
 from app.api.v1.errors import conflict, host_failed, not_found
-from app.api.v1.schemas import MachineAssign, MachineCreate, MachineOut, MachineUpdate
+from app.api.v1.schemas import (
+    KeepWriteback,
+    MachineAssign,
+    MachineCreate,
+    MachineOut,
+    MachineUpdate,
+)
 from app.db.models import GameDisk, Machine, MachineMode, MachineStatus
 from app.db.session import get_db
 from app.services.provisioning import ClientDisk, Provisioner, ProvisioningError
@@ -67,6 +77,16 @@ def _set_provisioned(m: Machine, cd: ClientDisk) -> None:
     m.clone_zvol = cd.clone_zvol
     m.clone_snapshot = cd.clone_snapshot
     m.iscsi_target_iqn = cd.iscsi_target_iqn
+    m.writeback_dirty = False
+
+
+def _keep_sync(db: Session, prov: Provisioner, m: Machine) -> None:
+    """A fresh clone is created with sync=disabled; a kept one needs sync=standard."""
+    if m.keep_writeback and m.clone_zvol:
+        try:
+            prov.set_keep_writeback(m.clone_zvol, True)
+        except ProvisioningError as e:
+            _fail(db, m, e)
 
 
 def _set_idle(m: Machine) -> None:
@@ -100,6 +120,7 @@ def _provision(db: Session, prov: Provisioner, m: Machine, disk: GameDisk) -> No
         m.clone_zvol = prov.client_path(m.name)
         _fail(db, m, e)
     _set_provisioned(m, cd)
+    _keep_sync(db, prov, m)
 
 
 # ── Routes ────────────────────────────────────────────────────────────
@@ -203,6 +224,9 @@ def reset_machine(
     """
     Return the machine's disk to a clean state of the disk's CURRENT
     snapshot. The client must be powered off or disconnected.
+
+    Not in the UI: the server discards writebacks on its own after every
+    disconnect. Kept for recovery (e.g. after an `error`).
     """
     machine = _get(db, machine_id)
     if machine.game_disk_id is None:
@@ -216,6 +240,88 @@ def reset_machine(
         machine.clone_zvol = clone
         _fail(db, machine, e)
     _set_provisioned(machine, cd)
+    _keep_sync(db, prov, machine)
+    db.commit()
+    return machine
+
+
+@router.put("/{machine_id}/keep-writeback", response_model=MachineOut)
+def keep_writeback(
+    machine_id: int,
+    body: KeepWriteback,
+    db: Session = Depends(get_db),
+    prov: Provisioner = Depends(get_provisioner),
+):
+    """
+    Keep (or stop keeping) the machine's writeback across reboots. Only one
+    machine at a time may keep its writeback: it is the PC where games are
+    installed and updated before Apply Writebacks.
+
+    Turning it off does not discard anything right away; the writeback is
+    discarded at the next disconnect, like everyone else's.
+    """
+    machine = _get(db, machine_id)
+    if body.enabled == machine.keep_writeback:
+        return machine
+    if body.enabled:
+        other = db.scalar(select(Machine).where(Machine.keep_writeback.is_(True),
+                                                Machine.id != machine.id))
+        if other is not None:
+            conflict(f"'{other.name}' already keeps its writeback; turn it off there first")
+    if machine.clone_zvol and machine.status is MachineStatus.PROVISIONED:
+        try:
+            prov.set_keep_writeback(machine.clone_zvol, body.enabled)
+        except ProvisioningError as e:
+            _fail(db, machine, e)
+    machine.keep_writeback = body.enabled
+    db.commit()
+    return machine
+
+
+@router.post("/{machine_id}/apply-writebacks", response_model=MachineOut)
+def apply_writebacks(
+    machine_id: int,
+    db: Session = Depends(get_db),
+    prov: Provisioner = Depends(get_provisioner),
+):
+    """
+    ggRock "Apply Writebacks": the machine's kept writeback becomes the next
+    version of its game disk (base → v2 → v3 ...) and that version becomes
+    active. Every other machine moves to it at its next discard, i.e. its
+    next reboot. The machine must keep its writeback and be powered off.
+    """
+    machine = _get(db, machine_id)
+    if not machine.keep_writeback:
+        conflict(f"'{machine.name}' does not keep its writeback; nothing to apply")
+    if machine.status is not MachineStatus.PROVISIONED or machine.game_disk_id is None:
+        conflict(f"'{machine.name}' has no provisioned game disk")
+    disk = _published_disk(db, machine.game_disk_id)
+    if machine.clone_snapshot != disk.snapshot_path:
+        conflict(
+            f"'{machine.name}' runs {machine.clone_snapshot}, but the active version is "
+            f"{disk.snapshot_path}; changes made on an older version cannot be applied"
+        )
+    session = prov.session_active(machine.initiator_iqn, machine.iscsi_target_iqn)
+    if session is None:
+        host_failed(f"Cannot read the iSCSI session state of '{machine.name}'")
+    if session:
+        conflict(f"'{machine.name}' is still connected; shut it down first")
+
+    try:
+        disk.snapshot = prov.apply_writebacks(machine.clone_zvol, disk.zvol_path, disk.snapshot)
+    except ProvisioningError as e:
+        host_failed(str(e), machine_id=machine.id)
+    db.commit()
+
+    # The kept writeback now equals the new version; re-clone it from there
+    # so the next round of changes starts from the active version.
+    try:
+        cd = prov.reset(machine.name, machine.initiator_iqn, machine.clone_zvol,
+                        disk.snapshot_path)
+    except ProvisioningError as e:
+        _fail(db, machine, e)
+    _set_provisioned(machine, cd)
+    _keep_sync(db, prov, machine)
     db.commit()
     return machine
 

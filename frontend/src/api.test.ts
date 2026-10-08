@@ -48,7 +48,7 @@ describe("api", () => {
         new Response(JSON.stringify({ detail: { error: "dataset is busy" } }), { status: 502 }),
       ),
     );
-    const err = await api.resetMachine(3).catch((e) => e);
+    const err = await api.applyWritebacks(3).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect(err).toMatchObject({ status: 502, message: "dataset is busy" });
   });
