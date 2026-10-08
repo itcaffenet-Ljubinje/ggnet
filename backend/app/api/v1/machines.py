@@ -3,7 +3,7 @@ API for client machines, with auto-provisioning.
 
 `game_disk_id` is the WANTED assignment, `status` is the actual host state:
   idle         no disk, nothing on the host
-  provisioned  clone + iSCSI target exist
+  provisioned  clone exists and is mapped on the shared iSCSI target
   error        an operation failed; `last_error` says why, and
                assign/reset/DELETE retry and clean up leftovers
 
@@ -85,7 +85,7 @@ def _fail(db: Session, m: Machine, e: ProvisioningError) -> None:
 
 def _deprovision(db: Session, prov: Provisioner, m: Machine) -> None:
     try:
-        prov.deprovision(m.name, m.clone_zvol)
+        prov.deprovision(m.name, m.initiator_iqn, m.clone_zvol)
     except ProvisioningError as e:
         _fail(db, m, e)
     _set_idle(m)

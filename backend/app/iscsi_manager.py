@@ -1,16 +1,32 @@
 """
-ISCSIManager: manages iSCSI targets through LIO/targetcli.
+ISCSIManager: manages the LIO iSCSI target through targetcli.
 
-Each client (Disk Mode) gets its own iSCSI target that exposes exactly one
-zvol (its writeback clone). The ACL is bound to the client's INITIATOR IQN,
-not its MAC address. The MAC is for DHCP/WoL; the iSCSI initiator has its own
-IQN (Windows: iqn.1991-05.com.microsoft:<pc-name>, lowercase).
+ggNet uses ONE shared target for all clients (like ggRock), not a target per
+client:
 
-Target names follow `<iqn_prefix>:client-<machine_id>`. The prefix comes from
-`services.iscsi_iqn_prefix` in config.toml (app.config.get_config).
+    <iqn_prefix>:<target_name>            e.g. iqn.2025-05.net.ggnet:storage
+      tpg1
+        portals   <service IP>:3260       (never LIO's default 0.0.0.0)
+        luns      lun0 → block/pc01-game, lun1 → block/pc02-game, ...
+        acls      one ACL per client INITIATOR IQN, each with its own
+                  mapped LUNs: mapped_lun0 → that client's TPG LUN only
 
-Each target listens only on `services.iscsi_portal` (the service IP chosen at
-install time), never on LIO's default 0.0.0.0:3260 portal.
+So every client logs in to the same target IQN and sees only its own disks.
+Adding, resetting or removing one client touches only its ACL, its TPG LUNs
+and its backstores; the target and the other clients' sessions are never
+touched.
+
+Every new TPG LUN and ACL is created with `add_mapped_luns=false`. Without it,
+targetcli's default (auto_add_mapped_luns) would map each new client's disk
+into EVERY existing ACL, i.e. every PC would see every other PC's disk.
+
+A slot is one disk of a machine and the backstore is named `<machine>-<slot>`:
+Disk Mode uses slot `game` (mapped LUN 0); Boot Mode will use `os` (mapped
+LUN 0) and `game` (mapped LUN 1).
+
+Before this design each client had its own target `<iqn_prefix>:client-<id>`
+with backstore `client-<id>`. detach() also removes those, so resetting or
+deprovisioning a machine migrates it to the shared target.
 """
 
 from __future__ import annotations
@@ -19,7 +35,7 @@ import ipaddress
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Sequence
 
 from app.config import get_config
 from app.runner import CommandRunner
@@ -27,6 +43,10 @@ from app.runner import CommandRunner
 logger = logging.getLogger("ggnet.iscsi")
 
 DEFAULT_IQN_PREFIX = "iqn.2025-05.net.ggnet"
+DEFAULT_TARGET_NAME = "storage"
+
+# Slots a machine can have, in the order of their mapped LUN numbers in Boot Mode.
+SLOTS = ("os", "game")
 
 # iqn.YYYY-MM.<reversed domain>, RFC 3720. Lowercase, no ':' (target_iqn()
 # adds the target suffix).
@@ -38,7 +58,12 @@ _INITIATOR_IQN_RE = re.compile(r"^iqn\.\d{4}-\d{2}\.[a-z0-9][a-z0-9.-]*(:[a-z0-9
 # targetcli re-parses its arguments as a command line, so names that end up
 # in a target path must not contain spaces, '/', or start with '-'.
 _MACHINE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+_TARGET_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
 _BLOCK_DEVICE_RE = re.compile(r"^/dev/zvol/[A-Za-z0-9_][A-Za-z0-9_.:/-]*$")
+
+# targetcli `ls` lines, e.g. "  o- lun3 ..... [block/pc01-game (/dev/zvol/...) ...]"
+_LUN_LINE_RE = re.compile(r"o- lun(\d+)\b")
+_NODE_LINE_RE = re.compile(r"^\s*o- (\S+)")
 
 
 def parse_portal(portal: str) -> tuple[str, int]:
@@ -68,6 +93,7 @@ def parse_portal(portal: str) -> tuple[str, int]:
 class ISCSIConfig:
     portal: str                           # services.iscsi_portal, "IP:port"
     iqn_prefix: str = DEFAULT_IQN_PREFIX
+    target_name: str = DEFAULT_TARGET_NAME
 
     @classmethod
     def from_config(cls, cfg: Optional[Mapping[str, Any]] = None) -> "ISCSIConfig":
@@ -77,7 +103,16 @@ class ISCSIConfig:
         return cls(
             portal=str(services["iscsi_portal"]),
             iqn_prefix=str(services.get("iscsi_iqn_prefix") or DEFAULT_IQN_PREFIX),
+            target_name=str(services.get("iscsi_target_name") or DEFAULT_TARGET_NAME),
         )
+
+
+@dataclass(frozen=True)
+class Disk:
+    """One disk to expose to a machine: its slot and its zvol device."""
+
+    slot: str            # one of SLOTS
+    device: str          # /dev/zvol/...
 
 
 class ISCSIManager:
@@ -89,14 +124,33 @@ class ISCSIManager:
         self.cfg = config or ISCSIConfig.from_config()
         if not _IQN_PREFIX_RE.match(self.cfg.iqn_prefix):
             raise ValueError(f"Invalid IQN prefix: {self.cfg.iqn_prefix!r}")
+        if not _TARGET_NAME_RE.match(self.cfg.target_name):
+            raise ValueError(f"Invalid iSCSI target name: {self.cfg.target_name!r}")
         self.portal_ip, self.portal_port = parse_portal(self.cfg.portal)
         self.runner = runner or CommandRunner()
 
     def _run(self, cmd: list[str], quiet: bool = False) -> tuple[bool, str, str]:
         return self.runner.run(cmd, quiet=quiet)
 
-    def target_iqn(self, machine_id: str) -> str:
+    # ── Names ─────────────────────────────────────────────────────────
+
+    def target_iqn(self) -> str:
+        """The one shared target every client logs in to."""
+        return f"{self.cfg.iqn_prefix}:{self.cfg.target_name}"
+
+    def legacy_target_iqn(self, machine_id: str) -> str:
+        """Per-client target of the old design; only ever deleted."""
         return f"{self.cfg.iqn_prefix}:client-{machine_id}"
+
+    @staticmethod
+    def backstore_name(machine_id: str, slot: str) -> str:
+        return f"{machine_id}-{slot}"
+
+    @property
+    def _tpg(self) -> str:
+        return f"/iscsi/{self.target_iqn()}/tpg1"
+
+    # ── Validation (invalid input sends no command) ───────────────────
 
     @staticmethod
     def _valid_machine_id(machine_id: str) -> bool:
@@ -105,66 +159,154 @@ class ISCSIManager:
         logger.error("Rejected invalid machine id: %r", machine_id)
         return False
 
-    # ── CRUD ──────────────────────────────────────────────────────────
+    @staticmethod
+    def _valid_initiator(iqn: str) -> bool:
+        if isinstance(iqn, str) and _INITIATOR_IQN_RE.match(iqn):
+            return True
+        logger.error("Rejected invalid initiator IQN: %r", iqn)
+        return False
 
-    def create_target(
-        self,
-        machine_id: str,
-        block_device: str,
-        initiator_iqn: str,
-    ) -> Optional[str]:
+    @staticmethod
+    def _valid_disks(disks: Sequence[Disk]) -> bool:
+        slots = [d.slot for d in disks]
+        if not disks or len(set(slots)) != len(slots):
+            logger.error("Rejected disk list: %r", disks)
+            return False
+        for d in disks:
+            if d.slot not in SLOTS:
+                logger.error("Rejected unknown slot: %r", d.slot)
+                return False
+            if not isinstance(d.device, str) or not _BLOCK_DEVICE_RE.match(d.device) \
+                    or "/../" in d.device or d.device.endswith("/.."):
+                logger.error("Rejected invalid block device: %r", d.device)
+                return False
+        return True
+
+    # ── Listings ──────────────────────────────────────────────────────
+
+    def list_targets(self) -> str:
+        ok, out, _ = self._run(["targetcli", "/iscsi", "ls"])
+        return out if ok else ""
+
+    def target_exists(self) -> Optional[bool]:
+        """Exact match on the shared target IQN; None if targetcli cannot list."""
+        ok, out, _ = self._run(["targetcli", "/iscsi", "ls", "depth=1"])
+        if not ok:
+            return None
+        return self._has_node(out, self.target_iqn())
+
+    def backstore_exists(self, machine_id: str, slot: str) -> Optional[bool]:
+        """Exact match (pc1-game must not match pc10-game); None if targetcli cannot list."""
+        ok, out, _ = self._run(["targetcli", "/backstores/block", "ls", "depth=1"])
+        if not ok:
+            return None
+        return self._has_node(out, self.backstore_name(machine_id, slot))
+
+    @staticmethod
+    def _has_node(listing: str, name: str) -> bool:
+        for line in listing.splitlines():
+            m = _NODE_LINE_RE.match(line)
+            if m and m.group(1) == name:
+                return True
+        return False
+
+    def _used_tpg_luns(self) -> Optional[set[int]]:
+        ok, out, _ = self._run(["targetcli", f"{self._tpg}/luns", "ls", "depth=1"])
+        if not ok:
+            return None
+        return {int(n) for n in _LUN_LINE_RE.findall(out)}
+
+    # ── Shared target ─────────────────────────────────────────────────
+
+    def ensure_target(self) -> bool:
         """
-        Create a complete iSCSI target for one client:
-        block backstore → target IQN → portal on the service IP → LUN →
-        ACL bound to that machine's initiator IQN.
-
-        Returns the target IQN, or None on error (after cleaning up any
-        partially created state). Invalid input sends no command.
+        Create the shared target if it does not exist: target → portal on
+        the service IP only → ACL-only access. Safe to call repeatedly; an
+        existing target is left exactly as it is.
         """
-        if not self._valid_machine_id(machine_id):
-            return None
-        if not isinstance(block_device, str) or not _BLOCK_DEVICE_RE.match(block_device) \
-                or "/../" in block_device or block_device.endswith("/.."):
-            logger.error("Rejected invalid block device: %r", block_device)
-            return None
-        if not isinstance(initiator_iqn, str) or not _INITIATOR_IQN_RE.match(initiator_iqn):
-            logger.error("Rejected invalid initiator IQN: %r", initiator_iqn)
-            return None
+        exists = self.target_exists()
+        if exists is None:
+            logger.error("targetcli cannot list targets; not touching the shared target")
+            return False
+        if exists:
+            return True
 
-        iqn = self.target_iqn(machine_id)
-        backstore_name = f"client-{machine_id}"
-
-        portals = f"/iscsi/{iqn}/tpg1/portals"
+        iqn = self.target_iqn()
+        portals = f"{self._tpg}/portals"
         steps = [
-            ["targetcli", "/backstores/block", "create",
-             f"name={backstore_name}", f"dev={block_device}"],
-
             ["targetcli", "/iscsi", "create", iqn],
-
             # LIO adds a 0.0.0.0:3260 portal to new targets by default
             # (auto_add_default_portal). Remove it so the target listens only
             # on the service IP; failure just means there was none.
             ["targetcli", portals, "delete", "0.0.0.0", "3260"],
-
             ["targetcli", portals, "create", self.portal_ip, str(self.portal_port)],
-
-            ["targetcli", f"/iscsi/{iqn}/tpg1/luns", "create",
-             f"/backstores/block/{backstore_name}"],
-
-            ["targetcli", f"/iscsi/{iqn}/tpg1/acls", "create", initiator_iqn],
-
-            # Only the registered initiator may connect, no demo mode.
+            # Only initiators with an ACL may log in (no demo mode).
             # CHAP is off in v1; the ACL is the only access control.
-            ["targetcli", f"/iscsi/{iqn}/tpg1", "set", "attribute",
+            ["targetcli", self._tpg, "set", "attribute",
              "generate_node_acls=0", "authentication=0"],
         ]
-
-        optional = steps[2]
+        optional = steps[1]
         for step in steps:
             ok, _, err = self._run(step, quiet=step is optional)
             if not ok and step is not optional:
-                logger.error("iSCSI provisioning failed at step %s: %s", step, err)
-                self.delete_target(machine_id)
+                logger.error("Creating the shared target failed at %s: %s", step, err)
+                # The target is new and has no clients yet, so removing it is safe.
+                self._run(["targetcli", "/iscsi", "delete", iqn], quiet=True)
+                self.runner.last_error = err
+                return False
+        self.save_config()
+        logger.info("Shared iSCSI target %s created on %s:%s", iqn, self.portal_ip, self.portal_port)
+        return True
+
+    # ── Per-machine attach / detach ───────────────────────────────────
+
+    def attach(self, machine_id: str, initiator_iqn: str, disks: Sequence[Disk]) -> Optional[str]:
+        """
+        Expose `disks` to one machine on the shared target:
+        backstore → TPG LUN (not mapped to anyone) → ACL for the machine's
+        initiator → mapped LUN 0, 1, ... in the order of `disks`.
+
+        Leftovers of this machine (an earlier failed attach, the old
+        per-client target) are removed first. Returns the target IQN, or None
+        after cleaning up whatever this call created. Invalid input sends no
+        command.
+        """
+        if not (self._valid_machine_id(machine_id) and self._valid_initiator(initiator_iqn)
+                and self._valid_disks(disks)):
+            return None
+        if not self.ensure_target():
+            return None
+        self.detach(machine_id, initiator_iqn, save=False)
+
+        used = self._used_tpg_luns()
+        if used is None:
+            self.runner.last_error = self.runner.last_error or "targetcli cannot list LUNs"
+            return None
+
+        acl = f"{self._tpg}/acls/{initiator_iqn}"
+        steps: list[list[str]] = []
+        tpg_luns: list[int] = []
+        for disk in disks:
+            name = self.backstore_name(machine_id, disk.slot)
+            index = next(i for i in range(len(used) + len(disks) + 1)
+                         if i not in used and i not in tpg_luns)
+            tpg_luns.append(index)
+            steps += [
+                ["targetcli", "/backstores/block", "create", f"name={name}", f"dev={disk.device}"],
+                ["targetcli", f"{self._tpg}/luns", "create", f"/backstores/block/{name}",
+                 f"lun={index}", "add_mapped_luns=false"],
+            ]
+        steps.append(["targetcli", f"{self._tpg}/acls", "create", initiator_iqn,
+                      "add_mapped_luns=false"])
+        for mapped, index in enumerate(tpg_luns):
+            steps.append(["targetcli", acl, "create", f"mapped_lun={mapped}",
+                          f"tpg_lun_or_backstore=lun{index}", "write_protect=false"])
+
+        for step in steps:
+            ok, _, err = self._run(step)
+            if not ok:
+                logger.error("iSCSI attach of %s failed at %s: %s", machine_id, step, err)
+                self.detach(machine_id, initiator_iqn)
                 # Cleanup is expected to fail on parts that do not exist;
                 # keep the REAL failure reason for the caller.
                 self.runner.last_error = err
@@ -172,37 +314,34 @@ class ISCSIManager:
 
         self.save_config()
         logger.info(
-            "iSCSI target created: %s -> %s on %s:%s (ACL: %s)",
-            iqn, block_device, self.portal_ip, self.portal_port, initiator_iqn,
+            "iSCSI: %s (ACL %s) -> %s",
+            machine_id, initiator_iqn,
+            ", ".join(f"LUN {i}={d.device}" for i, d in enumerate(disks)),
         )
-        return iqn
+        return self.target_iqn()
 
-    def delete_target(self, machine_id: str) -> bool:
+    def detach(self, machine_id: str, initiator_iqn: str, save: bool = True) -> bool:
         """
-        Delete the target and its backstore. Does not fail if they are
-        already gone, so the return value is NOT proof that they were deleted.
-        Returns False only for an invalid machine id (no command is sent).
+        Remove everything of one machine: its ACL (with its mapped LUNs), its
+        backstores (LIO removes their TPG LUNs with them) and the old
+        per-client target. The shared target is never deleted.
+
+        Does not fail if parts are already gone, so the return value is NOT
+        proof that they were removed; use backstore_exists() for that.
+        Returns False only for invalid input (no command is sent).
         """
-        if not self._valid_machine_id(machine_id):
+        if not (self._valid_machine_id(machine_id) and self._valid_initiator(initiator_iqn)):
             return False
-        iqn = self.target_iqn(machine_id)
-        backstore_name = f"client-{machine_id}"
-
-        self._run(["targetcli", "/iscsi", "delete", iqn])
-        self._run(["targetcli", "/backstores/block", "delete", backstore_name])
-        self.save_config()
+        self._run(["targetcli", f"{self._tpg}/acls", "delete", initiator_iqn], quiet=True)
+        for slot in SLOTS:
+            self._run(["targetcli", "/backstores/block", "delete",
+                       self.backstore_name(machine_id, slot)], quiet=True)
+        # Old design: one target per client.
+        self._run(["targetcli", "/iscsi", "delete", self.legacy_target_iqn(machine_id)], quiet=True)
+        self._run(["targetcli", "/backstores/block", "delete", f"client-{machine_id}"], quiet=True)
+        if save:
+            self.save_config()
         return True
-
-    def list_targets(self) -> str:
-        ok, out, _ = self._run(["targetcli", "/iscsi", "ls"])
-        return out if ok else ""
-
-    def target_status(self, machine_id: str) -> str:
-        if not self._valid_machine_id(machine_id):
-            return ""
-        iqn = self.target_iqn(machine_id)
-        ok, out, err = self._run(["targetcli", f"/iscsi/{iqn}", "status"])
-        return out if ok else err
 
     def save_config(self) -> bool:
         """Persist the configuration so it survives a server reboot."""

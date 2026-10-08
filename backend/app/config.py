@@ -22,7 +22,7 @@ DEV_DEFAULTS: dict[str, Any] = {
         "iscsi_targets": "tank/ggnet-dev/iscsi_targets",
     },
     "network": {"interface": "lo", "server_ip": "127.0.0.1", "cidr": "127.0.0.1/8"},
-    "services": {"iscsi_portal": "127.0.0.1:3260", "dhcp_mode": "proxy"},
+    "services": {"iscsi_portal": "127.0.0.1:3260", "iscsi_target_name": "storage-dev", "dhcp_mode": "proxy"},
     "web": {"bind": "127.0.0.1", "port": 8088, "frontend_dist": "../frontend/dist"},
     "paths": {"data_dir": "./data", "database": "sqlite:///./data/ggnet.db"},
 }

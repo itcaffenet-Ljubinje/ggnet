@@ -98,7 +98,7 @@ class MachineMode(str, enum.Enum):
 
 class MachineStatus(str, enum.Enum):
     IDLE = "idle"                  # no disk assigned
-    PROVISIONED = "provisioned"    # clone + iSCSI target exist
+    PROVISIONED = "provisioned"    # clone exists and is mapped on the shared target
     ERROR = "error"                # a host operation failed; see last_error
 
 
