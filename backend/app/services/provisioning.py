@@ -13,7 +13,7 @@ import logging
 import threading
 from dataclasses import dataclass
 
-from app.iscsi_manager import ISCSIManager
+from app.iscsi_manager import Disk, ISCSIManager
 from app.zfs_manager import ZFSManager
 
 logger = logging.getLogger("ggnet.provisioning")
@@ -54,18 +54,16 @@ class Provisioner:
     def client_path(self, machine_name: str) -> str:
         return f"{self.zfs.layout.writebacks}/{machine_name}"
 
-    def _target_exists(self, machine_name: str) -> bool:
+    def _detach(self, machine_name: str, initiator_iqn: str) -> None:
         """
-        Exact name match: `client-pc1` must not match `client-pc10`.
-        If listing fails (empty output) the target is treated as absent;
-        destroying a zvol LIO still holds fails with "dataset is busy" anyway.
+        Remove the machine's ACL and backstores and verify the backstore is
+        really gone: LIO keeps the zvol open while it exists, so destroying
+        the clone would fail with "dataset is busy" (or, worse, the client
+        would keep a session to a disk that is being replaced).
         """
-        iqn = self.iscsi.target_iqn(machine_name)
-        for line in self.iscsi.list_targets().splitlines():
-            parts = line.split()
-            if len(parts) >= 2 and parts[0] == "o-" and parts[1] == iqn:
-                return True
-        return False
+        self.iscsi.detach(machine_name, initiator_iqn)
+        if self.iscsi.backstore_exists(machine_name, "game") is not False:
+            raise self._fail("The iSCSI disk was not removed", self.iscsi.runner)
 
     # ── Game disk (master) ────────────────────────────────────────────
 
@@ -106,7 +104,10 @@ class Provisioner:
     # ── Machines ──────────────────────────────────────────────────────
 
     def provision(self, machine_name: str, initiator_iqn: str, snapshot_path: str) -> ClientDisk:
-        """Clone of the snapshot + iSCSI target with an ACL on the machine's IQN."""
+        """
+        Clone of the snapshot, exposed on the shared iSCSI target as mapped
+        LUN 0 of an ACL for the machine's initiator IQN.
+        """
         clone = self.client_path(machine_name)
         with self.lock:
             self._clear()
@@ -116,12 +117,12 @@ class Provisioner:
                 )
             if not self.zfs.clone(snapshot_path, clone):
                 raise self._fail(f"Clone {snapshot_path} -> {clone} failed")
-            iqn = self.iscsi.create_target(
-                machine_name, self.zfs.zvol_device_path(clone), initiator_iqn
+            iqn = self.iscsi.attach(
+                machine_name, initiator_iqn, [Disk("game", self.zfs.zvol_device_path(clone))]
             )
             if iqn is None:
-                err = self._fail("Creating the iSCSI target failed", self.iscsi.runner)
-                # create_target cleaned up the target itself; roll back the clone.
+                err = self._fail("Exposing the disk over iSCSI failed", self.iscsi.runner)
+                # attach() cleaned up its own iSCSI state; roll back the clone.
                 if not self.zfs.destroy(clone, recursive=True):
                     logger.error("Rollback: clone %s left on the host", clone)
                 raise err
@@ -131,32 +132,28 @@ class Provisioner:
         self, machine_name: str, initiator_iqn: str, clone_zvol: str, snapshot_path: str
     ) -> ClientDisk:
         """
-        Order: delete target → destroy clone → clone → create target.
+        Order: detach (ACL + backstore) → destroy clone → clone → attach.
         `snapshot_path` is the disk's CURRENT snapshot, so a reset also moves
         the machine to the newest version of the master.
         The client must be powered off or disconnected.
         """
         with self.lock:
             self._clear()
-            self.iscsi.delete_target(machine_name)
-            if self._target_exists(machine_name):
-                raise self._fail("The iSCSI target was not deleted", self.iscsi.runner)
+            self._detach(machine_name, initiator_iqn)
             if not self.zfs.reset_clone(clone_zvol, snapshot_path):
                 raise self._fail(f"Resetting clone {clone_zvol} failed")
-            iqn = self.iscsi.create_target(
-                machine_name, self.zfs.zvol_device_path(clone_zvol), initiator_iqn
+            iqn = self.iscsi.attach(
+                machine_name, initiator_iqn, [Disk("game", self.zfs.zvol_device_path(clone_zvol))]
             )
             if iqn is None:
-                raise self._fail("Creating the iSCSI target failed", self.iscsi.runner)
+                raise self._fail("Exposing the disk over iSCSI failed", self.iscsi.runner)
         return ClientDisk(clone_zvol, snapshot_path, iqn)
 
-    def deprovision(self, machine_name: str, clone_zvol: str | None) -> None:
-        """Delete the target, then the clone. Safe to call when nothing exists."""
+    def deprovision(self, machine_name: str, initiator_iqn: str, clone_zvol: str | None) -> None:
+        """Detach from iSCSI, then delete the clone. Safe to call when nothing exists."""
         clone = clone_zvol or self.client_path(machine_name)
         with self.lock:
             self._clear()
-            self.iscsi.delete_target(machine_name)
-            if self._target_exists(machine_name):
-                raise self._fail("The iSCSI target was not deleted", self.iscsi.runner)
+            self._detach(machine_name, initiator_iqn)
             if self.zfs.dataset_exists(clone) and not self.zfs.destroy(clone, recursive=True):
                 raise self._fail(f"Deleting clone {clone} failed")

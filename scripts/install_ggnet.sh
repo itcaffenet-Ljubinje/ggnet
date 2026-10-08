@@ -327,6 +327,8 @@ cidr = "$SERVICE_CIDR"
 
 [services]
 iscsi_portal = "$SERVICE_IP:3260"
+# One shared target for all clients: <iscsi_iqn_prefix>:<iscsi_target_name>
+iscsi_target_name = "storage"
 dhcp_mode = "proxy"
 tftp_root = "$DATA_DIR/tftp"
 http_root = "$DATA_DIR/http"

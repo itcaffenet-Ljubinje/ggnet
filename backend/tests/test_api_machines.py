@@ -9,7 +9,8 @@ from app.db.session import make_engine
 
 SNAP = "tank/ggnet/images/cs2@base"
 CLONE = "tank/ggnet/writebacks/pc01"
-TARGET = "iqn.2025-05.net.ggnet:client-pc01"
+TARGET = "iqn.2025-05.net.ggnet:storage"
+IQN = "iqn.1991-05.com.microsoft:pc01"
 
 
 def _disk(client, name="cs2", publish=True) -> dict:
@@ -49,7 +50,7 @@ def test_create_machine_auto_provisions(client, host):
     assert m["clone_snapshot"] == SNAP
     assert m["iscsi_target_iqn"] == TARGET
     assert m["outdated"] is False
-    assert TARGET in host.targets
+    assert host.visible(IQN) == [f"/dev/zvol/{CLONE}"]
 
 
 def test_create_machine_with_unpublished_disk(client):
@@ -154,7 +155,7 @@ def test_assign_switch_and_unassign(client, host):
     r = client.post(f"/api/v1/machines/{m['id']}/assign", json={"game_disk_id": None})
     assert r.json()["status"] == "idle" and r.json()["game_disk_id"] is None
     assert CLONE not in host.datasets
-    assert not host.targets
+    assert host.visible(IQN) == [] and not host.backstores
 
 
 def test_assign_same_disk_is_noop(client, host):
@@ -221,7 +222,7 @@ def test_delete_machine_cleans_host(client, host):
     m = _machine(client, game_disk_id=d["id"])
     assert client.delete(f"/api/v1/machines/{m['id']}").status_code == 204
     assert CLONE not in host.datasets
-    assert not host.targets and not host.backstores
+    assert host.visible(IQN) == [] and not host.backstores
     assert client.get(f"/api/v1/machines/{m['id']}").status_code == 404
 
 

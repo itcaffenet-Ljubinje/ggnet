@@ -1,0 +1,9 @@
+#!ipxe
+# Embedded into ggnet-ipxe.efi (make bin-x86_64-efi/snponly.efi EMBED=embed.ipxe).
+# @SERVICE_IP@ is replaced with the ggNet service IP before building.
+dhcp || goto retry
+chain http://@SERVICE_IP@:8088/api/v1/boot/ipxe?mac=${net0/mac:hexhyp} || goto retry
+:retry
+echo ggNet: no answer from the server, retrying in 5 s
+sleep 5
+reboot

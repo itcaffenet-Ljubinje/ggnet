@@ -10,7 +10,8 @@ MASTER = "tank/ggnet/images/cs2"
 SNAP = f"{MASTER}@base"
 CLONE = "tank/ggnet/writebacks/pc01"
 IQN = "iqn.1991-05.com.microsoft:pc01"
-TARGET = "iqn.2025-05.net.ggnet:client-pc01"
+TARGET = "iqn.2025-05.net.ggnet:storage"
+DEV = f"/dev/zvol/{CLONE}"
 
 
 @pytest.fixture
@@ -46,15 +47,15 @@ def test_provision_creates_clone_and_target(host, prov, published):
     cd = prov.provision("pc01", IQN, SNAP)
     assert (cd.clone_zvol, cd.clone_snapshot, cd.iscsi_target_iqn) == (CLONE, SNAP, TARGET)
     assert host.datasets[CLONE]["origin"] == SNAP
-    assert TARGET in host.targets
+    assert host.visible(IQN) == [DEV]
 
 
-def test_provision_rolls_back_clone_when_target_fails(host, prov, published):
-    host.fail_on[("targetcli", "/iscsi", "create")] = "Could not create Target"
-    with pytest.raises(ProvisioningError, match="Could not create Target"):
+def test_provision_rolls_back_clone_when_iscsi_fails(host, prov, published):
+    host.fail_on[("targetcli", f"/iscsi/{TARGET}/tpg1/acls", "create")] = "Could not create NodeACL"
+    with pytest.raises(ProvisioningError, match="Could not create NodeACL"):
         prov.provision("pc01", IQN, SNAP)
     assert CLONE not in host.datasets
-    assert not host.backstores and not host.targets
+    assert not host.backstores and host.visible(IQN) == []
 
 
 def test_provision_refuses_leftover_clone(host, prov, published):
@@ -64,17 +65,29 @@ def test_provision_refuses_leftover_clone(host, prov, published):
 
 
 def test_reset_order(host, prov, published):
-    """Delete target → destroy clone → clone → create target."""
+    """Detach (ACL + backstore) → destroy clone → clone → attach."""
     prov.provision("pc01", IQN, SNAP)
     host.calls.clear()
     prov.reset("pc01", IQN, CLONE, SNAP)
-    steps = [c[:3] for c in host.calls]
-    i_del_target = steps.index(["targetcli", "/iscsi", "delete"])
+    i_detach = host.calls.index(["targetcli", "/backstores/block", "delete", "pc01-game"])
     i_destroy = next(i for i, c in enumerate(host.calls) if c[:2] == ["zfs", "destroy"])
     i_clone = next(i for i, c in enumerate(host.calls) if c[:2] == ["zfs", "clone"])
-    i_new_target = steps.index(["targetcli", "/iscsi", "create"])
-    assert i_del_target < i_destroy < i_clone < i_new_target
-    assert TARGET in host.targets
+    i_attach = next(i for i, c in enumerate(host.calls)
+                    if c[:3] == ["targetcli", "/backstores/block", "create"])
+    assert i_detach < i_destroy < i_clone < i_attach
+    assert host.visible(IQN) == [DEV]
+
+
+def test_reset_leaves_other_machines_alone(host, prov, published):
+    """With one shared target, resetting pc01 must not touch pc02's session."""
+    iqn2 = "iqn.1991-05.com.microsoft:pc02"
+    prov.provision("pc01", IQN, SNAP)
+    prov.provision("pc02", iqn2, SNAP)
+    host.calls.clear()
+    prov.reset("pc01", IQN, CLONE, SNAP)
+    assert host.visible(iqn2) == ["/dev/zvol/tank/ggnet/writebacks/pc02"]
+    assert not any(iqn2 in c or "pc02-game" in c for c in host.calls)
+    assert ["targetcli", "/iscsi", "delete", TARGET] not in host.calls
 
 
 def test_reset_switches_to_new_snapshot(host, prov, published):
@@ -86,31 +99,33 @@ def test_reset_switches_to_new_snapshot(host, prov, published):
     assert host.datasets[CLONE]["origin"] == f"{MASTER}@v2"
 
 
-def test_reset_stops_if_target_survives(host, prov, published):
+def test_reset_stops_if_backstore_survives(host, prov, published):
     prov.provision("pc01", IQN, SNAP)
-    host.fail_on[("targetcli", "/iscsi", "delete")] = "Target in use"
-    with pytest.raises(ProvisioningError, match="target was not deleted"):
+    host.fail_on[("targetcli", "/backstores/block", "delete")] = "Storage object in use"
+    with pytest.raises(ProvisioningError, match="iSCSI disk was not removed"):
         prov.reset("pc01", IQN, CLONE, SNAP)
     assert CLONE in host.datasets          # clone untouched
 
 
-def test_target_exists_is_exact_match(host, prov, published):
-    """client-pc1 must not match client-pc10."""
-    host.targets.add("iqn.2025-05.net.ggnet:client-pc10")
-    assert not prov._target_exists("pc1")
-    assert prov._target_exists("pc10")
+def test_reset_stops_if_backstores_cannot_be_listed(host, prov, published):
+    prov.provision("pc01", IQN, SNAP)
+    host.fail_on[("targetcli", "/backstores/block", "ls")] = "targetcli crashed"
+    with pytest.raises(ProvisioningError, match="iSCSI disk was not removed"):
+        prov.reset("pc01", IQN, CLONE, SNAP)
+    assert CLONE in host.datasets
 
 
 def test_deprovision_removes_everything(host, prov, published):
     prov.provision("pc01", IQN, SNAP)
-    prov.deprovision("pc01", CLONE)
+    prov.deprovision("pc01", IQN, CLONE)
     assert CLONE not in host.datasets
-    assert not host.targets and not host.backstores
+    assert not host.backstores and host.visible(IQN) == []
+    assert TARGET in host.targets          # the shared target stays
 
 
 def test_deprovision_is_idempotent(host, prov, published):
-    prov.deprovision("pc01", None)
-    prov.deprovision("pc01", CLONE)
+    prov.deprovision("pc01", IQN, None)
+    prov.deprovision("pc01", IQN, CLONE)
 
 
 def test_delete_published_disk_with_clone_refused(host, prov, published):

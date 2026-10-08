@@ -21,7 +21,9 @@ class FakeHost:
         self.datasets: dict[str, dict] = {}         # name → {"origin": snap|None, "readonly": bool}
         self.snapshots: dict[str, set[str]] = {}    # "ds@snap" → holds
         self.backstores: dict[str, str] = {}        # name → /dev/zvol/...
-        self.targets: set[str] = set()
+        # iqn → {luns: {tpg lun: backstore}, acls: {initiator: {mapped: tpg lun}},
+        #        portals: {"ip:port"}, attrs: {}}
+        self.targets: dict[str, dict] = {}
         self.fail_on: dict[tuple[str, ...], str] = {}   # command prefix → stderr
         self.calls: list[list[str]] = []
         self.last_error = ""
@@ -166,45 +168,141 @@ class FakeHost:
 
     # ── targetcli ─────────────────────────────────────────────────────
 
+    def visible(self, initiator: str) -> list[str]:
+        """Devices an initiator sees, by mapped LUN number, across all targets."""
+        out = []
+        for t in self.targets.values():
+            mapped = t["acls"].get(initiator, {})
+            out += [self.backstores[t["luns"][tl]] for _, tl in sorted(mapped.items())]
+        return out
+
+    def _drop_backstore(self, name: str) -> None:
+        """Like rtslib: deleting a storage object deletes its LUNs and their mappings."""
+        del self.backstores[name]
+        for t in self.targets.values():
+            for idx in [i for i, b in t["luns"].items() if b == name]:
+                del t["luns"][idx]
+                for mapped in t["acls"].values():
+                    for ml in [m for m, tl in mapped.items() if tl == idx]:
+                        del mapped[ml]
+
+    @staticmethod
+    def _kw(args: list[str]) -> dict[str, str]:
+        return dict(x.split("=", 1) for x in args if "=" in x)
+
+    def _ls(self, header: str, names) -> tuple:
+        lines = [f"o- {header}"] + [f"  o- {n} ........ [...]" for n in names]
+        return self._ok("\n".join(lines))
+
     def _targetcli(self, a: list[str]):
         if a == ["saveconfig"]:
             return self._ok()
-        path = a[0]
+        path, verb, args = a[0], a[1], a[2:]
 
-        if path == "/backstores/block" and a[1] == "create":
-            name = a[2].split("=", 1)[1]
-            dev = a[3].split("=", 1)[1]
-            if name in self.backstores:
-                return self._err(f"Storage object block/{name} exists")
-            if dev.removeprefix("/dev/zvol/") not in self.datasets:
-                return self._err(f"Device {dev} does not exist")
-            self.backstores[name] = dev
-            return self._ok()
-        if path == "/backstores/block" and a[1] == "delete":
-            if a[2] not in self.backstores:
-                return self._err(f"No storage object named {a[2]}")
-            del self.backstores[a[2]]
-            return self._ok()
+        if path == "/backstores/block":
+            if verb == "ls":
+                return self._ls("block", sorted(self.backstores))
+            if verb == "create":
+                kw = self._kw(args)
+                name, dev = kw["name"], kw["dev"]
+                if name in self.backstores:
+                    return self._err(f"Storage object block/{name} exists")
+                if dev.removeprefix("/dev/zvol/") not in self.datasets:
+                    return self._err(f"Device {dev} does not exist")
+                self.backstores[name] = dev
+                return self._ok()
+            if verb == "delete":
+                if args[0] not in self.backstores:
+                    return self._err(f"No storage object named {args[0]}")
+                self._drop_backstore(args[0])
+                return self._ok()
 
-        if path == "/iscsi" and a[1] == "create":
-            if a[2] in self.targets:
-                return self._err(f"This Target already exists in configFS")
-            self.targets.add(a[2])
-            return self._ok()
-        if path == "/iscsi" and a[1] == "delete":
-            if a[2] not in self.targets:
-                return self._err(f"No such Target in configfs")
-            self.targets.discard(a[2])
-            return self._ok()
-        if path == "/iscsi" and a[1] == "ls":
-            lines = [f"o- iscsi .... [Targets: {len(self.targets)}]"]
-            lines += [f"  o- {t} .... [TPGs: 1]" for t in sorted(self.targets)]
-            return self._ok("\n".join(lines))
+        if path == "/iscsi":
+            if verb == "ls":
+                return self._ls(f"iscsi .... [Targets: {len(self.targets)}]", sorted(self.targets))
+            if verb == "create":
+                if args[0] in self.targets:
+                    return self._err("This Target already exists in configFS")
+                # LIO's default: a new target gets a 0.0.0.0:3260 portal.
+                self.targets[args[0]] = {"luns": {}, "acls": {}, "portals": {"0.0.0.0:3260"},
+                                         "attrs": {}}
+                return self._ok()
+            if verb == "delete":
+                if args[0] not in self.targets:
+                    return self._err("No such Target in configfs")
+                del self.targets[args[0]]
+                return self._ok()
 
-        if path.startswith("/iscsi/"):
-            iqn = path.split("/")[2]
-            if iqn not in self.targets:
+        parts = path.split("/")       # ["", "iscsi", iqn, "tpg1", sub, (acl)]
+        if len(parts) >= 4 and parts[1] == "iscsi" and parts[3] == "tpg1":
+            t = self.targets.get(parts[2])
+            if t is None:
                 return self._err(f"No such path {path}")
-            return self._ok()
+            sub = parts[4] if len(parts) > 4 else None
+
+            if sub is None and verb == "set":
+                t["attrs"].update(self._kw(args[1:]))
+                return self._ok()
+
+            if sub == "portals":
+                portal = f"{args[0]}:{args[1]}" if args else ""
+                if verb == "create":
+                    t["portals"].add(portal)
+                    return self._ok()
+                if verb == "delete":
+                    if portal not in t["portals"]:
+                        return self._err("No such NetworkPortal in configfs")
+                    t["portals"].discard(portal)
+                    return self._ok()
+                if verb == "ls":
+                    return self._ls("portals", sorted(t["portals"]))
+
+            if sub == "luns":
+                if verb == "ls":
+                    lines = ["o- luns"] + [f"  o- lun{i} .... [block/{b} ({self.backstores[b]})]"
+                                           for i, b in sorted(t["luns"].items())]
+                    return self._ok("\n".join(lines))
+                if verb == "create":
+                    name = args[0].removeprefix("/backstores/block/")
+                    kw = self._kw(args[1:])
+                    idx = int(kw["lun"])
+                    if name not in self.backstores:
+                        return self._err(f"No storage object {args[0]}")
+                    if idx in t["luns"]:
+                        return self._err(f"LUN {idx} already exists")
+                    t["luns"][idx] = name
+                    # targetcli default auto_add_mapped_luns=true: map into every ACL.
+                    if kw.get("add_mapped_luns", "true") != "false":
+                        for mapped in t["acls"].values():
+                            mapped[max(mapped, default=-1) + 1] = idx
+                    return self._ok()
+
+            if sub == "acls" and len(parts) == 5:
+                if verb == "create":
+                    wwn = args[0]
+                    if wwn in t["acls"]:
+                        return self._err(f"This NodeACL already exists in configFS")
+                    t["acls"][wwn] = {}
+                    if self._kw(args[1:]).get("add_mapped_luns", "true") != "false":
+                        t["acls"][wwn] = dict(enumerate(sorted(t["luns"])))
+                    return self._ok()
+                if verb == "delete":
+                    if args[0] not in t["acls"]:
+                        return self._err("No such NodeACL in configfs")
+                    del t["acls"][args[0]]
+                    return self._ok()
+
+            if sub == "acls" and len(parts) == 6 and verb == "create":
+                mapped = t["acls"].get(parts[5])
+                if mapped is None:
+                    return self._err(f"No such path {path}")
+                kw = self._kw(args)
+                ml, tl = int(kw["mapped_lun"]), int(kw["tpg_lun_or_backstore"].removeprefix("lun"))
+                if tl not in t["luns"]:
+                    return self._err(f"No such LUN lun{tl}")
+                if ml in mapped:
+                    return self._err(f"Mapped LUN {ml} already exists")
+                mapped[ml] = tl
+                return self._ok()
 
         raise AssertionError(f"FakeHost does not know targetcli command: {a}")

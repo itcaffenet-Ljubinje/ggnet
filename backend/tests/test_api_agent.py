@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-TARGET = "iqn.2025-05.net.ggnet:client-pc01"
+TARGET = "iqn.2025-05.net.ggnet:storage"
 BEAT = {"name": "PC01", "agent_version": "0.1.0",
         "initiator_iqn": "iqn.1991-05.com.microsoft:pc01", "iscsi_connected": False}
 

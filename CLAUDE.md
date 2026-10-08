@@ -51,6 +51,8 @@ Target clients: Windows 11, UEFI Secure Boot, TPM 2.0.
 - Config: `/etc/ggnet/config.toml` (override with `GGNET_CONFIG`). Read pool, datasets, service IP from it —
   never hard-code them. `backend/app/config.py` falls back to dev defaults when the file is missing.
 - ZFS layout: `<pool>/ggnet/{images,writebacks,snapshots,iscsi_targets}`
+- iSCSI: ONE shared target `<iscsi_iqn_prefix>:<iscsi_target_name>`; each client is an ACL (its initiator IQN)
+  with its own mapped LUNs. Never delete the shared target to fix one client. Design: `docs/architecture.md`.
 - Code: `/opt/ggnet`, data: `/var/lib/ggnet`, service: `ggnet.service`
 - Ports: 8088 web UI/API, 3260 iSCSI, 67/4011 UDP proxyDHCP, 69 UDP TFTP, 80 HTTP boot.
   Do not use 8006/8007 (Proxmox/PBS) or 8008 (ProxMenux).
