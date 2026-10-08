@@ -22,6 +22,10 @@ public sealed class AgentWorker(
     private readonly AgentOptions _options = options.Value;
     private readonly string _machineName = Environment.MachineName.ToLowerInvariant();
 
+    // The service starts with Windows, so its start time identifies this boot.
+    // (Not the kernel uptime: Fast Startup keeps it running across shutdowns.)
+    private DateTimeOffset? _startedAt;
+
     /// <summary>The ggNet target this agent connected (sessions are not persistent across reboots).</summary>
     internal string? ConnectedTarget { get; private set; }
 
@@ -54,6 +58,7 @@ public sealed class AgentWorker(
     {
         try
         {
+            _startedAt ??= time.GetUtcNow();
             string? initiator = await iscsi.GetInitiatorNameAsync(ct);
 
             // The session can drop (server reset, network); forget it so it is reconnected.
@@ -67,7 +72,7 @@ public sealed class AgentWorker(
             try
             {
                 config = await server.HeartbeatAsync(
-                    new Heartbeat(_machineName, Version, initiator, ConnectedTarget is not null), ct);
+                    new Heartbeat(_machineName, Version, initiator, ConnectedTarget is not null, _startedAt), ct);
             }
             catch (Exception e) when (e is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
             {

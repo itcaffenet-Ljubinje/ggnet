@@ -69,16 +69,58 @@ describe("MachinesPage", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("resets after confirmation", async () => {
+  it("has no manual reset; writebacks are discarded by the server", () => {
+    const m = machine({ game_disk_id: 1, status: "provisioned" });
+    render(<MachinesPage disks={DISKS} machines={[m]} reload={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Reset" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Apply writebacks" })).not.toBeInTheDocument();
+  });
+
+  it("turns keep writeback on without asking", async () => {
     const fetchMock = stubFetch(200, machine());
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const confirm = vi.spyOn(window, "confirm");
     const m = machine({ game_disk_id: 1, status: "provisioned" });
     render(<MachinesPage disks={DISKS} machines={[m]} reload={vi.fn()} />);
 
-    await userEvent.click(screen.getByRole("button", { name: "Reset" }));
+    await userEvent.click(screen.getByLabelText("Keep writeback of pc01"));
+    expect(confirm).not.toHaveBeenCalled();
     expect(calls(fetchMock)).toEqual([
-      { url: "/api/v1/machines/1/reset", method: "POST", body: undefined },
+      { url: "/api/v1/machines/1/keep-writeback", method: "PUT", body: { enabled: true } },
     ]);
+  });
+
+  it("asks before turning keep writeback off", async () => {
+    const fetchMock = stubFetch();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const m = machine({ game_disk_id: 1, status: "provisioned", keep_writeback: true });
+    render(<MachinesPage disks={DISKS} machines={[m]} reload={vi.fn()} />);
+
+    await userEvent.click(screen.getByLabelText("Keep writeback of pc01"));
+    expect(confirm.mock.calls[0][0]).toContain("discarded");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("applies writebacks after confirmation", async () => {
+    const fetchMock = stubFetch(200, machine());
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const m = machine({ game_disk_id: 1, status: "provisioned", keep_writeback: true });
+    render(<MachinesPage disks={DISKS} machines={[m]} reload={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Apply writebacks" }));
+    expect(calls(fetchMock)).toEqual([
+      { url: "/api/v1/machines/1/apply-writebacks", method: "POST", body: undefined },
+    ]);
+  });
+
+  it("cannot apply while the PC is connected", () => {
+    const m = machine({
+      game_disk_id: 1,
+      status: "provisioned",
+      keep_writeback: true,
+      session_active: true,
+    });
+    render(<MachinesPage disks={DISKS} machines={[m]} reload={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Apply writebacks" })).toBeDisabled();
   });
 
   it("shows status, last error and outdated badge", () => {

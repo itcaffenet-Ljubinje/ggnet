@@ -24,6 +24,7 @@ class FakeHost:
         # iqn → {luns: {tpg lun: backstore}, acls: {initiator: {mapped: tpg lun}},
         #        portals: {"ip:port"}, attrs: {}}
         self.targets: dict[str, dict] = {}
+        self.sessions: set[str] = set()             # initiators logged in (any target)
         self.fail_on: dict[tuple[str, ...], str] = {}   # command prefix → stderr
         self.calls: list[list[str]] = []
         self.last_error = ""
@@ -40,7 +41,28 @@ class FakeHost:
             return self._zfs(cmd[1:])
         if cmd[0] == "targetcli":
             return self._targetcli(cmd[1:])
+        if cmd[0] == "cat":
+            return self._cat(cmd[1])
         raise AssertionError(f"FakeHost does not know command: {cmd}")
+
+    def run_pipe(self, producer: list[str], consumer: list[str], timeout: Optional[int] = None):
+        """Only `zfs send -i base clone@snap | zfs recv master` is simulated."""
+        producer, consumer = [str(c) for c in producer], [str(c) for c in consumer]
+        self.calls.append(producer + ["|"] + consumer)
+        for prefix, err in self.fail_on.items():
+            if tuple(producer[: len(prefix)]) == prefix or tuple(consumer[: len(prefix)]) == prefix:
+                return self._err(err)
+        assert producer[:3] == ["zfs", "send", "-i"] and consumer[:2] == ["zfs", "recv"], (producer, consumer)
+        base, src, master = producer[3], producer[4], consumer[2]
+        if base not in self.snapshots or src not in self.snapshots:
+            return self._err("cannot send: snapshot does not exist")
+        if self.datasets.get(src.split("@")[0], {}).get("origin") != base:
+            return self._err("cannot send: incremental source is not an earlier snapshot or origin")
+        newest = [s for s in self.snapshots if s.split("@")[0] == master][-1:]
+        if newest != [base]:
+            return self._err(f"cannot receive incremental stream: destination {master} has been modified")
+        self.snapshots[f"{master}@{src.split('@')[1]}"] = set()
+        return self._ok()
 
     def _ok(self, out: str = ""):
         return True, out, ""
@@ -75,8 +97,10 @@ class FakeHost:
                 ds = a[-1]
                 if ds not in self.datasets:
                     return self._err(f"cannot open '{ds}': dataset does not exist")
-                lines = [f"{s}\t{','.join(self.clones_of(s)) or '-'}"
-                         for s in self.snapshots if s.split("@")[0] == ds]
+                mine = [s for s in self.snapshots if s.split("@")[0] == ds]   # creation order
+                if a[a.index("-o") + 1] == "name":
+                    return self._ok("\n".join(mine))
+                lines = [f"{s}\t{','.join(self.clones_of(s)) or '-'}" for s in mine]
                 return self._ok("\n".join(lines))
             name = a[-1]
             if not self.exists(name):
@@ -123,6 +147,7 @@ class FakeHost:
             key, _, value = prop.partition("=")
             if key == "readonly":
                 self.datasets[name]["readonly"] = value == "on"
+            self.datasets[name].setdefault("props", {})[key] = value
             return self._ok()
 
         if sub == "get":
@@ -140,11 +165,27 @@ class FakeHost:
             self.add_dataset(dst, origin=src)
             return self._ok()
 
+        if sub == "rename":
+            src, dst = a[1], a[2]
+            if src not in self.snapshots:
+                return self._err(f"cannot open '{src}': dataset does not exist")
+            if dst in self.snapshots:
+                return self._err(f"cannot rename to '{dst}': dataset already exists")
+            self.snapshots = {(dst if k == src else k): v for k, v in self.snapshots.items()}
+            return self._ok()
+
         if sub == "destroy":
             name = a[-1]
             recursive = "-r" in a
             if not self.exists(name):
                 return self._err(f"cannot open '{name}': dataset does not exist")
+            if "@" in name:
+                if self.snapshots[name]:
+                    return self._err(f"cannot destroy snapshot {name}: dataset is busy")
+                if self.clones_of(name):
+                    return self._err(f"cannot destroy '{name}': snapshot has dependent clones")
+                del self.snapshots[name]
+                return self._ok()
             victims = [name] + (self._children(name) if recursive else [])
             snaps = [s for s in self.snapshots
                      if any(s.split("@")[0] == v for v in victims)]
@@ -165,6 +206,20 @@ class FakeHost:
             return self._ok()
 
         raise AssertionError(f"FakeHost does not know zfs command: {a}")
+
+    # ── configfs (cat) ────────────────────────────────────────────────
+
+    def _cat(self, path: str):
+        # .../iscsi/<target>/tpgt_1/acls/<initiator>/info
+        parts = path.split("/")
+        if len(parts) < 5 or parts[-1] != "info" or parts[-3] != "acls":
+            raise AssertionError(f"FakeHost does not know file: {path}")
+        target, initiator = parts[-5], parts[-2]
+        if initiator not in self.targets.get(target, {}).get("acls", {}):
+            return self._err(f"cat: {path}: No such file or directory")
+        if initiator in self.sessions:
+            return self._ok(f"InitiatorName: {initiator}\nSession State: TARG_SESS_STATE_LOGGED_IN")
+        return self._ok(f"No active iSCSI Session for Initiator Endpoint: {initiator}")
 
     # ── targetcli ─────────────────────────────────────────────────────
 

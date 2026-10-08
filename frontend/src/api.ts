@@ -37,6 +37,11 @@ export interface Machine {
   agent_version: string | null;
   reported_iqn: string | null;
   iscsi_connected: boolean | null;
+  keep_writeback: boolean;
+  writeback_dirty: boolean;
+  session_active: boolean | null;
+  session_changed_at: string | null;
+  booted_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -111,6 +116,8 @@ export const api = {
     request<Machine>("PATCH", `/v1/machines/${id}`, body),
   assignDisk: (id: number, game_disk_id: number | null) =>
     request<Machine>("POST", `/v1/machines/${id}/assign`, { game_disk_id }),
-  resetMachine: (id: number) => request<Machine>("POST", `/v1/machines/${id}/reset`),
+  setKeepWriteback: (id: number, enabled: boolean) =>
+    request<Machine>("PUT", `/v1/machines/${id}/keep-writeback`, { enabled }),
+  applyWritebacks: (id: number) => request<Machine>("POST", `/v1/machines/${id}/apply-writebacks`),
   deleteMachine: (id: number) => request<void>("DELETE", `/v1/machines/${id}`),
 };
