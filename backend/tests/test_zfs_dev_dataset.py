@@ -105,6 +105,17 @@ def test_apply_clone_on_real_zfs(dev_zfs):
         assert not zfs.dataset_exists(keeper) and not zfs.dataset_exists(old)
         ok, out, _ = zfs.runner.run(["zfs", "holds", "-H", f"{master}@base", f"{master}@v2"])
         assert ok and out.count("ggnet:protected") == 2
+
+        # Images page: versions with their clones; a used version cannot be deleted.
+        details = {d["name"]: d for d in zfs.snapshot_details(master)}
+        assert details["base"]["clones"] == [other] and details["v2"]["clones"] == []
+        assert details["v2"]["referenced"] > 0 and details["base"]["creation"] <= details["v2"]["creation"]
+        assert not zfs.destroy_snapshot(f"{master}@base")
+        ok, out, _ = zfs.runner.run(["zfs", "holds", "-H", f"{master}@base"])
+        assert ok and "ggnet:protected" in out              # hold kept after the refusal
+        assert zfs.destroy(other)
+        assert zfs.destroy_snapshot(f"{master}@base"), zfs.runner.last_error
+        assert zfs.list_snapshots(master) == ["v2"]
     finally:
         zfs.runner.run(["zfs", "release", "ggnet:protected", f"{keeper}@v2"], quiet=True)
         for ds in (other, keeper):

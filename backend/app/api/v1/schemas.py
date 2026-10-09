@@ -88,6 +88,34 @@ class GameDiskEdit(BaseModel):
     machine_id: int   # the PC the draft is filled on
 
 
+class SnapshotOut(BaseModel):
+    """One version of a game disk (a ZFS snapshot of its master)."""
+
+    name: str                 # base, v2, ...
+    created_at: datetime
+    used_bytes: int           # space only this version holds
+    referenced_bytes: int     # data the version contains
+    active: bool              # PCs are cloned from it at their next discard
+    machines: list[str]       # PCs whose writeback was cloned from it
+
+
+class ActiveSnapshot(BaseModel):
+    snapshot: str
+
+
+class WritebackOut(BaseModel):
+    """A PC's writeback (clone) of a game disk."""
+
+    machine_id: int | None    # None: a clone on the host with no machine record
+    machine_name: str
+    zvol: str
+    snapshot: str             # the version it was cloned from
+    used_bytes: int           # what the PC has written
+    keep_writeback: bool
+    session_active: bool | None
+    outdated: bool            # not on the active version
+
+
 # ── Machine ───────────────────────────────────────────────────────────
 
 class MachineCreate(BaseModel):

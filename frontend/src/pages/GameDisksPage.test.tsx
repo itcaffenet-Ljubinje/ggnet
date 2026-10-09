@@ -115,4 +115,17 @@ describe("GameDisksPage", () => {
       { url: "/api/v1/game-disks/1/finish-edit", method: "POST", body: undefined },
     ]);
   });
+
+  it("offers details only for published disks", () => {
+    render(
+      <GameDisksPage
+        disks={[disk(), disk({ id: 2, name: "draft", published: false, snapshot: null })]}
+        machines={[]}
+        reload={vi.fn()}
+      />,
+    );
+    const buttons = screen.getAllByRole("button", { name: "Details" });
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]).toHaveAttribute("aria-expanded", "false");
+  });
 });

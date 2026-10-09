@@ -18,6 +18,28 @@ export interface GameDisk {
   created_at: string;
 }
 
+/** One version of a game disk (a ZFS snapshot of its master). */
+export interface Snapshot {
+  name: string;
+  created_at: string;
+  used_bytes: number;
+  referenced_bytes: number;
+  active: boolean;
+  machines: string[];
+}
+
+/** A PC's writeback (clone) of a game disk. */
+export interface Writeback {
+  machine_id: number | null;
+  machine_name: string;
+  zvol: string;
+  snapshot: string;
+  used_bytes: number;
+  keep_writeback: boolean;
+  session_active: boolean | null;
+  outdated: boolean;
+}
+
 export type MachineMode = "disk" | "boot";
 export type MachineStatus = "idle" | "provisioned" | "editing" | "error";
 
@@ -117,6 +139,12 @@ export const api = {
     request<GameDisk>("POST", `/v1/game-disks/${id}/edit`, { machine_id }),
   finishEdit: (id: number) => request<GameDisk>("POST", `/v1/game-disks/${id}/finish-edit`),
   deleteDisk: (id: number) => request<void>("DELETE", `/v1/game-disks/${id}`),
+  listSnapshots: (id: number) => request<Snapshot[]>("GET", `/v1/game-disks/${id}/snapshots`),
+  setActiveSnapshot: (id: number, snapshot: string) =>
+    request<GameDisk>("PUT", `/v1/game-disks/${id}/active-snapshot`, { snapshot }),
+  deleteSnapshot: (id: number, name: string) =>
+    request<void>("DELETE", `/v1/game-disks/${id}/snapshots/${encodeURIComponent(name)}`),
+  listWritebacks: (id: number) => request<Writeback[]>("GET", `/v1/game-disks/${id}/writebacks`),
 
   listMachines: () => request<Machine[]>("GET", "/v1/machines"),
   createMachine: (body: MachineCreate) => request<Machine>("POST", "/v1/machines", body),
@@ -129,5 +157,6 @@ export const api = {
   setKeepWriteback: (id: number, enabled: boolean) =>
     request<Machine>("PUT", `/v1/machines/${id}/keep-writeback`, { enabled }),
   applyWritebacks: (id: number) => request<Machine>("POST", `/v1/machines/${id}/apply-writebacks`),
+  discardWriteback: (id: number) => request<Machine>("POST", `/v1/machines/${id}/discard-writeback`),
   deleteMachine: (id: number) => request<void>("DELETE", `/v1/machines/${id}`),
 };

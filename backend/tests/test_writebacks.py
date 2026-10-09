@@ -370,3 +370,112 @@ def test_watcher_tracks_editing_machine_but_never_discards(client, host, prov, m
     # Only session reads; the draft stays mapped and nothing is cloned.
     assert all(c[0] == "cat" for c in host.calls[calls:])
     assert host.visible(_iqn("pc01")) == ["/dev/zvol/tank/ggnet/images/draft"]
+
+
+# ── Images: versions and writebacks ───────────────────────────────────
+
+def _versions(client, disk) -> list[dict]:
+    r = client.get(f"/api/v1/game-disks/{disk['id']}/snapshots")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_snapshots_list_versions_with_sizes_and_users(client, host, disk):
+    m = _keeper(client, disk)
+    _machine(client, disk, "pc02")
+    client.post(f"/api/v1/machines/{m['id']}/apply-writebacks")
+    host.sizes[f"{MASTER}@base"] = (4096, 1 << 30)
+
+    v = _versions(client, disk)
+    assert [(s["name"], s["active"], s["machines"]) for s in v] == [
+        ("base", False, ["pc02"]),
+        ("v2", True, ["pc01"]),
+    ]
+    assert (v[0]["used_bytes"], v[0]["referenced_bytes"]) == (4096, 1 << 30)
+    assert v[0]["created_at"] < v[1]["created_at"]
+
+
+def test_draft_disk_has_no_versions(client):
+    d = client.post("/api/v1/game-disks", json={"name": "draft", "size_gb": 10}).json()
+    assert client.get(f"/api/v1/game-disks/{d['id']}/snapshots").json() == []
+
+
+def test_make_an_older_version_active(client, host, disk):
+    m = _keeper(client, disk)
+    other = _machine(client, disk, "pc02")
+    client.post(f"/api/v1/machines/{m['id']}/apply-writebacks")
+    url = f"/api/v1/game-disks/{disk['id']}/active-snapshot"
+
+    r = client.put(url, json={"snapshot": "base"})
+    assert r.status_code == 200 and r.json()["snapshot"] == "base"
+    assert _get(client, other)["outdated"] is False      # pc02 is on @base already
+    assert _get(client, m)["outdated"] is True           # pc01 keeps @v2 (Keep Writeback)
+    assert host.snapshots[f"{MASTER}@v2"] == {"ggnet:protected"}   # nothing deleted
+    assert client.put(url, json={"snapshot": "v9"}).status_code == 404
+
+
+def test_delete_a_version(client, host, disk):
+    m = _keeper(client, disk)
+    other = _machine(client, disk, "pc02")
+    client.post(f"/api/v1/machines/{m['id']}/apply-writebacks")
+    url = f"/api/v1/game-disks/{disk['id']}/snapshots"
+
+    r = client.delete(f"{url}/v2")
+    assert r.status_code == 409 and "active version" in r.text
+    r = client.delete(f"{url}/base")
+    assert r.status_code == 409 and "pc02" in r.text     # pc02 still runs on it
+    assert host.snapshots[f"{MASTER}@base"] == {"ggnet:protected"}
+    assert client.delete(f"{url}/v7").status_code == 404
+
+    client.post(f"/api/v1/machines/{other['id']}/discard-writeback")   # pc02 moves to @v2
+    assert client.delete(f"{url}/base").status_code == 204
+    assert f"{MASTER}@base" not in host.snapshots
+    assert [s["name"] for s in _versions(client, disk)] == ["v2"]
+
+
+def test_delete_version_failure_keeps_the_hold(client, host, disk):
+    m = _keeper(client, disk)
+    client.post(f"/api/v1/machines/{m['id']}/apply-writebacks")
+    host.fail_on[("zfs", "destroy", f"{MASTER}@base")] = "dataset is busy"
+    r = client.delete(f"/api/v1/game-disks/{disk['id']}/snapshots/base")
+    assert r.status_code == 502 and "dataset is busy" in r.text
+    assert host.snapshots[f"{MASTER}@base"] == {"ggnet:protected"}
+
+
+def test_writebacks_of_a_disk(client, host, disk):
+    m = _keeper(client, disk)
+    _machine(client, disk, "pc02")
+    client.post(f"/api/v1/machines/{m['id']}/apply-writebacks")
+    host.sizes["tank/ggnet/writebacks/pc02"] = (5 << 20, 1 << 30)
+    host.add_dataset("tank/ggnet/writebacks/stray", origin=f"{MASTER}@base")   # no machine record
+
+    r = client.get(f"/api/v1/game-disks/{disk['id']}/writebacks")
+    assert r.status_code == 200, r.text
+    rows = {w["machine_name"]: w for w in r.json()}
+    assert set(rows) == {"pc01", "pc02", "stray"}
+    assert (rows["pc01"]["snapshot"], rows["pc01"]["keep_writeback"], rows["pc01"]["outdated"]) == ("v2", True, False)
+    assert (rows["pc02"]["snapshot"], rows["pc02"]["used_bytes"], rows["pc02"]["outdated"]) == ("base", 5 << 20, True)
+    assert rows["stray"]["machine_id"] is None
+
+
+def test_discard_writeback_of_a_keeper(client, host, disk):
+    m = _keeper(client, disk)
+    host.sessions.add(_iqn("pc01"))
+    url = f"/api/v1/machines/{m['id']}/discard-writeback"
+    r = client.post(url)
+    assert r.status_code == 409 and "shut it down" in r.text
+
+    host.sessions.discard(_iqn("pc01"))
+    clones = _clones_made(host)
+    r = client.post(url)
+    assert r.status_code == 200, r.text
+    assert _clones_made(host) == clones + 1
+    got = r.json()
+    assert (got["keep_writeback"], got["writeback_dirty"], got["status"]) == (True, False, "provisioned")
+    assert host.datasets["tank/ggnet/writebacks/pc01"]["props"]["sync"] == "standard"
+    assert host.visible(_iqn("pc01")) == ["/dev/zvol/tank/ggnet/writebacks/pc01"]
+
+
+def test_discard_writeback_needs_a_provisioned_machine(client):
+    m = client.post("/api/v1/machines", json={"name": "pc09"}).json()
+    assert client.post(f"/api/v1/machines/{m['id']}/discard-writeback").status_code == 409
