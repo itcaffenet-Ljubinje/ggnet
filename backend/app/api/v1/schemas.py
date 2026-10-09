@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from datetime import datetime, timezone
+from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -240,6 +242,10 @@ class MachineOut(BaseModel):
     drive_letter: str
     reported_drive_letter: str | None
     pinned_snapshot: str | None
+    reported_ip: str | None
+    reported_mac: str | None
+    link_speed_mbps: int | None
+    hardware: MachineHardware | None = Field(validation_alias="hardware_info")
     status: MachineStatus
     last_error: str | None
     clone_zvol: str | None
@@ -270,6 +276,9 @@ class AgentHeartbeat(BaseModel):
     iscsi_connected: bool = False
     booted_at: datetime | None = None   # Windows boot time (UTC); newer = the PC restarted
     drive_letter: str | None = None     # the letter the game disk actually got
+    # Network and hardware (AgentInventory); parsed leniently by the endpoint so
+    # a bad inventory never fails the heartbeat itself.
+    inventory: dict[str, Any] | None = None
 
     @field_validator("drive_letter")
     @classmethod
@@ -298,6 +307,37 @@ class AgentHeartbeat(BaseModel):
         if len(v) > 223 or not v.startswith("iqn."):
             raise ValueError("invalid IQN")
         return v
+
+
+class AgentInventory(BaseModel):
+    """What the agent reports about the PC (refreshed every few minutes)."""
+
+    ip_address: str | None = None
+    mac_address: str | None = None
+    link_speed_mbps: int | None = Field(None, ge=0, le=1_000_000)
+    nic: str | None = Field(None, max_length=128)
+    cpu: str | None = Field(None, max_length=128)
+    gpus: list[Annotated[str, Field(max_length=128)]] = Field(default_factory=list, max_length=8)
+    motherboard: str | None = Field(None, max_length=128)
+    memory_bytes: int | None = Field(None, ge=0)
+
+    @field_validator("ip_address")
+    @classmethod
+    def check_ip(cls, v: str | None) -> str | None:
+        return str(ipaddress.ip_address(v)) if v else None
+
+    @field_validator("mac_address")
+    @classmethod
+    def check_mac(cls, v: str | None) -> str | None:
+        return _mac(v)
+
+
+class MachineHardware(BaseModel):
+    nic: str | None = None
+    cpu: str | None = None
+    gpus: list[str] = []
+    motherboard: str | None = None
+    memory_bytes: int | None = None
 
 
 class AgentConfig(BaseModel):

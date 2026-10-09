@@ -5,6 +5,7 @@ ORM models. Relations are real foreign keys, never IDs stored as strings.
 from __future__ import annotations
 
 import enum
+import json
 from datetime import datetime, timezone
 
 from sqlalchemy import (
@@ -181,11 +182,21 @@ class Machine(Base):
     reported_iqn: Mapped[str | None] = mapped_column(String(223), default=None)
     iscsi_connected: Mapped[bool | None] = mapped_column(Boolean, default=None)
     reported_drive_letter: Mapped[str | None] = mapped_column(String(1), default=None)
+    # Inventory from the agent: the network it reaches the server on and the
+    # hardware (ggRock's IP and Link Speed columns, Hardware tab). JSON text.
+    reported_ip: Mapped[str | None] = mapped_column(String(45), default=None)
+    reported_mac: Mapped[str | None] = mapped_column(String(17), default=None)
+    link_speed_mbps: Mapped[int | None] = mapped_column(Integer, default=None)
+    hardware: Mapped[str | None] = mapped_column(Text, default=None)
 
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now)
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=_now, onupdate=_now
     )
+
+    @property
+    def hardware_info(self) -> dict | None:
+        return json.loads(self.hardware) if self.hardware else None
 
     @property
     def target_snapshot_path(self) -> str | None:

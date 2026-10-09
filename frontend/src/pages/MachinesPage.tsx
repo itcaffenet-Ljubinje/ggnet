@@ -1,9 +1,10 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useState, type FormEvent } from "react";
 
 import { api, type GameDisk, type Machine, type MachineMode } from "../api";
 import { AgentState } from "../components/AgentState";
 import { ErrorBanner } from "../components/ErrorBanner";
 import { ImageStatus } from "../components/ImageStatus";
+import { MachineDetails } from "../components/MachineDetails";
 import { StatusBadge } from "../components/StatusBadge";
 import { useAsyncAction } from "../useAsyncAction";
 
@@ -26,6 +27,8 @@ export function MachinesPage({ disks, machines, reload }: Props) {
   const [mode, setMode] = useState<MachineMode>("disk");
   const [diskId, setDiskId] = useState("");
   const [allLetter, setAllLetter] = useState("D");
+  // The machine whose hardware and network are shown.
+  const [open, setOpen] = useState<number | null>(null);
   // Versions of each game disk in use, for the pin drop-down.
   const [versions, setVersions] = useState<Record<number, string[]>>({});
 
@@ -224,122 +227,139 @@ export function MachinesPage({ disks, machines, reload }: Props) {
           </thead>
           <tbody>
             {machines.map((m) => (
-              <tr key={m.id}>
-                <td>
-                  <div className="strong">{m.name}</div>
-                  <div className="mono muted small">{m.initiator_iqn}</div>
-                </td>
-                <td>{m.mode === "disk" ? "Disk" : "Boot"}</td>
-                <td className="mono">{m.mac ?? "—"}</td>
-                <td>
-                  {m.status === "editing" ? (
-                    <span className="muted">Editing {diskName(m.editing_disk_id)}</span>
-                  ) : m.mode === "disk" ? (
-                    <select
-                      aria-label={`Game disk for ${m.name}`}
-                      value={m.game_disk_id ?? ""}
-                      onChange={(e) => assign(m, e.target.value)}
-                      disabled={busy !== null}
-                    >
-                      <option value="">None</option>
-                      {published.map((d) => (
-                        <option key={d.id} value={d.id}>
-                          {d.name}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <span className="muted">—</span>
-                  )}
-                  {m.mode === "disk" && m.game_disk_id !== null && m.status !== "editing" && (
-                    <div className="image-version">
+              <Fragment key={m.id}>
+                <tr>
+                  <td>
+                    <div className="strong">{m.name}</div>
+                    <div className="mono muted small">{m.initiator_iqn}</div>
+                  </td>
+                  <td>{m.mode === "disk" ? "Disk" : "Boot"}</td>
+                  <td className="mono">{m.mac ?? "—"}</td>
+                  <td>
+                    {m.status === "editing" ? (
+                      <span className="muted">Editing {diskName(m.editing_disk_id)}</span>
+                    ) : m.mode === "disk" ? (
                       <select
-                        aria-label={`Version for ${m.name}`}
-                        value={m.pinned_snapshot ?? ""}
-                        onChange={(e) => pin(m, e.target.value)}
+                        aria-label={`Game disk for ${m.name}`}
+                        value={m.game_disk_id ?? ""}
+                        onChange={(e) => assign(m, e.target.value)}
                         disabled={busy !== null}
                       >
-                        <option value="">
-                          Follow active (@{disks.find((d) => d.id === m.game_disk_id)?.snapshot})
-                        </option>
-                        {(versions[m.game_disk_id] ?? (m.pinned_snapshot ? [m.pinned_snapshot] : [])).map(
-                          (v) => (
-                            <option key={v} value={v}>
-                              Pin @{v}
-                            </option>
-                          ),
-                        )}
+                        <option value="">None</option>
+                        {published.map((d) => (
+                          <option key={d.id} value={d.id}>
+                            {d.name}
+                          </option>
+                        ))}
                       </select>
-                      <ImageStatus machine={m} disk={disks.find((d) => d.id === m.game_disk_id)} />
-                    </div>
-                  )}
-                </td>
-                <td>
-                  {m.mode === "disk" ? (
-                    <select
-                      aria-label={`Drive letter for ${m.name}`}
-                      value={m.drive_letter}
-                      onChange={(e) => setLetter(m, e.target.value)}
-                      disabled={busy !== null}
-                    >
-                      {LETTERS.map((l) => (
-                        <option key={l} value={l}>
-                          {l}:
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <span className="muted">D:</span>
-                  )}
-                  {m.reported_drive_letter && m.reported_drive_letter !== m.drive_letter && (
-                    <div>
-                      <span
-                        className="badge badge-warn"
-                        title={`${m.drive_letter}: is taken on this PC, so the game disk got ${m.reported_drive_letter}:`}
+                    ) : (
+                      <span className="muted">—</span>
+                    )}
+                    {m.mode === "disk" && m.game_disk_id !== null && m.status !== "editing" && (
+                      <div className="image-version">
+                        <select
+                          aria-label={`Version for ${m.name}`}
+                          value={m.pinned_snapshot ?? ""}
+                          onChange={(e) => pin(m, e.target.value)}
+                          disabled={busy !== null}
+                        >
+                          <option value="">
+                            Follow active (@{disks.find((d) => d.id === m.game_disk_id)?.snapshot})
+                          </option>
+                          {(versions[m.game_disk_id] ?? (m.pinned_snapshot ? [m.pinned_snapshot] : [])).map(
+                            (v) => (
+                              <option key={v} value={v}>
+                                Pin @{v}
+                              </option>
+                            ),
+                          )}
+                        </select>
+                        <ImageStatus machine={m} disk={disks.find((d) => d.id === m.game_disk_id)} />
+                      </div>
+                    )}
+                  </td>
+                  <td>
+                    {m.mode === "disk" ? (
+                      <select
+                        aria-label={`Drive letter for ${m.name}`}
+                        value={m.drive_letter}
+                        onChange={(e) => setLetter(m, e.target.value)}
+                        disabled={busy !== null}
                       >
-                        Got {m.reported_drive_letter}:
-                      </span>
-                    </div>
-                  )}
-                </td>
-                <td>
-                  <StatusBadge status={m.status} />
-                  {m.last_error && <div className="error-text small">{m.last_error}</div>}
-                </td>
-                <td>
-                  <AgentState machine={m} />
-                </td>
-                <td>
-                  <input
-                    type="checkbox"
-                    aria-label={`Keep writeback of ${m.name}`}
-                    checked={m.keep_writeback}
-                    onChange={(e) => keep(m, e.target.checked)}
-                    disabled={busy !== null || m.mode !== "disk"}
-                  />
-                </td>
-                <td className="actions">
-                  {m.keep_writeback && m.status === "provisioned" && (
+                        {LETTERS.map((l) => (
+                          <option key={l} value={l}>
+                            {l}:
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="muted">D:</span>
+                    )}
+                    {m.reported_drive_letter && m.reported_drive_letter !== m.drive_letter && (
+                      <div>
+                        <span
+                          className="badge badge-warn"
+                          title={`${m.drive_letter}: is taken on this PC, so the game disk got ${m.reported_drive_letter}:`}
+                        >
+                          Got {m.reported_drive_letter}:
+                        </span>
+                      </div>
+                    )}
+                  </td>
+                  <td>
+                    <StatusBadge status={m.status} />
+                    {m.last_error && <div className="error-text small">{m.last_error}</div>}
+                  </td>
+                  <td>
+                    <AgentState machine={m} />
+                  </td>
+                  <td>
+                    <input
+                      type="checkbox"
+                      aria-label={`Keep writeback of ${m.name}`}
+                      checked={m.keep_writeback}
+                      onChange={(e) => keep(m, e.target.checked)}
+                      disabled={busy !== null || m.mode !== "disk"}
+                    />
+                  </td>
+                  <td className="actions">
                     <button
                       type="button"
-                      onClick={() => apply(m)}
-                      disabled={busy !== null || m.session_active === true}
-                      title={m.session_active ? `Shut down ${m.name} first` : undefined}
+                      className="secondary"
+                      aria-expanded={open === m.id}
+                      onClick={() => setOpen(open === m.id ? null : m.id)}
                     >
-                      {busy === `apply-${m.id}` ? "Applying…" : "Apply writebacks"}
+                      {open === m.id ? "Hide details" : "Details"}
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    className="danger"
-                    onClick={() => remove(m)}
-                    disabled={busy !== null || m.status === "editing"}
-                    title={m.status === "editing" ? "Finish editing the game disk first" : undefined}
-                  >
-                    {busy === `delete-${m.id}` ? "Deleting…" : "Delete"}
-                  </button>
-                </td>
-              </tr>
+                    {m.keep_writeback && m.status === "provisioned" && (
+                      <button
+                        type="button"
+                        onClick={() => apply(m)}
+                        disabled={busy !== null || m.session_active === true}
+                        title={m.session_active ? `Shut down ${m.name} first` : undefined}
+                      >
+                        {busy === `apply-${m.id}` ? "Applying…" : "Apply writebacks"}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="danger"
+                      onClick={() => remove(m)}
+                      disabled={busy !== null || m.status === "editing"}
+                      title={m.status === "editing" ? "Finish editing the game disk first" : undefined}
+                    >
+                      {busy === `delete-${m.id}` ? "Deleting…" : "Delete"}
+                    </button>
+                  </td>
+                </tr>
+                {open === m.id && (
+                  <tr>
+                    <td colSpan={9}>
+                      <MachineDetails machine={m} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </table>

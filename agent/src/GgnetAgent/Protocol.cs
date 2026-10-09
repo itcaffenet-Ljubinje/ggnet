@@ -15,7 +15,8 @@ public sealed record Heartbeat(
     string? InitiatorIqn,
     bool IscsiConnected,
     DateTimeOffset? BootedAt = null,
-    string? DriveLetter = null);   // the letter the game disk got, while connected
+    string? DriveLetter = null,    // the letter the game disk got, while connected
+    Inventory? Inventory = null);  // network and hardware, refreshed every few minutes
 
 /// <summary>The server's answer: what this PC should connect.</summary>
 public sealed record AgentConfig(

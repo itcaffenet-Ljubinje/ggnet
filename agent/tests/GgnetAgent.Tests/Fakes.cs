@@ -90,3 +90,17 @@ internal sealed class RecordingRunner(string output = "") : IScriptRunner
         return Task.FromResult(output);
     }
 }
+
+/// <summary>Returns a fixed inventory and counts the reads.</summary>
+internal sealed class FakeInventory : IInventory
+{
+    public Inventory? Next { get; set; } = new("192.168.0.21", "AA-BB-CC-DD-EE-01", 1000, "Intel I219-V",
+        "AMD Ryzen 5 5600X", ["NVIDIA GeForce RTX 3060"], "ASUS TUF B550", 16L << 30);
+    public List<string?> Reads { get; } = [];
+
+    public Task<Inventory?> ReadAsync(string? serverIp, CancellationToken ct)
+    {
+        Reads.Add(serverIp);
+        return Task.FromResult(Next);
+    }
+}
