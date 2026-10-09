@@ -336,7 +336,8 @@ def apply_writebacks(
         conflict(f"'{machine.name}' is still connected; shut it down first")
 
     try:
-        disk.snapshot = prov.apply_writebacks(machine.clone_zvol, disk.zvol_path, disk.snapshot)
+        disk.snapshot = prov.apply_writebacks(machine.name, machine.initiator_iqn,
+                                              machine.clone_zvol, disk.zvol_path, disk.snapshot)
     except ProvisioningError as e:
         host_failed(str(e), machine_id=machine.id)
     db.commit()

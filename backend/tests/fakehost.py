@@ -46,23 +46,19 @@ class FakeHost:
         raise AssertionError(f"FakeHost does not know command: {cmd}")
 
     def run_pipe(self, producer: list[str], consumer: list[str], timeout: Optional[int] = None):
-        """Only `zfs send -i base clone@snap | zfs recv master` is simulated."""
+        """
+        `zfs send -i <origin> <clone>@x | zfs recv <existing>` fails like on a
+        real host: an incremental from a clone's origin is a clone stream.
+        """
         producer, consumer = [str(c) for c in producer], [str(c) for c in consumer]
         self.calls.append(producer + ["|"] + consumer)
         for prefix, err in self.fail_on.items():
             if tuple(producer[: len(prefix)]) == prefix or tuple(consumer[: len(prefix)]) == prefix:
                 return self._err(err)
-        assert producer[:3] == ["zfs", "send", "-i"] and consumer[:2] == ["zfs", "recv"], (producer, consumer)
-        base, src, master = producer[3], producer[4], consumer[2]
-        if base not in self.snapshots or src not in self.snapshots:
-            return self._err("cannot send: snapshot does not exist")
-        if self.datasets.get(src.split("@")[0], {}).get("origin") != base:
-            return self._err("cannot send: incremental source is not an earlier snapshot or origin")
-        newest = [s for s in self.snapshots if s.split("@")[0] == master][-1:]
-        if newest != [base]:
-            return self._err(f"cannot receive incremental stream: destination {master} has been modified")
-        self.snapshots[f"{master}@{src.split('@')[1]}"] = set()
-        return self._ok()
+        dst = consumer[-1]
+        if dst in self.datasets:
+            return self._err(f"cannot receive new filesystem stream: destination '{dst}' exists")
+        raise AssertionError(f"FakeHost does not simulate this pipe: {producer} | {consumer}")
 
     def _ok(self, out: str = ""):
         return True, out, ""
@@ -156,7 +152,35 @@ class FakeHost:
                 return self._err(f"cannot open '{name}': dataset does not exist")
             if a[-2] == "readonly":
                 return self._ok("on" if self.datasets[name]["readonly"] else "off")
-            return self._ok("-")
+            if a[-2] == "origin":
+                return self._ok(self.datasets[name]["origin"] or "-")
+            return self._ok(self.datasets[name].get("props", {}).get(a[-2], "-"))
+
+        if sub == "inherit":
+            prop, name = a[1], a[2]
+            if name not in self.datasets:
+                return self._err(f"cannot open '{name}': dataset does not exist")
+            self.datasets[name].get("props", {}).pop(prop, None)
+            return self._ok()
+
+        if sub == "promote":
+            clone = a[1]
+            origin = self.datasets.get(clone, {}).get("origin")
+            if origin is None:
+                return self._err(f"cannot promote '{clone}': not a cloned filesystem")
+            parent, _, at = origin.partition("@")
+            mine = [k for k in self.snapshots if k.split("@")[0] == parent]   # creation order
+            moved = mine[: mine.index(origin) + 1]
+            renames = {k: f"{clone}@{k.split('@')[1]}" for k in moved}
+            if any(r in self.snapshots for r in renames.values()):
+                return self._err(f"cannot promote '{clone}': snapshot name conflict")
+            self.snapshots = {renames.get(k, k): v for k, v in self.snapshots.items()}
+            for p in self.datasets.values():
+                if p["origin"] in renames:
+                    p["origin"] = renames[p["origin"]]
+            self.datasets[clone]["origin"] = self.datasets[parent]["origin"]
+            self.datasets[parent]["origin"] = f"{clone}@{at}"
+            return self._ok()
 
         if sub == "clone":
             src, dst = a[-2], a[-1]
@@ -165,6 +189,22 @@ class FakeHost:
             if self.exists(dst):
                 return self._err(f"cannot create '{dst}': dataset already exists")
             self.add_dataset(dst, origin=src)
+            return self._ok()
+
+        if sub == "rename" and "@" not in a[1]:
+            src, dst = a[1], a[2]
+            if src not in self.datasets:
+                return self._err(f"cannot open '{src}': dataset does not exist")
+            if self.exists(dst):
+                return self._err(f"cannot rename to '{dst}': dataset already exists")
+            if self._busy(src):
+                return self._err(f"cannot rename '{src}': dataset is busy")
+            self.datasets = {(dst if k == src else k): v for k, v in self.datasets.items()}
+            renames = {k: f"{dst}@{k.split('@')[1]}" for k in self.snapshots if k.split("@")[0] == src}
+            self.snapshots = {renames.get(k, k): v for k, v in self.snapshots.items()}
+            for p in self.datasets.values():
+                if p["origin"] in renames:
+                    p["origin"] = renames[p["origin"]]
             return self._ok()
 
         if sub == "rename":

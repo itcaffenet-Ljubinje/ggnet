@@ -210,11 +210,15 @@ class Provisioner:
             ):
                 raise self._fail(f"Setting sync on {clone_zvol} failed")
 
-    def apply_writebacks(self, clone_zvol: str, master: str, base_snap: str) -> str:
+    def apply_writebacks(
+        self, machine_name: str, initiator_iqn: str, clone_zvol: str, master: str, base_snap: str
+    ) -> str:
         """
         Make the clone's content the next version of `master` (ggRock
         "Apply Writebacks"). Returns the new snapshot name. The machine must
-        be powered off; the caller re-clones it from the new version.
+        be powered off. The clone itself becomes the master, so it is
+        unmapped first; the caller re-clones the machine from the new
+        version. On failure the clone is mapped again.
         """
         with self.lock:
             self._clear()
@@ -222,6 +226,11 @@ class Provisioner:
             if snaps is None:
                 raise self._fail(f"Listing versions of {master} failed")
             new = next_version(snaps)
+            self._detach(machine_name, initiator_iqn)
             if not self.zfs.apply_clone(clone_zvol, master, base_snap, new):
-                raise self._fail(f"Applying {clone_zvol} to {master} failed")
+                err = self._fail(f"Applying {clone_zvol} to {master} failed")
+                if self.iscsi.attach(machine_name, initiator_iqn,
+                                     [Disk("game", self.zfs.zvol_device_path(clone_zvol))]) is None:
+                    logger.error("Apply failed and %s could not be mapped again", clone_zvol)
+                raise err
         return new
