@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { api, type GameDisk, type Health, type Machine } from "./api";
+import { api, type GameDisk, type Health, type Machine, type Storage } from "./api";
 import { GameDisksPage } from "./pages/GameDisksPage";
 import { MachinesPage } from "./pages/MachinesPage";
+import { SettingsPage } from "./pages/SettingsPage";
 
-type Tab = "machines" | "disks";
+type Tab = "machines" | "disks" | "settings";
 
 // Machine status changes on the host (reset, errors) are picked up by polling.
 const REFRESH_MS = 10_000;
@@ -14,6 +15,7 @@ export function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [disks, setDisks] = useState<GameDisk[]>([]);
   const [machines, setMachines] = useState<Machine[]>([]);
+  const [storage, setStorage] = useState<Storage | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
@@ -25,6 +27,8 @@ export function App() {
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : String(e));
     }
+    // The pool can be unreadable while the rest works; it only drives a warning.
+    api.getStorage().then(setStorage).catch(() => setStorage(null));
   }, []);
 
   useEffect(() => {
@@ -53,6 +57,13 @@ export function App() {
           >
             Game disks ({disks.length})
           </button>
+          <button
+            type="button"
+            className={tab === "settings" ? "tab active" : "tab"}
+            onClick={() => setTab("settings")}
+          >
+            Settings
+          </button>
         </nav>
         <div className="muted small">
           {health ? `v${health.version} · pool ${health.pool} · ${health.server_ip}` : "API offline"}
@@ -65,10 +76,18 @@ export function App() {
             Cannot load data: {loadError}
           </div>
         )}
+        {storage?.warning && (
+          <div className="banner banner-warn" role="alert">
+            Pool {storage.pool} is {storage.used_percent} % full (warning at {storage.warning_percent} %). Delete
+            old versions or free space before writebacks fill it.
+          </div>
+        )}
         {tab === "machines" ? (
           <MachinesPage disks={disks} machines={machines} reload={reload} />
-        ) : (
+        ) : tab === "disks" ? (
           <GameDisksPage disks={disks} machines={machines} reload={reload} />
+        ) : (
+          <SettingsPage storage={storage} reload={reload} />
         )}
       </main>
     </div>

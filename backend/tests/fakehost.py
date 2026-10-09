@@ -26,6 +26,7 @@ class FakeHost:
         self.targets: dict[str, dict] = {}
         self.sessions: set[str] = set()             # initiators logged in (any target)
         self.sizes: dict[str, tuple[int, int]] = {}  # dataset or snapshot → (used, refer) bytes
+        self.pool = {"name": "tank", "used": 2 << 40, "avail": 8 << 40}   # bytes
         self.fail_on: dict[tuple[str, ...], str] = {}   # command prefix → stderr
         self.calls: list[list[str]] = []
         self.last_error = ""
@@ -117,15 +118,20 @@ class FakeHost:
                 rows = [root] + self._children(root)
                 return self._ok("\n".join(self._row(d, fields) for d in rows))
             name = a[-1]
+            if name == self.pool["name"] and fields != ["name"]:
+                return self._ok("\t".join(str(self.pool[f]) for f in fields))
             if not self.exists(name):
                 return self._err(f"cannot open '{name}': dataset does not exist")
-            return self._ok(name)
+            return self._ok(self._row(name, fields))
 
         if sub == "create":
             name = a[-1]
             if self.exists(name):
                 return self._err(f"cannot create '{name}': dataset already exists")
             self.add_dataset(name)
+            opts = [a[i + 1] for i, x in enumerate(a) if x == "-o"]
+            if opts:
+                self.datasets[name]["props"] = dict(o.split("=", 1) for o in opts)
             return self._ok()
 
         if sub == "snapshot":

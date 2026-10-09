@@ -220,14 +220,6 @@ def test_keep_writeback_sets_sync_and_is_exclusive(client, host, disk):
     r = client.put(f"/api/v1/machines/{m1['id']}/keep-writeback", json={"enabled": True})
     assert r.status_code == 200 and r.json()["keep_writeback"] is True
     assert host.datasets["tank/ggnet/writebacks/pc01"]["props"]["sync"] == "standard"
-    # The kept writeback itself became the master: read-only, no writeback sync,
-    # same name; the old master head is gone and pc02 still runs on @base.
-    assert host.datasets[MASTER]["readonly"] is True and host.datasets[MASTER]["origin"] is None
-    assert "sync" not in host.datasets[MASTER].get("props", {})
-    assert f"{MASTER}_ggnet_old" not in host.datasets
-    assert host.snapshots[f"{MASTER}@base"] == {"ggnet:protected"}
-    assert host.datasets["tank/ggnet/writebacks/pc02"]["origin"] == f"{MASTER}@base"
-    assert host.visible(_iqn("pc01")) == ["/dev/zvol/tank/ggnet/writebacks/pc01"]
 
     r = client.put(f"/api/v1/machines/{m2['id']}/keep-writeback", json={"enabled": True})
     assert r.status_code == 409 and "pc01" in r.json()["detail"]["error"]
@@ -260,6 +252,14 @@ def test_apply_writebacks_creates_next_version(client, host, disk):
     assert host.datasets["tank/ggnet/writebacks/pc01"]["props"]["sync"] == "standard"
     assert client.get(f"/api/v1/game-disks/{disk['id']}").json()["snapshot"] == "v2"
     assert _get(client, other)["outdated"] is True                 # moves on next reboot
+    # The kept writeback itself became the master: read-only, no writeback sync,
+    # same name; the old master head is gone and pc02 still runs on @base.
+    assert host.datasets[MASTER]["readonly"] is True and host.datasets[MASTER]["origin"] is None
+    assert "sync" not in host.datasets[MASTER].get("props", {})
+    assert f"{MASTER}_ggnet_old" not in host.datasets
+    assert host.snapshots[f"{MASTER}@base"] == {"ggnet:protected"}
+    assert host.datasets["tank/ggnet/writebacks/pc02"]["origin"] == f"{MASTER}@base"
+    assert host.visible(_iqn("pc01")) == ["/dev/zvol/tank/ggnet/writebacks/pc01"]
 
     r = client.post(f"/api/v1/machines/{m['id']}/apply-writebacks")
     assert r.json()["clone_snapshot"] == f"{MASTER}@v3"

@@ -204,3 +204,16 @@ class Machine(Base):
             and self.target_snapshot_path is not None
             and self.clone_snapshot != self.target_snapshot_path
         )
+
+
+class AppSetting(Base):
+    """
+    Settings the admin changes in the web UI (Settings page), one JSON value
+    per key. Settings that need a restart stay in config.toml.
+    """
+
+    __tablename__ = "settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now, onupdate=_now)

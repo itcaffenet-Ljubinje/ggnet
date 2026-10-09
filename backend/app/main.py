@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.api.v1 import agent, game_disks, machines
+from app.api.v1 import agent, game_disks, machines, settings
 from app.config import get_config
 
 VERSION_FILE = Path(__file__).resolve().parents[2] / "VERSION"
@@ -26,27 +26,38 @@ def read_version() -> str:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """Run the writeback watcher next to the API (off in dev defaults and tests)."""
+    """
+    Run the writeback watcher and the retention job next to the API (both off
+    in dev defaults and tests). The retention job itself does nothing until
+    the admin turns retention on in Settings.
+    """
     from app.api.deps import get_provisioner
     from app.db.session import get_sessionmaker
+    from app.services.retention import JobSettings, RetentionJob
     from app.services.writebacks import WritebackSettings, WritebackWatcher
 
-    settings = WritebackSettings.from_config(get_config())
-    watcher = None
+    cfg = get_config()
+    settings = WritebackSettings.from_config(cfg)
+    workers = []
     if settings.auto_discard:
-        watcher = WritebackWatcher(get_sessionmaker(), get_provisioner(), settings)
-        watcher.start()
+        workers.append(WritebackWatcher(get_sessionmaker(), get_provisioner(), settings))
+    job = JobSettings.from_config(cfg)
+    if job.job:
+        workers.append(RetentionJob(get_sessionmaker(), get_provisioner(), job.interval))
+    for w in workers:
+        w.start()
     try:
         yield
     finally:
-        if watcher is not None:
-            watcher.stop()
+        for w in workers:
+            w.stop()
 
 
 app = FastAPI(title="ggNet", version=read_version(), lifespan=lifespan)
 app.include_router(game_disks.router, prefix="/api/v1")
 app.include_router(machines.router, prefix="/api/v1")
 app.include_router(agent.router, prefix="/api/v1")
+app.include_router(settings.router, prefix="/api/v1")
 
 
 @app.get("/api/health")

@@ -453,6 +453,54 @@ class ZFSManager:
 
     # ── Pool status / monitoring ──────────────────────────────────────
 
+    # ── Pool space and the reserved-space dataset ─────────────────────
+
+    @property
+    def reserved_path(self) -> str:
+        """An empty, unmounted dataset whose refreservation keeps part of the pool free."""
+        return f"{self.layout.root_dataset}/reserved"
+
+    def pool_space(self) -> Optional[dict]:
+        """
+        Usable space of the whole pool in bytes (used + available of its root
+        dataset, so mirrors and raidz parity are already accounted for).
+        Read-only; the pool also holds data that is not ggNet's.
+        """
+        ok, out, _ = self._run(["zfs", "list", "-H", "-p", "-o", "used,avail", self.layout.pool])
+        parts = out.split("\t") if ok else []
+        if len(parts) != 2:
+            return None
+        used, avail = _int(parts[0]), _int(parts[1])
+        return {"total": used + avail, "used": used, "available": avail}
+
+    def reserved_bytes(self) -> int:
+        if not self.dataset_exists(self.reserved_path):
+            return 0
+        ok, out, _ = self._run(["zfs", "get", "-H", "-p", "-o", "value",
+                                "refreservation", self.reserved_path])
+        return _int(out) if ok else 0
+
+    def set_reserved(self, nbytes: int) -> bool:
+        """
+        Keep `nbytes` of the pool free for nobody (ggRock "Reserved disk space"):
+        SSDs slow down when they are nearly full, and writebacks must never
+        fill the pool. 0 removes the reservation (the empty dataset stays).
+        """
+        path = self.reserved_path
+        if not self._is_managed(path, allow_snapshot=False) or nbytes < 0:
+            return False
+        value = str(nbytes) if nbytes else "none"
+        if self.dataset_exists(path):
+            ok, _, _ = self._run(["zfs", "set", f"refreservation={value}", path])
+        elif nbytes:
+            ok, _, _ = self._run(["zfs", "create", "-o", "canmount=off", "-o", "mountpoint=none",
+                                  "-o", f"refreservation={value}", path])
+        else:
+            ok = True
+        if ok:
+            logger.info("Reserved space under %s set to %s", path, value)
+        return ok
+
     def pool_status(self) -> str:
         ok, out, err = self._run(["zpool", "status", "-v", self.layout.pool])
         return out if ok else err

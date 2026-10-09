@@ -42,6 +42,47 @@ export interface Writeback {
   outdated: boolean;
 }
 
+/** Automated snapshot and writeback removal (Settings → Retention). */
+export interface RetentionSettings {
+  enabled: boolean;
+  dry_run: boolean;
+  reserved_percent: number;
+  warning_percent: number;
+  unused_snapshot_days: number;
+  keep_newest_snapshots: number;
+  inactive_writeback_hours: number;
+}
+
+export interface RetentionAction {
+  kind: "snapshot" | "writeback" | "error";
+  target: string;
+  reason: string;
+  done: boolean;
+  error: string | null;
+}
+
+export interface RetentionReport {
+  at: string;
+  dry_run: boolean;
+  actions: RetentionAction[];
+}
+
+export interface Retention extends RetentionSettings {
+  saved: boolean;
+  last_run: RetentionReport | null;
+}
+
+export interface Storage {
+  pool: string;
+  total_bytes: number;
+  used_bytes: number;
+  available_bytes: number;
+  used_percent: number;
+  reserved_bytes: number;
+  warning_percent: number;
+  warning: boolean;
+}
+
 export type MachineMode = "disk" | "boot";
 export type MachineStatus = "idle" | "provisioned" | "editing" | "error";
 
@@ -148,6 +189,13 @@ export const api = {
   deleteSnapshot: (id: number, name: string) =>
     request<void>("DELETE", `/v1/game-disks/${id}/snapshots/${encodeURIComponent(name)}`),
   listWritebacks: (id: number) => request<Writeback[]>("GET", `/v1/game-disks/${id}/writebacks`),
+
+  getStorage: () => request<Storage>("GET", "/v1/storage"),
+  getRetention: () => request<Retention>("GET", "/v1/settings/retention"),
+  saveRetention: (body: RetentionSettings) => request<Retention>("PUT", "/v1/settings/retention", body),
+  previewRetention: (body: RetentionSettings) =>
+    request<RetentionAction[]>("POST", "/v1/settings/retention/preview", body),
+  runRetention: () => request<RetentionReport>("POST", "/v1/settings/retention/run"),
 
   listMachines: () => request<Machine[]>("GET", "/v1/machines"),
   createMachine: (body: MachineCreate) => request<Machine>("POST", "/v1/machines", body),

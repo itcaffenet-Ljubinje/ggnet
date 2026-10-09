@@ -27,6 +27,8 @@ DEV_DEFAULTS: dict[str, Any] = {
     "paths": {"data_dir": "./data", "database": "sqlite:///./data/ggnet.db"},
     # Dev mode never discards anything on its own.
     "writebacks": {"auto_discard": False, "grace_seconds": 30, "poll_seconds": 5},
+    # ... and never runs the retention job (it deletes versions and writebacks).
+    "retention": {"job": False},
 }
 
 

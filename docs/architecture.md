@@ -236,12 +236,28 @@ changes on the host when the pin is set: the PC is cloned from the pinned versio
 version cannot be deleted; switching the PC's game disk or applying its writeback clears the pin.
 **Rollback for everyone** = make an older snapshot active.
 
-### Retention (Settings → Array)
+### Retention (Settings → Retention)
 
-As in ggRock's "Automated Snapshot and Writeback Removal", an hourly job in the backend:
+As in ggRock's "Automated Snapshot and Writeback Removal". The settings live in the database (`settings` table, set in
+the web UI); `app/services/retention.py` runs every hour.
 
 | Setting | Default | Effect |
 |---|---|---|
+| Reserved disk space | 15 % | `refreservation` on `<root>/reserved` (empty, unmounted), so nothing can fill the SSDs completely |
+| Warning threshold | 80 % | banner in the UI when the pool is fuller than this |
+| Unused versions | 14 days | a version not active, not pinned and not the origin of any PC's writeback, older than this, is deleted… |
+| Always keep newest versions | 3 | …except the newest N versions of each disk, which are always kept |
+| Inactive writebacks | 24 hours | a Keep Writeback PC that has been off this long (and wrote something) gets its writeback discarded |
+
+Safety: nothing touches the host until the admin saves the settings. The pool is shared with Proxmox VMs and
+containers, so the reservation applies to them too, and saving it asks first. The job is off until "Run
+automatically" is ticked, and in dry-run mode it only records what it would delete. **Preview** shows what the
+settings would delete right now; **Run now** deletes what the saved settings allow. Every item is re-checked on
+the host right before it is deleted (the version is still unused, the PC is still off) and the last run is shown
+on the Settings page. The age of a version is its creation time (ggNet does not record when a version stopped
+being active). The job thread is off in dev defaults (`[retention] job = false`).
+
+---|---|---|
 | Reserved disk space | 15 % | `refreservation` on `<pool>/ggnet/reserved`, so writebacks can never fill the SSDs completely |
 | Warning threshold | 80 % | banner in the UI when the pool is fuller than this |
 | Unutilized snapshots | 14 days | a snapshot not active, not pinned and not the origin of any clone for this long is deleted… |
@@ -372,7 +388,7 @@ network throughput of the iSCSI interface.
 | Automatic writeback discard, Keep Writeback, Apply Writebacks (zfs promote), image versions | done |
 | Edit on PC for drafts, game disk drive letter per machine, Images page: versions and writebacks | done |
 | Snapshot pin per machine and the ggRock image status | done |
-| Retention job, reserved space and warning threshold | next |
+| Retention job, reserved space and warning threshold | done |
 | Machines UI per the ggRock docs (IP, uptime, link speed, hardware, Sent/Received), WoL / shutdown / reboot, bulk | next |
 | ZFS property defaults from section 1, Server monitor page | next |
 | Boot Mode: OS images, proxyDHCP, iPXE build, per-MAC script, Add Machines wizard | after Disk Mode |
