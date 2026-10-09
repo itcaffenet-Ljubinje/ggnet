@@ -1,6 +1,7 @@
-import { useState, type FormEvent } from "react";
+import { Fragment, useState, type FormEvent } from "react";
 
 import { api, type GameDisk, type Machine } from "../api";
+import { DiskDetails } from "../components/DiskDetails";
 import { ErrorBanner } from "../components/ErrorBanner";
 import { useAsyncAction } from "../useAsyncAction";
 
@@ -16,6 +17,8 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
   const [sizeGb, setSizeGb] = useState("100");
   // Per draft disk: the machine picked to fill it on.
   const [editOn, setEditOn] = useState<Record<number, string>>({});
+  // The disk whose versions and writebacks are shown.
+  const [open, setOpen] = useState<number | null>(null);
 
   const assigned = (id: number) => machines.filter((m) => m.game_disk_id === id).length;
   const machine = (id: number | null) => machines.find((m) => m.id === id);
@@ -113,74 +116,93 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
           </thead>
           <tbody>
             {disks.map((d) => (
-              <tr key={d.id}>
-                <td className="strong">{d.name}</td>
-                <td>{d.size_gb} GB</td>
-                <td>
-                  {d.published ? (
-                    <span className="badge badge-provisioned">Published @{d.snapshot}</span>
-                  ) : d.editor_id !== null ? (
-                    <span className="badge badge-editing">
-                      Editing on {machine(d.editor_id)?.name ?? `#${d.editor_id}`}
-                    </span>
-                  ) : (
-                    <span className="badge badge-idle">Draft</span>
-                  )}
-                </td>
-                <td>{assigned(d.id)}</td>
-                <td className="mono muted">{d.zvol_path}</td>
-                <td className="actions">
-                  {!d.published && d.editor_id === null && (
-                    <>
-                      <select
-                        aria-label={`PC to edit ${d.name} on`}
-                        value={editOn[d.id] ?? ""}
-                        onChange={(e) => setEditOn({ ...editOn, [d.id]: e.target.value })}
-                        disabled={busy !== null}
-                      >
-                        <option value="">PC…</option>
-                        {free.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.name}
-                          </option>
-                        ))}
-                      </select>
+              <Fragment key={d.id}>
+                <tr>
+                  <td className="strong">{d.name}</td>
+                  <td>{d.size_gb} GB</td>
+                  <td>
+                    {d.published ? (
+                      <span className="badge badge-provisioned">Published @{d.snapshot}</span>
+                    ) : d.editor_id !== null ? (
+                      <span className="badge badge-editing">
+                        Editing on {machine(d.editor_id)?.name ?? `#${d.editor_id}`}
+                      </span>
+                    ) : (
+                      <span className="badge badge-idle">Draft</span>
+                    )}
+                  </td>
+                  <td>{assigned(d.id)}</td>
+                  <td className="mono muted">{d.zvol_path}</td>
+                  <td className="actions">
+                    {d.published && (
                       <button
                         type="button"
-                        onClick={() => startEdit(d)}
-                        disabled={busy !== null || !editOn[d.id]}
+                        className="secondary"
+                        aria-expanded={open === d.id}
+                        onClick={() => setOpen(open === d.id ? null : d.id)}
                       >
-                        {busy === `edit-${d.id}` ? "Starting…" : "Edit on PC"}
+                        {open === d.id ? "Hide details" : "Details"}
                       </button>
-                      <button type="button" onClick={() => publish(d)} disabled={busy !== null}>
-                        {busy === `publish-${d.id}` ? "Publishing…" : "Publish"}
+                    )}
+                    {!d.published && d.editor_id === null && (
+                      <>
+                        <select
+                          aria-label={`PC to edit ${d.name} on`}
+                          value={editOn[d.id] ?? ""}
+                          onChange={(e) => setEditOn({ ...editOn, [d.id]: e.target.value })}
+                          disabled={busy !== null}
+                        >
+                          <option value="">PC…</option>
+                          {free.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.name}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => startEdit(d)}
+                          disabled={busy !== null || !editOn[d.id]}
+                        >
+                          {busy === `edit-${d.id}` ? "Starting…" : "Edit on PC"}
+                        </button>
+                        <button type="button" onClick={() => publish(d)} disabled={busy !== null}>
+                          {busy === `publish-${d.id}` ? "Publishing…" : "Publish"}
+                        </button>
+                      </>
+                    )}
+                    {d.editor_id !== null && (
+                      <button
+                        type="button"
+                        onClick={() => finishEdit(d)}
+                        disabled={busy !== null || machine(d.editor_id)?.session_active === true}
+                        title={
+                          machine(d.editor_id)?.session_active
+                            ? `Shut down ${machine(d.editor_id)?.name} first`
+                            : undefined
+                        }
+                      >
+                        {busy === `finish-${d.id}` ? "Finishing…" : "Finish editing"}
                       </button>
-                    </>
-                  )}
-                  {d.editor_id !== null && (
+                    )}
                     <button
                       type="button"
-                      onClick={() => finishEdit(d)}
-                      disabled={busy !== null || machine(d.editor_id)?.session_active === true}
-                      title={
-                        machine(d.editor_id)?.session_active
-                          ? `Shut down ${machine(d.editor_id)?.name} first`
-                          : undefined
-                      }
+                      className="danger"
+                      onClick={() => remove(d)}
+                      disabled={busy !== null}
                     >
-                      {busy === `finish-${d.id}` ? "Finishing…" : "Finish editing"}
+                      {busy === `delete-${d.id}` ? "Deleting…" : "Delete"}
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    className="danger"
-                    onClick={() => remove(d)}
-                    disabled={busy !== null}
-                  >
-                    {busy === `delete-${d.id}` ? "Deleting…" : "Delete"}
-                  </button>
-                </td>
-              </tr>
+                  </td>
+                </tr>
+                {open === d.id && (
+                  <tr>
+                    <td colSpan={6}>
+                      <DiskDetails disk={d} onChanged={reload} refreshKey={machines} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </table>

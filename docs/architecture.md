@@ -339,7 +339,10 @@ React + Vite, served by the backend on port 8088. Layout follows ggRock's Machin
 
 **Images**
 - Create a game image (name, size, drive letter, make default), import `.vhd`/`.vhdx` (Boot Mode system image).
-- Per image: active snapshot, snapshot list (date, size, PCs using it), make active, delete.
+- Per image (Details): versions with date, data size, space only that version holds and the PCs running on it,
+  with Make active and Delete (not the active one, not one a PC runs on); writebacks with the PC, the version it was
+  cloned from, the space it has written, Keep Writeback and whether it is connected, with Discard for a PC that is
+  off (also one that keeps its writeback). Read live from ZFS. *(done)*
 - Backup / restore: `zfs send` of the image with its snapshots to a file on a local disk or over SSH to another
   ggNet server, and back. Same idea as ggRock's `ggrock-img send/receive`.
 
@@ -356,8 +359,11 @@ network throughput of the iSCSI interface.
 |---|---|
 | ZFS manager, game disks API, machines API, agent heartbeat, Disk Mode UI | done |
 | One shared iSCSI target with per-PC ACLs and mapped LUNs | done |
-| Automatic writeback discard, Keep Writeback, Apply Writebacks, image versions, snapshot pin | next |
-| Retention job, Machines/Images UI per the ggRock docs, WoL / shutdown / reboot | next |
+| Automatic writeback discard, Keep Writeback, Apply Writebacks (zfs promote), image versions | done |
+| Edit on PC for drafts, game disk drive letter per machine, Images page: versions and writebacks | done |
+| Snapshot pin per machine and the ggRock image status icons | next |
+| Retention job, reserved space and warning threshold | next |
+| Machines UI per the ggRock docs (IP, uptime, link speed, hardware, Sent/Received), WoL / shutdown / reboot, bulk | next |
 | ZFS property defaults from section 1, Server monitor page | next |
 | Boot Mode: OS images, proxyDHCP, iPXE build, per-MAC script, Add Machines wizard | after Disk Mode |
 | JWT auth + TLS | last |

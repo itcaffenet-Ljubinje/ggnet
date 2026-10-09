@@ -97,6 +97,23 @@ class Provisioner:
                 raise self._fail(f"Publishing master {zvol_path}@{snap_name} failed")
         return snap_name
 
+    def snapshots(self, zvol_path: str) -> list[dict]:
+        """Versions of a master with their sizes and clones (see ZFSManager.snapshot_details)."""
+        details = self.zfs.snapshot_details(zvol_path)
+        if details is None:
+            raise self._fail(f"Listing versions of {zvol_path} failed")
+        return details
+
+    def writebacks(self) -> list[dict]:
+        """Every client clone on the host with its size and origin."""
+        return self.zfs.list_clients()
+
+    def delete_snapshot(self, zvol_path: str, name: str) -> None:
+        with self.lock:
+            self._clear()
+            if not self.zfs.destroy_snapshot(f"{zvol_path}@{name}"):
+                raise self._fail(f"Deleting {zvol_path}@{name} failed")
+
     def delete_disk(self, zvol_path: str, published: bool) -> None:
         """
         A published master goes only through destroy_master(); a draft has

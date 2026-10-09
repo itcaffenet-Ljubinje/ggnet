@@ -25,6 +25,7 @@ class FakeHost:
         #        portals: {"ip:port"}, attrs: {}}
         self.targets: dict[str, dict] = {}
         self.sessions: set[str] = set()             # initiators logged in (any target)
+        self.sizes: dict[str, tuple[int, int]] = {}  # dataset or snapshot → (used, refer) bytes
         self.fail_on: dict[tuple[str, ...], str] = {}   # command prefix → stderr
         self.calls: list[list[str]] = []
         self.last_error = ""
@@ -81,6 +82,19 @@ class FakeHost:
     def _children(self, name: str) -> list[str]:
         return [d for d in self.datasets if d.startswith(name + "/")]
 
+    def _row(self, name: str, fields: list[str]) -> str:
+        """One `zfs list -H -p` line; sizes come from self.sizes (default 0)."""
+        used, refer = self.sizes.get(name, (0, 0))
+        values = {
+            "name": name,
+            "creation": str(1760000000 + list(self.snapshots).index(name)) if name in self.snapshots else "-",
+            "used": str(used),
+            "refer": str(refer),
+            "clones": ",".join(self.clones_of(name)) or "-",
+            "origin": self.datasets.get(name, {}).get("origin") or "-",
+        }
+        return "\t".join(values[f] for f in fields)
+
     def _busy(self, name: str) -> bool:
         return f"/dev/zvol/{name}" in self.backstores.values()
 
@@ -89,15 +103,19 @@ class FakeHost:
     def _zfs(self, a: list[str]):
         sub = a[0]
         if sub == "list":
+            fields = a[a.index("-o") + 1].split(",") if "-o" in a else ["name"]
             if "-t" in a and a[a.index("-t") + 1] == "snapshot":
                 ds = a[-1]
                 if ds not in self.datasets:
                     return self._err(f"cannot open '{ds}': dataset does not exist")
                 mine = [s for s in self.snapshots if s.split("@")[0] == ds]   # creation order
-                if a[a.index("-o") + 1] == "name":
-                    return self._ok("\n".join(mine))
-                lines = [f"{s}\t{','.join(self.clones_of(s)) or '-'}" for s in mine]
-                return self._ok("\n".join(lines))
+                return self._ok("\n".join(self._row(s, fields) for s in mine))
+            if "-r" in a:
+                root = a[-1]
+                if root not in self.datasets:
+                    return self._err(f"cannot open '{root}': dataset does not exist")
+                rows = [root] + self._children(root)
+                return self._ok("\n".join(self._row(d, fields) for d in rows))
             name = a[-1]
             if not self.exists(name):
                 return self._err(f"cannot open '{name}': dataset does not exist")

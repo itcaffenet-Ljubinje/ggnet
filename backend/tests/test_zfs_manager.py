@@ -302,11 +302,28 @@ def test_dataset_exists(zfs, runner):
 
 def test_list_clients_parses_output_and_skips_parent(zfs, runner):
     runner.on("zfs", "list", result=(True,
-        "tank/ggnet/writebacks\t1G\t96K\t-\n"
-        f"{CLIENT}\t2G\t50G\t{MASTER_SNAP}", ""))
+        "tank/ggnet/writebacks\t1073741824\t98304\t-\n"
+        f"{CLIENT}\t2147483648\t53687091200\t{MASTER_SNAP}", ""))
     assert zfs.list_clients() == [
-        {"zvol": CLIENT, "used": "2G", "referenced": "50G", "cloned_from": MASTER_SNAP},
+        {"zvol": CLIENT, "used": 2147483648, "referenced": 53687091200, "cloned_from": MASTER_SNAP},
     ]
+    assert "-p" in runner.calls[-1]
+
+
+def test_snapshot_details_parses_bytes_and_clones(zfs, runner):
+    runner.on("zfs", "list", result=(True,
+        f"{MASTER}@base\t1760000000\t4096\t1073741824\t{CLIENT},tank/ggnet/writebacks/pc02\n"
+        f"{MASTER}@v2\t1760003600\t0\t2147483648\t-", ""))
+    assert zfs.snapshot_details(MASTER) == [
+        {"name": "base", "creation": 1760000000, "used": 4096, "referenced": 1073741824,
+         "clones": [CLIENT, "tank/ggnet/writebacks/pc02"]},
+        {"name": "v2", "creation": 1760003600, "used": 0, "referenced": 2147483648, "clones": []},
+    ]
+
+
+def test_snapshot_details_rejects_unmanaged_dataset(zfs, runner):
+    assert zfs.snapshot_details("rpool/data") is None
+    assert runner.calls == []
 
 
 def test_list_clients_empty_on_failure(zfs, runner):

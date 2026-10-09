@@ -252,3 +252,27 @@ td.actions button + button {
   text-align: center;
   padding: 32px;
 }
+
+button.secondary {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+button.secondary:hover:not(:disabled) {
+  background: var(--border);
+}
+
+.details {
+  padding: 4px 0 8px;
+}
+
+.details h3 {
+  margin: 12px 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.details table {
+  background: var(--bg);
+}

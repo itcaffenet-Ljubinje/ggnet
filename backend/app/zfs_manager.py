@@ -55,6 +55,11 @@ class ZFSLayout:
         return cls(**{k: str(storage[k]) for k in keys})
 
 
+def _int(value: str) -> int:
+    """`zfs list -p` prints bytes and times as integers, or '-' when not set."""
+    return int(value) if value.isdigit() else 0
+
+
 def _valid_name(name: str) -> bool:
     """Whether `name` is a syntactically valid ZFS name (dataset or dataset@snap)."""
     if not name or name.count("@") > 1:
@@ -481,9 +486,9 @@ class ZFSManager:
         return ok
 
     def list_clients(self) -> list[dict]:
-        """All per-client clones under storage.writebacks, with size and origin."""
+        """All per-client clones under storage.writebacks, with size (bytes) and origin."""
         ok, out, _ = self._run([
-            "zfs", "list", "-r", "-H",
+            "zfs", "list", "-r", "-H", "-p",
             "-o", "name,used,refer,origin",
             self.layout.writebacks,
         ])
@@ -496,12 +501,66 @@ class ZFSManager:
             if len(parts) == 4 and parts[0] != self.layout.writebacks:
                 clients.append({
                     "zvol": parts[0],
-                    "used": parts[1],
-                    "referenced": parts[2],
+                    "used": _int(parts[1]),
+                    "referenced": _int(parts[2]),
                     "cloned_from": parts[3],
                 })
         return clients
 
+    def snapshot_details(self, dataset: str) -> Optional[list[dict]]:
+        """
+        Snapshots of one master, oldest first: name (after '@'), creation
+        (Unix time), used and referenced (bytes), and the clones made from
+        it. None if they cannot be listed.
+        """
+        if not self._is_managed(dataset, allow_snapshot=False):
+            return None
+        ok, out, _ = self._run([
+            "zfs", "list", "-H", "-p", "-t", "snapshot",
+            "-o", "name,creation,used,refer,clones",
+            "-s", "createtxg", "-d", "1", dataset,
+        ])
+        if not ok:
+            return None
+        snaps = []
+        for line in out.splitlines():
+            parts = line.split("\t")
+            if len(parts) != 5 or "@" not in parts[0]:
+                continue
+            snaps.append({
+                "name": parts[0].partition("@")[2],
+                "creation": _int(parts[1]),
+                "used": _int(parts[2]),
+                "referenced": _int(parts[3]),
+                "clones": [c for c in parts[4].split(",") if c and c != "-"],
+            })
+        return snaps
+
+    def destroy_snapshot(self, snapshot: str, tag: str = "ggnet:protected") -> bool:
+        """
+        Delete one version of a master: release its hold, then destroy it.
+        Refused while clones depend on it (checked first, so the hold is never
+        dropped for nothing); if the destroy still fails, the hold is restored.
+        """
+        if "@" not in snapshot or not self._is_managed(snapshot):
+            return False
+        dataset, _, name = snapshot.partition("@")
+        details = self.snapshot_details(dataset)
+        snap = next((d for d in details or [] if d["name"] == name), None)
+        if snap is None:
+            self.runner.last_error = f"{snapshot} does not exist"
+            return False
+        if snap["clones"]:
+            self.runner.last_error = f"{snapshot} is still used by: {', '.join(snap['clones'])}"
+            return False
+        self.release_snapshot(snapshot, tag)
+        ok, _, err = self._run(["zfs", "destroy", snapshot])
+        if not ok:
+            self.protect_snapshot(snapshot, tag)
+            self.runner.last_error = err
+            return False
+        logger.info("Snapshot %s deleted", snapshot)
+        return True
 
 if __name__ == "__main__":
     # Manual smoke test (runs `zpool list` on the host): python -m app.zfs_manager

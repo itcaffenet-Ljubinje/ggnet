@@ -39,6 +39,7 @@ from app.api.v1.schemas import (
 from app.db.models import GameDisk, Machine, MachineMode, MachineStatus
 from app.db.session import get_db
 from app.services.provisioning import ClientDisk, Provisioner, ProvisioningError
+from app.services.writebacks import discard
 
 logger = logging.getLogger("ggnet.api.machines")
 
@@ -302,6 +303,33 @@ def keep_writeback(
         except ProvisioningError as e:
             _fail(db, machine, e)
     machine.keep_writeback = body.enabled
+    db.commit()
+    return machine
+
+
+@router.post("/{machine_id}/discard-writeback", response_model=MachineOut)
+def discard_writeback(
+    machine_id: int,
+    db: Session = Depends(get_db),
+    prov: Provisioner = Depends(get_provisioner),
+):
+    """
+    Throw away the machine's writeback now and re-clone it from the disk's
+    active version, also when it keeps its writeback (e.g. an install that
+    went wrong). The PC must be powered off.
+    """
+    machine = _get(db, machine_id)
+    if machine.status is not MachineStatus.PROVISIONED or machine.game_disk_id is None:
+        conflict(f"'{machine.name}' has no provisioned game disk")
+    _published_disk(db, machine.game_disk_id)
+    session = prov.session_active(machine.initiator_iqn, machine.iscsi_target_iqn)
+    if session is None:
+        host_failed(f"Cannot read the iSCSI session state of '{machine.name}'")
+    if session:
+        conflict(f"'{machine.name}' is still connected; shut it down first")
+    if not discard(db, prov, machine, "discarded by the admin"):
+        host_failed(machine.last_error or "Discarding the writeback failed", machine_id=machine.id)
+    _keep_sync(db, prov, machine)
     db.commit()
     return machine
 
