@@ -159,6 +159,10 @@ class Machine(Base):
     clone_snapshot: Mapped[str | None] = mapped_column(String(320), default=None)
     iscsi_target_iqn: Mapped[str | None] = mapped_column(String(223), default=None)
 
+    # Snapshot pin (ggRock Advanced → Game Image Snapshot): the version of the
+    # game disk this machine runs instead of the active one; None follows it.
+    pinned_snapshot: Mapped[str | None] = mapped_column(String(64), default=None)
+
     # Writeback lifecycle (ggRock model): the server discards the writeback
     # after every disconnect unless keep_writeback is set.
     keep_writeback: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -184,10 +188,19 @@ class Machine(Base):
     )
 
     @property
+    def target_snapshot_path(self) -> str | None:
+        """The version this machine is cloned from: its pin, else the disk's active one."""
+        if self.game_disk is None or not self.game_disk.published:
+            return None
+        if self.pinned_snapshot:
+            return f"{self.game_disk.zvol_path}@{self.pinned_snapshot}"
+        return self.game_disk.snapshot_path
+
+    @property
     def outdated(self) -> bool:
-        """The clone was made from an older snapshot than the disk now offers."""
+        """The clone was made from another snapshot than the one it should run."""
         return (
-            self.game_disk is not None
-            and self.clone_snapshot is not None
-            and self.clone_snapshot != self.game_disk.snapshot_path
+            self.clone_snapshot is not None
+            and self.target_snapshot_path is not None
+            and self.clone_snapshot != self.target_snapshot_path
         )

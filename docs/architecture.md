@@ -220,11 +220,21 @@ refused when `@v3` is no longer the newest snapshot of the master (someone appli
 the admin then discards the PC's writeback and redoes the change.
 
 PCs that are running when a new version is applied keep their current snapshot until they reboot. The Machines
-page shows this with the ggRock status icons: on the active snapshot; on an older one and will move on reboot;
-pinned or Keep Writeback, will not move.
+page shows this as ggRock's image status, next to the game disk:
 
-**Per-PC snapshot pin** (Settings → Advanced): a PC can be pinned to a non-active snapshot of its image, for
-testing a version or rolling one PC back. **Rollback for everyone** = make an older snapshot active.
+| Badge | ggRock icon | Meaning |
+|---|---|---|
+| `@v2` (green) | green circle | runs the active version and follows it |
+| `→ @v2 at reboot` | red arrow → green circle | runs an older version, moves to the active one at its next reboot |
+| `→ @base at reboot` | green arrow → red circle | was just pinned to another version, moves to it at its next reboot |
+| `Pinned @base` (red) | red circle | pinned: stays on that version whatever is active |
+| `Keep writeback` (red) | red circle | keeps its writeback, so it never moves on its own |
+
+**Per-PC snapshot pin** (the Version drop-down under the game disk; `machines.pinned_snapshot`): a PC runs a chosen
+version of its image instead of the active one, for testing a version on one PC or rolling one PC back. Nothing
+changes on the host when the pin is set: the PC is cloned from the pinned version at its next discard. A pinned
+version cannot be deleted; switching the PC's game disk or applying its writeback clears the pin.
+**Rollback for everyone** = make an older snapshot active.
 
 ### Retention (Settings → Array)
 
@@ -361,7 +371,7 @@ network throughput of the iSCSI interface.
 | One shared iSCSI target with per-PC ACLs and mapped LUNs | done |
 | Automatic writeback discard, Keep Writeback, Apply Writebacks (zfs promote), image versions | done |
 | Edit on PC for drafts, game disk drive letter per machine, Images page: versions and writebacks | done |
-| Snapshot pin per machine and the ggRock image status icons | next |
+| Snapshot pin per machine and the ggRock image status | done |
 | Retention job, reserved space and warning threshold | next |
 | Machines UI per the ggRock docs (IP, uptime, link speed, hardware, Sent/Received), WoL / shutdown / reboot, bulk | next |
 | ZFS property defaults from section 1, Server monitor page | next |

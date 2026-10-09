@@ -14,6 +14,7 @@ const SNAPSHOTS: Snapshot[] = [
     referenced_bytes: 1073741824,
     active: false,
     machines: ["pc02"],
+    pinned: [],
   },
   {
     name: "v1old",
@@ -22,6 +23,16 @@ const SNAPSHOTS: Snapshot[] = [
     referenced_bytes: 1073741824,
     active: false,
     machines: [],
+    pinned: [],
+  },
+  {
+    name: "v1pin",
+    created_at: "2026-10-09T09:00:00Z",
+    used_bytes: 0,
+    referenced_bytes: 1073741824,
+    active: false,
+    machines: [],
+    pinned: ["pc03"],
   },
   {
     name: "v2",
@@ -30,6 +41,7 @@ const SNAPSHOTS: Snapshot[] = [
     referenced_bytes: 3 * 1073741824,
     active: true,
     machines: ["pc01"],
+    pinned: [],
   },
 ];
 
@@ -41,6 +53,7 @@ const WRITEBACKS: Writeback[] = [
     snapshot: "v2",
     used_bytes: 8192,
     keep_writeback: true,
+    pinned_snapshot: null,
     session_active: false,
     outdated: false,
   },
@@ -51,6 +64,7 @@ const WRITEBACKS: Writeback[] = [
     snapshot: "base",
     used_bytes: 5 * 1048576,
     keep_writeback: false,
+    pinned_snapshot: null,
     session_active: true,
     outdated: true,
   },
@@ -86,10 +100,11 @@ describe("DiskDetails", () => {
     expect(rows[1]).toHaveTextContent("@base");
     expect(rows[1]).toHaveTextContent("1.00 GB");
     expect(rows[1]).toHaveTextContent("pc02");
-    expect(rows[3]).toHaveTextContent("@v2Active");
-    // Neither the active version nor one a PC runs on can be deleted.
+    expect(rows[3]).toHaveTextContent("pc03 (pinned)");
+    expect(rows[4]).toHaveTextContent("@v2Active");
+    // Neither the active version nor one a PC runs on or is pinned to can be deleted.
     const del = within(versions).getAllByRole("button", { name: "Delete" });
-    expect(del.map((b) => (b as HTMLButtonElement).disabled)).toEqual([true, false, true]);
+    expect(del.map((b) => (b as HTMLButtonElement).disabled)).toEqual([true, false, true, true]);
 
     const wb = screen.getByRole("table", { name: "Writebacks of cs2" });
     expect(within(wb).getAllByRole("row")[1]).toHaveTextContent("Keep writeback");

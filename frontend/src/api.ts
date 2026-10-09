@@ -26,6 +26,7 @@ export interface Snapshot {
   referenced_bytes: number;
   active: boolean;
   machines: string[];
+  pinned: string[];
 }
 
 /** A PC's writeback (clone) of a game disk. */
@@ -36,6 +37,7 @@ export interface Writeback {
   snapshot: string;
   used_bytes: number;
   keep_writeback: boolean;
+  pinned_snapshot: string | null;
   session_active: boolean | null;
   outdated: boolean;
 }
@@ -53,6 +55,7 @@ export interface Machine {
   editing_disk_id: number | null;
   drive_letter: string;
   reported_drive_letter: string | null;
+  pinned_snapshot: string | null;
   status: MachineStatus;
   last_error: string | null;
   clone_zvol: string | null;
@@ -157,6 +160,8 @@ export const api = {
   setKeepWriteback: (id: number, enabled: boolean) =>
     request<Machine>("PUT", `/v1/machines/${id}/keep-writeback`, { enabled }),
   applyWritebacks: (id: number) => request<Machine>("POST", `/v1/machines/${id}/apply-writebacks`),
-  discardWriteback: (id: number) => request<Machine>("POST", `/v1/machines/${id}/discard-writeback`),
+  pinSnapshot: (id: number, snapshot: string | null) =>
+    request<Machine>("PUT", `/v1/machines/${id}/pin`, { snapshot }),
+    discardWriteback: (id: number) => request<Machine>("POST", `/v1/machines/${id}/discard-writeback`),
   deleteMachine: (id: number) => request<void>("DELETE", `/v1/machines/${id}`),
 };

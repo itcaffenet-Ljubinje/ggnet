@@ -85,7 +85,8 @@ export function DiskDetails({ disk, onChanged, refreshKey }: Props) {
           </thead>
           <tbody>
             {snapshots.map((s) => {
-              const used = s.machines.length > 0;
+              const users = [...s.machines, ...s.pinned.filter((p) => !s.machines.includes(p))];
+              const used = users.length > 0;
               return (
                 <tr key={s.name}>
                   <td className="strong">
@@ -95,7 +96,13 @@ export function DiskDetails({ disk, onChanged, refreshKey }: Props) {
                   <td>{new Date(s.created_at).toLocaleString()}</td>
                   <td>{formatBytes(s.referenced_bytes)}</td>
                   <td>{formatBytes(s.used_bytes)}</td>
-                  <td>{used ? s.machines.join(", ") : <span className="muted">—</span>}</td>
+                  <td>
+                    {used ? (
+                      users.map((u) => (s.pinned.includes(u) ? `${u} (pinned)` : u)).join(", ")
+                    ) : (
+                      <span className="muted">—</span>
+                    )}
+                  </td>
                   <td className="actions">
                     {!s.active && (
                       <button type="button" onClick={() => makeActive(s)} disabled={busy !== null}>
@@ -110,9 +117,11 @@ export function DiskDetails({ disk, onChanged, refreshKey }: Props) {
                       title={
                         s.active
                           ? "The active version cannot be deleted"
-                          : used
-                            ? "PCs still run on it; they move off at their next reboot"
-                            : undefined
+                          : s.pinned.length > 0
+                            ? "PCs are pinned to it; unpin them first"
+                            : used
+                              ? "PCs still run on it; they move off at their next reboot"
+                              : undefined
                       }
                     >
                       {busy === `delete-${s.name}` ? "Deleting…" : "Delete"}

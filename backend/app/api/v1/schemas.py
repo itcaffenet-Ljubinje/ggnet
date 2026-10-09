@@ -97,6 +97,7 @@ class SnapshotOut(BaseModel):
     referenced_bytes: int     # data the version contains
     active: bool              # PCs are cloned from it at their next discard
     machines: list[str]       # PCs whose writeback was cloned from it
+    pinned: list[str]         # PCs pinned to it (they move to it at their next reboot)
 
 
 class ActiveSnapshot(BaseModel):
@@ -112,8 +113,9 @@ class WritebackOut(BaseModel):
     snapshot: str             # the version it was cloned from
     used_bytes: int           # what the PC has written
     keep_writeback: bool
+    pinned_snapshot: str | None
     session_active: bool | None
-    outdated: bool            # not on the active version
+    outdated: bool            # not on the version it should run (its pin, else the active one)
 
 
 # ── Machine ───────────────────────────────────────────────────────────
@@ -206,6 +208,10 @@ class KeepWriteback(BaseModel):
     enabled: bool
 
 
+class MachinePin(BaseModel):
+    snapshot: str | None   # a version of the machine's game disk; None follows the active one
+
+
 class DriveLetterAll(BaseModel):
     """Set the game disk letter of every Disk Mode machine at once."""
 
@@ -233,6 +239,7 @@ class MachineOut(BaseModel):
     editing_disk_id: int | None
     drive_letter: str
     reported_drive_letter: str | None
+    pinned_snapshot: str | None
     status: MachineStatus
     last_error: str | None
     clone_zvol: str | None
