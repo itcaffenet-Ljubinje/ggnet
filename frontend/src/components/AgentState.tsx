@@ -19,10 +19,15 @@ interface Props {
   now?: number;
 }
 
+/** Whether the agent sent a heartbeat recently. */
+export function isOnline(m: Machine, now = Date.now()): boolean {
+  return m.last_seen_at !== null && now - Date.parse(m.last_seen_at) < ONLINE_WINDOW_MS;
+}
+
 export function AgentState({ machine: m, now = Date.now() }: Props) {
   if (!m.last_seen_at) return <span className="muted small">No agent yet</span>;
 
-  const online = now - Date.parse(m.last_seen_at) < ONLINE_WINDOW_MS;
+  const online = isOnline(m, now);
   const iqnMismatch = m.reported_iqn !== null && m.reported_iqn !== m.initiator_iqn;
 
   return (
@@ -33,6 +38,11 @@ export function AgentState({ machine: m, now = Date.now() }: Props) {
       {online && m.iscsi_connected !== null && (
         <span className={m.iscsi_connected ? "badge badge-provisioned" : "badge badge-warn"}>
           {m.iscsi_connected ? "Disk connected" : "Disk not connected"}
+        </span>
+      )}
+      {m.pending_command && (
+        <span className="badge badge-warn" title="Sent with the agent's next heartbeat">
+          {m.pending_command === "shutdown" ? "Shutting down…" : "Restarting…"}
         </span>
       )}
       {online && m.link_speed_mbps !== null && m.link_speed_mbps < SLOW_LINK_MBPS && (

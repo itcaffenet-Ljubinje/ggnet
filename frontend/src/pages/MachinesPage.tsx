@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState, type FormEvent } from "react";
 
 import { api, type GameDisk, type Machine, type MachineMode, type MachineTraffic } from "../api";
-import { AgentState } from "../components/AgentState";
+import { AgentState, isOnline } from "../components/AgentState";
 import { ErrorBanner } from "../components/ErrorBanner";
 import { ImageStatus } from "../components/ImageStatus";
 import { MachineDetails } from "../components/MachineDetails";
@@ -107,7 +107,19 @@ export function MachinesPage({ disks, machines, traffic = {}, reload }: Props) {
     await reload();
   }
 
-  async function pin(m: Machine, value: string) {
+  async function power(m: Machine, action: "on" | "shutdown" | "reboot") {
+    if (action !== "on") {
+      const what = action === "shutdown" ? "Shut down" : "Restart";
+      const msg =
+        `${what} ${m.name}?\n\n` +
+        "The agent gets it with its next heartbeat (within 30 s) and warns whoever sits at the PC 10 s before.";
+      if (!window.confirm(msg)) return;
+    }
+    await run(`power-${m.id}`, () => api.power(m.id, action));
+    await reload();
+  }
+
+    async function pin(m: Machine, value: string) {
     await run(`pin-${m.id}`, () => api.pinSnapshot(m.id, value || null));
     await reload();
   }
@@ -338,6 +350,36 @@ export function MachinesPage({ disks, machines, traffic = {}, reload }: Props) {
                     >
                       {open === m.id ? "Hide details" : "Details"}
                     </button>
+                    {isOnline(m) ? (
+                      <>
+                        <button
+                          type="button"
+                          className="secondary"
+                          onClick={() => power(m, "shutdown")}
+                          disabled={busy !== null || m.pending_command !== null}
+                        >
+                          Shutdown
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary"
+                          onClick={() => power(m, "reboot")}
+                          disabled={busy !== null || m.pending_command !== null}
+                        >
+                          Reboot
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => power(m, "on")}
+                        disabled={busy !== null || (!m.mac && !m.reported_mac)}
+                        title={!m.mac && !m.reported_mac ? "No MAC address yet" : "Wake-on-LAN"}
+                      >
+                        {busy === `power-${m.id}` ? "Waking…" : "Turn on"}
+                      </button>
+                    )}
                     {m.keep_writeback && m.status === "provisioned" && (
                       <button
                         type="button"

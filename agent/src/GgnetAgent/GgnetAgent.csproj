@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>ggnet-agent</AssemblyName>
     <RootNamespace>GgnetAgent</RootNamespace>
-    <Version>0.1.6</Version>
+    <Version>0.1.7</Version>
     <InvariantGlobalization>true</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>

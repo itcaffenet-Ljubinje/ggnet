@@ -15,7 +15,8 @@ public sealed class AgentWorker(
     ILogger<AgentWorker> logger,
     TimeProvider time,
     Func<TimeSpan>? uptime = null,
-    IInventory? inventory = null) : BackgroundService
+    IInventory? inventory = null,
+    IPowerControl? power = null) : BackgroundService
 {
     internal static readonly string Version =
         typeof(AgentWorker).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
@@ -113,6 +114,7 @@ public sealed class AgentWorker(
             {
                 await ApplyAsync(action, ct);
             }
+            await RunCommandAsync(config?.Command, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -124,7 +126,19 @@ public sealed class AgentWorker(
         }
     }
 
-    private async Task RefreshInventoryAsync(CancellationToken ct)
+    private async Task RunCommandAsync(string? command, CancellationToken ct)
+    {
+        if (command is null || power is null) return;
+        if (!WindowsPowerControl.Commands.Contains(command))
+        {
+            logger.LogWarning("Ignoring unknown command from the server: {Command}", command);
+            return;
+        }
+        logger.LogInformation("The server asked for a {Command}", command);
+        await power.RunAsync(command, ct);
+    }
+
+        private async Task RefreshInventoryAsync(CancellationToken ct)
     {
         var now = time.GetUtcNow();
         if (inventory is null || (_inventoryAt is { } at && now - at < InventoryEvery)) return;

@@ -115,6 +115,7 @@ export interface Machine {
   drive_letter: string;
   reported_drive_letter: string | null;
   pinned_snapshot: string | null;
+  pending_command: "shutdown" | "reboot" | null;
   reported_ip: string | null;
   reported_mac: string | null;
   link_speed_mbps: number | null;
@@ -233,6 +234,8 @@ export const api = {
   applyWritebacks: (id: number) => request<Machine>("POST", `/v1/machines/${id}/apply-writebacks`),
   pinSnapshot: (id: number, snapshot: string | null) =>
     request<Machine>("PUT", `/v1/machines/${id}/pin`, { snapshot }),
+    power: (id: number, action: "on" | "shutdown" | "reboot") =>
+    request<Machine>("POST", `/v1/machines/${id}/power`, { action }),
     discardWriteback: (id: number) => request<Machine>("POST", `/v1/machines/${id}/discard-writeback`),
   deleteMachine: (id: number) => request<void>("DELETE", `/v1/machines/${id}`),
 };

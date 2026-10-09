@@ -259,4 +259,40 @@ describe("MachinesPage", () => {
     expect(cell).toHaveTextContent("↓ 10.0 MB/s · ↑ 0 B/s");
     expect(screen.getAllByLabelText("Traffic")).toHaveLength(1);   // pc02 has no counters
   });
+
+  it("turns an offline PC on with Wake-on-LAN, without asking", async () => {
+    const fetchMock = stubFetch(200, machine());
+    const confirm = vi.spyOn(window, "confirm");
+    render(
+      <MachinesPage
+        disks={[]}
+        machines={[machine({ mac: "aa:bb:cc:dd:ee:01" }), machine({ id: 2, name: "pc02", initiator_iqn: "iqn.x:pc02" })]}
+        reload={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+    const buttons = screen.getAllByRole("button", { name: "Turn on" });
+    expect(buttons[1]).toBeDisabled();                            // pc02: no MAC known
+    await userEvent.click(buttons[0]);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(actions(fetchMock)).toEqual([{ url: "/api/v1/machines/1/power", method: "POST", body: { action: "on" } }]);
+  });
+
+  it("asks before shutting down or restarting an online PC", async () => {
+    const fetchMock = stubFetch(200, machine());
+    vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+    const online = machine({ last_seen_at: new Date().toISOString() });
+    render(<MachinesPage disks={[]} machines={[online]} reload={vi.fn().mockResolvedValue(undefined)} />);
+
+    expect(screen.queryByRole("button", { name: "Turn on" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Shutdown" }));   // cancelled
+    await userEvent.click(screen.getByRole("button", { name: "Reboot" }));
+    expect(actions(fetchMock)).toEqual([{ url: "/api/v1/machines/1/power", method: "POST", body: { action: "reboot" } }]);
+  });
+
+  it("shows a pending shutdown and blocks another command", () => {
+    const m = machine({ last_seen_at: new Date().toISOString(), pending_command: "shutdown" });
+    render(<MachinesPage disks={[]} machines={[m]} reload={vi.fn()} />);
+    expect(screen.getByText("Shutting down…")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reboot" })).toBeDisabled();
+  });
 });

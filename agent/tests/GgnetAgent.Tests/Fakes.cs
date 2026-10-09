@@ -104,3 +104,14 @@ internal sealed class FakeInventory : IInventory
         return Task.FromResult(Next);
     }
 }
+
+internal sealed class FakePower : IPowerControl
+{
+    public List<string> Commands { get; } = [];
+
+    public Task RunAsync(string command, CancellationToken ct)
+    {
+        Commands.Add(command);
+        return Task.CompletedTask;
+    }
+}

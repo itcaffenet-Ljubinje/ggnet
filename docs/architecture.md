@@ -360,7 +360,10 @@ React + Vite, served by the backend on port 8088. Layout follows ggRock's Machin
   Speed from the change between two reads; IP, link speed and hardware from the agent's inventory. *(done:
   IP, uptime, link speed, hardware, Sent/Received/Speed)*
 - Overflow menu: Turn On (Wake-on-LAN), Shutdown, Reboot (through the agent), Apply Writebacks (only when the PC
-  is off and has Keep Writeback), Settings, Delete. No Reset: discarding is automatic.
+  is off and has Keep Writeback), Settings, Delete. No Reset: discarding is automatic. *(Turn On / Shutdown /
+  Reboot done: WoL is a magic packet broadcast on `[network] cidr` from the service IP, using the machine's MAC
+  or the one its agent reported; Shutdown / Reboot wait on the machine and the agent gets them once in its next
+  heartbeat answer, dropped after 2 minutes, then runs `shutdown.exe` with a 10 s notice.)*
 - Settings dialog: Main (name, read-only IP and MAC, mode, game image, OS image, hide), Hardware (NIC, GPU, CPU,
   motherboard, reported by the agent), Advanced (Keep Writeback, snapshot pin per image).
 - Bulk: select PCs → Turn On, Turn Off, Reboot, Edit Selected (images, Keep Writeback, pins, hide).

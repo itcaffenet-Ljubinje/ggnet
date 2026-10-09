@@ -29,7 +29,8 @@ public sealed record AgentConfig(
     string PortalIp,
     int PortalPort,
     string? GameDisk,
-    string? DriveLetter = null);   // the letter the game disk should get (set per machine in the UI)
+    string? DriveLetter = null,    // the letter the game disk should get (set per machine in the UI)
+    string? Command = null);       // "shutdown" | "reboot", sent once
 
 internal static class Protocol
 {
