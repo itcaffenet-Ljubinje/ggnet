@@ -26,6 +26,7 @@ class FakeHost:
         self.targets: dict[str, dict] = {}
         self.sessions: set[str] = set()             # initiators logged in (any target)
         self.sizes: dict[str, tuple[int, int]] = {}  # dataset or snapshot → (used, refer) bytes
+        self.traffic: dict[str, tuple[int, int]] = {}   # initiator → (read MB, write MB)
         self.pool = {"name": "tank", "used": 2 << 40, "avail": 8 << 40}   # bytes
         self.fail_on: dict[tuple[str, ...], str] = {}   # command prefix → stderr
         self.calls: list[list[str]] = []
@@ -44,6 +45,8 @@ class FakeHost:
         if cmd[0] == "targetcli":
             return self._targetcli(cmd[1:])
         if cmd[0] == "cat":
+            if "/statistics/" in cmd[1]:
+                return self._cat_stats(cmd[1:])
             return self._cat(cmd[1])
         raise AssertionError(f"FakeHost does not know command: {cmd}")
 
@@ -274,6 +277,15 @@ class FakeHost:
         raise AssertionError(f"FakeHost does not know zfs command: {a}")
 
     # ── configfs (cat) ────────────────────────────────────────────────
+
+    def _cat_stats(self, paths: list[str]):
+        # .../acls/<initiator>/lun_0/statistics/scsi_auth_intr/{read,write}_mbytes
+        initiator = paths[0].split("/acls/")[1].split("/")[0]
+        if not any(initiator in t["acls"] for t in self.targets.values()):
+            return self._err(f"cat: {paths[0]}: No such file or directory")
+        read, write = self.traffic.get(initiator, (0, 0))
+        values = {"read_mbytes": read, "write_mbytes": write}
+        return self._ok("\n".join(str(values[p.rsplit("/", 1)[1]]) for p in paths))
 
     def _cat(self, path: str):
         # .../iscsi/<target>/tpgt_1/acls/<initiator>/info

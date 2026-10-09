@@ -1,16 +1,19 @@
 import { Fragment, useEffect, useState, type FormEvent } from "react";
 
-import { api, type GameDisk, type Machine, type MachineMode } from "../api";
+import { api, type GameDisk, type Machine, type MachineMode, type MachineTraffic } from "../api";
 import { AgentState } from "../components/AgentState";
 import { ErrorBanner } from "../components/ErrorBanner";
 import { ImageStatus } from "../components/ImageStatus";
 import { MachineDetails } from "../components/MachineDetails";
 import { StatusBadge } from "../components/StatusBadge";
+import { formatBytes, formatRate } from "../format";
 import { useAsyncAction } from "../useAsyncAction";
 
 interface Props {
   disks: GameDisk[];
   machines: Machine[];
+  /** Sent / Received / Speed per machine id, read live from LIO. */
+  traffic?: Record<number, MachineTraffic>;
   reload: () => Promise<void>;
 }
 
@@ -19,7 +22,7 @@ const CLIENT_OFF = "The client PC must be powered off or disconnected.";
 const LETTERS = "DEFGHIJKLMNOPQRSTUVWXYZ".split("");
 const MOVES_NOW = "Running PCs move the game disk within a minute; close games on them first.";
 
-export function MachinesPage({ disks, machines, reload }: Props) {
+export function MachinesPage({ disks, machines, traffic = {}, reload }: Props) {
   const { busy, error, setError, run } = useAsyncAction();
   const [name, setName] = useState("");
   const [mac, setMac] = useState("");
@@ -221,6 +224,7 @@ export function MachinesPage({ disks, machines, reload }: Props) {
               <th>Drive</th>
               <th>Status</th>
               <th>Agent</th>
+              <th title="Since the PC's writeback was last cloned">Traffic</th>
               <th>Keep writeback</th>
               <th />
             </tr>
@@ -313,6 +317,9 @@ export function MachinesPage({ disks, machines, reload }: Props) {
                   <td>
                     <AgentState machine={m} />
                   </td>
+                  <td className="small">
+                    <TrafficCell traffic={traffic[m.id]} />
+                  </td>
                   <td>
                     <input
                       type="checkbox"
@@ -365,5 +372,22 @@ export function MachinesPage({ disks, machines, reload }: Props) {
         </table>
       )}
     </section>
+  );
+}
+
+/** ggRock's Sent / Received / Speed for one machine. */
+function TrafficCell({ traffic: t }: { traffic: MachineTraffic | undefined }) {
+  if (!t) return <span className="muted">—</span>;
+  return (
+    <div aria-label="Traffic">
+      <div>
+        Sent {formatBytes(t.sent_bytes)} · Received {formatBytes(t.received_bytes)}
+      </div>
+      {t.sent_bps !== null && t.received_bps !== null && (
+        <div className="muted">
+          ↓ {formatRate(t.sent_bps)} · ↑ {formatRate(t.received_bps)}
+        </div>
+      )}
+    </div>
   );
 }

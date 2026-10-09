@@ -92,6 +92,15 @@ export interface MachineHardware {
   memory_bytes: number | null;
 }
 
+/** iSCSI traffic of a mapped machine since its writeback was last cloned. */
+export interface MachineTraffic {
+  machine_id: number;
+  sent_bytes: number;
+  received_bytes: number;
+  sent_bps: number | null;
+  received_bps: number | null;
+}
+
 export type MachineMode = "disk" | "boot";
 export type MachineStatus = "idle" | "provisioned" | "editing" | "error";
 
@@ -210,6 +219,7 @@ export const api = {
     request<RetentionAction[]>("POST", "/v1/settings/retention/preview", body),
   runRetention: () => request<RetentionReport>("POST", "/v1/settings/retention/run"),
 
+  machineTraffic: () => request<MachineTraffic[]>("GET", "/v1/machines/traffic"),
   listMachines: () => request<Machine[]>("GET", "/v1/machines"),
   createMachine: (body: MachineCreate) => request<Machine>("POST", "/v1/machines", body),
   updateMachine: (id: number, body: Partial<MachineCreate>) =>
