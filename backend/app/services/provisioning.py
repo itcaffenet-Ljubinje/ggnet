@@ -114,6 +114,25 @@ class Provisioner:
             if not self.zfs.destroy_snapshot(f"{zvol_path}@{name}"):
                 raise self._fail(f"Deleting {zvol_path}@{name} failed")
 
+    def pool_space(self) -> dict:
+        space = self.zfs.pool_space()
+        if space is None:
+            raise self._fail(f"Reading the space of pool {self.zfs.layout.pool} failed")
+        return space
+
+    def reserved_bytes(self) -> int:
+        return self.zfs.reserved_bytes()
+
+    def set_reserved_percent(self, percent: int) -> int:
+        """Reserve `percent` of the pool's usable space; returns the bytes reserved."""
+        with self.lock:
+            self._clear()
+            space = self.pool_space()
+            nbytes = space["total"] * percent // 100
+            if not self.zfs.set_reserved(nbytes):
+                raise self._fail(f"Reserving {percent}% of pool {self.zfs.layout.pool} failed")
+        return nbytes
+
     def delete_disk(self, zvol_path: str, published: bool) -> None:
         """
         A published master goes only through destroy_master(); a draft has

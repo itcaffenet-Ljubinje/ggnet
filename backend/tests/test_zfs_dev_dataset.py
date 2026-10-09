@@ -128,3 +128,23 @@ def test_apply_clone_on_real_zfs(dev_zfs):
 
     for ds in (master, keeper, other, old):
         assert not zfs.dataset_exists(ds)
+
+
+def test_reserved_space_on_real_zfs(dev_zfs):
+    """A 1 MiB reservation under the -dev tree, removed again. Pool space is read-only."""
+    zfs = dev_zfs
+    path = zfs.reserved_path
+    assert path.startswith(zfs.layout.root_dataset + "/")
+    assert not zfs.dataset_exists(path), f"{path} exists; not touching a real reservation"
+
+    space = zfs.pool_space()
+    assert space and space["total"] == space["used"] + space["available"] > 0
+    try:
+        assert zfs.set_reserved(1 << 20)
+        assert zfs.reserved_bytes() == 1 << 20
+        assert zfs.get_property(path, "mountpoint") == "none"
+        assert zfs.set_reserved(0)
+        assert zfs.reserved_bytes() == 0
+    finally:
+        if zfs.dataset_exists(path):
+            assert zfs.destroy(path)

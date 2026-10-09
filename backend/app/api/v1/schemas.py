@@ -313,3 +313,47 @@ class AgentConfig(BaseModel):
     portal_port: int
     game_disk: str | None
     drive_letter: str                   # the letter the game disk should get
+
+
+# ── Settings: retention and storage ───────────────────────────────────
+
+class RetentionIn(BaseModel):
+    """Automated snapshot and writeback removal (ggRock Settings → Array and Images)."""
+
+    enabled: bool = False
+    dry_run: bool = True
+    reserved_percent: int = Field(15, ge=0, le=50)
+    warning_percent: int = Field(80, ge=50, le=99)
+    unused_snapshot_days: int = Field(14, ge=1, le=3650)
+    keep_newest_snapshots: int = Field(3, ge=1, le=100)
+    inactive_writeback_hours: int = Field(24, ge=1, le=24 * 365)
+
+
+class RetentionActionOut(BaseModel):
+    kind: str
+    target: str
+    reason: str
+    done: bool
+    error: str | None
+
+
+class RetentionReportOut(BaseModel):
+    at: datetime
+    dry_run: bool
+    actions: list[RetentionActionOut]
+
+
+class RetentionOut(RetentionIn):
+    saved: bool                              # False: defaults, never applied to the host
+    last_run: RetentionReportOut | None
+
+
+class StorageOut(BaseModel):
+    pool: str
+    total_bytes: int
+    used_bytes: int
+    available_bytes: int
+    used_percent: float
+    reserved_bytes: int
+    warning_percent: int
+    warning: bool                            # used_percent >= warning_percent
