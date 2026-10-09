@@ -397,3 +397,13 @@ class StorageOut(BaseModel):
     reserved_bytes: int
     warning_percent: int
     warning: bool                            # used_percent >= warning_percent
+
+
+class MachineTrafficOut(BaseModel):
+    """iSCSI traffic of a mapped machine since its writeback was last cloned."""
+
+    machine_id: int
+    sent_bytes: int                 # read by the PC from its game disk
+    received_bytes: int             # written by the PC (its writeback)
+    sent_bps: float | None          # bytes/s since the previous read; None on the first
+    received_bps: float | None

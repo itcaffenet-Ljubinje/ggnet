@@ -241,4 +241,22 @@ describe("MachinesPage", () => {
     expect(screen.getByText("Got E:")).toBeInTheDocument();
     expect(screen.queryByLabelText("Drive letter for boot01")).toBeNull();
   });
+
+  it("shows sent, received and speed per machine", () => {
+    const MB = 1024 * 1024;
+    render(
+      <MachinesPage
+        disks={DISKS}
+        machines={[machine(), machine({ id: 2, name: "pc02", initiator_iqn: "iqn.1991-05.com.microsoft:pc02" })]}
+        traffic={{
+          1: { machine_id: 1, sent_bytes: 1200 * MB, received_bytes: 40 * MB, sent_bps: 10 * MB, received_bps: 0 },
+        }}
+        reload={vi.fn()}
+      />,
+    );
+    const cell = screen.getByLabelText("Traffic");
+    expect(cell).toHaveTextContent("Sent 1.17 GB · Received 40.0 MB");
+    expect(cell).toHaveTextContent("↓ 10.0 MB/s · ↑ 0 B/s");
+    expect(screen.getAllByLabelText("Traffic")).toHaveLength(1);   // pc02 has no counters
+  });
 });

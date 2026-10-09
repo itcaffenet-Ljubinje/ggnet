@@ -19,19 +19,21 @@ Only Disk Mode machines can be provisioned; Boot Mode comes later.
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_provisioner
+from app.api.deps import get_provisioner, get_traffic_monitor
 from app.api.v1.errors import conflict, host_failed, not_found
 from app.api.v1.schemas import (
     BOOT_MODE_LETTER,
     DriveLetterAll,
     KeepWriteback,
     MachinePin,
+    MachineTrafficOut,
     MachineAssign,
     MachineCreate,
     MachineOut,
@@ -40,6 +42,7 @@ from app.api.v1.schemas import (
 from app.db.models import GameDisk, Machine, MachineMode, MachineStatus
 from app.db.session import get_db
 from app.services.provisioning import ClientDisk, Provisioner, ProvisioningError
+from app.services.traffic import TrafficMonitor
 from app.services.writebacks import discard
 
 logger = logging.getLogger("ggnet.api.machines")
@@ -151,6 +154,27 @@ def set_drive_letter_all(body: DriveLetterAll, db: Session = Depends(get_db)):
         m.drive_letter = body.drive_letter
     db.commit()
     return db.scalars(select(Machine).order_by(Machine.name)).all()
+
+
+@router.get("/traffic", response_model=list[MachineTrafficOut])
+def machine_traffic(
+    db: Session = Depends(get_db),
+    prov: Provisioner = Depends(get_provisioner),
+    monitor: TrafficMonitor = Depends(get_traffic_monitor),
+):
+    """Sent / Received / Speed of every mapped machine, read live from LIO."""
+    out = []
+    mapped = db.scalars(select(Machine).where(
+        Machine.status.in_([MachineStatus.PROVISIONED, MachineStatus.EDITING]),
+        Machine.iscsi_target_iqn.is_not(None),
+    ))
+    for m in mapped:
+        counters = prov.iscsi.acl_traffic(m.initiator_iqn, m.iscsi_target_iqn)
+        if counters is not None:
+            t = monitor.sample(m.id, *counters)
+            out.append(MachineTrafficOut(machine_id=m.id, **asdict(t)))
+    monitor.forget({t.machine_id for t in out})
+    return out
 
 
 @router.get("/{machine_id}", response_model=MachineOut)

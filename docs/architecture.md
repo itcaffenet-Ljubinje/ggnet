@@ -355,8 +355,10 @@ React + Vite, served by the backend on port 8088. Layout follows ggRock's Machin
 **Machines**
 - Columns: Name, Status (online/off, Keep Writeback, agent missing, no image set, link below 1 Gbit/s),
   IP, Game Image (+ OS image in Boot Mode) with the snapshot status icon, Uptime, Sent, Received, Speed,
-  Link Speed; MAC optional. Sent/Received come from LIO's per-LUN statistics in configfs, link speed from the
-  agent.
+  Link Speed; MAC optional. Sent/Received come from LIO's per-ACL statistics in configfs
+  (`acls/<initiator>/lun_0/statistics/scsi_auth_intr/{read,write}_mbytes`: they restart at every new clone),
+  Speed from the change between two reads; IP, link speed and hardware from the agent's inventory. *(done:
+  IP, uptime, link speed, hardware, Sent/Received/Speed)*
 - Overflow menu: Turn On (Wake-on-LAN), Shutdown, Reboot (through the agent), Apply Writebacks (only when the PC
   is off and has Keep Writeback), Settings, Delete. No Reset: discarding is automatic.
 - Settings dialog: Main (name, read-only IP and MAC, mode, game image, OS image, hide), Hardware (NIC, GPU, CPU,
