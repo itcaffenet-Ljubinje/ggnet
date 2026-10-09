@@ -276,3 +276,11 @@ button.secondary:hover:not(:disabled) {
 .details table {
   background: var(--bg);
 }
+
+.image-version {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}

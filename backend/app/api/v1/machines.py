@@ -31,6 +31,7 @@ from app.api.v1.schemas import (
     BOOT_MODE_LETTER,
     DriveLetterAll,
     KeepWriteback,
+    MachinePin,
     MachineAssign,
     MachineCreate,
     MachineOut,
@@ -237,6 +238,7 @@ def assign_disk(
     if _has_host_state(machine):
         _deprovision(db, prov, machine)
     machine.game_disk_id = None
+    machine.pinned_snapshot = None   # a pin names a version of the old disk
 
     if disk is not None:
         _provision(db, prov, machine, disk)
@@ -264,7 +266,7 @@ def reset_machine(
 
     clone = machine.clone_zvol or prov.client_path(machine.name)
     try:
-        cd = prov.reset(machine.name, machine.initiator_iqn, clone, disk.snapshot_path)
+        cd = prov.reset(machine.name, machine.initiator_iqn, clone, machine.target_snapshot_path)
     except ProvisioningError as e:
         machine.clone_zvol = clone
         _fail(db, machine, e)
@@ -303,6 +305,34 @@ def keep_writeback(
         except ProvisioningError as e:
             _fail(db, machine, e)
     machine.keep_writeback = body.enabled
+    db.commit()
+    return machine
+
+
+@router.put("/{machine_id}/pin", response_model=MachineOut)
+def pin_snapshot(
+    machine_id: int,
+    body: MachinePin,
+    db: Session = Depends(get_db),
+    prov: Provisioner = Depends(get_provisioner),
+):
+    """
+    Run this machine on a chosen version of its game disk instead of the
+    active one (`null` follows the active version again). Nothing changes on
+    the host now: the PC moves to it at its next discard (reboot).
+    """
+    machine = _get(db, machine_id)
+    if machine.game_disk_id is None:
+        conflict(f"'{machine.name}' has no game disk")
+    disk = _published_disk(db, machine.game_disk_id)
+    if body.snapshot is not None:
+        try:
+            versions = prov.snapshots(disk.zvol_path)
+        except ProvisioningError as e:
+            host_failed(str(e), machine_id=machine.id)
+        if body.snapshot not in {v["name"] for v in versions}:
+            not_found("Snapshot", f"{disk.name}@{body.snapshot}")
+    machine.pinned_snapshot = body.snapshot
     db.commit()
     return machine
 
@@ -368,6 +398,8 @@ def apply_writebacks(
                                               machine.clone_zvol, disk.zvol_path, disk.snapshot)
     except ProvisioningError as e:
         host_failed(str(e), machine_id=machine.id)
+    # The PC made the new version; it continues on it, not on an old pin.
+    machine.pinned_snapshot = None
     db.commit()
 
     # The kept writeback now equals the new version; re-clone it from there

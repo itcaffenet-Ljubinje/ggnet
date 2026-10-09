@@ -74,12 +74,13 @@ def _needs_discard(m: Machine) -> bool:
 
 def discard(db: Session, prov: Provisioner, m: Machine, reason: str) -> bool:
     """
-    Re-clone the machine's writeback from its disk's active snapshot.
+    Re-clone the machine's writeback from the version it should run (its
+    pin, else the disk's active snapshot).
     Commits. On a host error the machine goes to `error` with the reason.
     """
     clone = m.clone_zvol or prov.client_path(m.name)
     try:
-        cd = prov.reset(m.name, m.initiator_iqn, clone, m.game_disk.snapshot_path)
+        cd = prov.reset(m.name, m.initiator_iqn, clone, m.target_snapshot_path)
     except ProvisioningError as e:
         m.status = MachineStatus.ERROR
         m.last_error = f"Automatic writeback discard failed: {e}"

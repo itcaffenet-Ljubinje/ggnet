@@ -479,3 +479,79 @@ def test_discard_writeback_of_a_keeper(client, host, disk):
 def test_discard_writeback_needs_a_provisioned_machine(client):
     m = client.post("/api/v1/machines", json={"name": "pc09"}).json()
     assert client.post(f"/api/v1/machines/{m['id']}/discard-writeback").status_code == 409
+
+
+# ── Snapshot pin per machine ──────────────────────────────────────────
+
+def _two_versions(client, disk):
+    """cs2@base and cs2@v2 (active); pc01 keeps its writeback and made v2, pc02 is on @base."""
+    keeper = _keeper(client, disk)
+    other = _machine(client, disk, "pc02")
+    client.post(f"/api/v1/machines/{keeper['id']}/apply-writebacks")
+    return keeper, other
+
+
+def test_pin_keeps_a_machine_on_an_older_version(client, host, prov, disk, make_session):
+    _, other = _two_versions(client, disk)
+    r = client.put(f"/api/v1/machines/{other['id']}/pin", json={"snapshot": "base"})
+    assert r.status_code == 200 and r.json()["pinned_snapshot"] == "base"
+    assert r.json()["outdated"] is False              # on @base and pinned to it
+
+    # After a reboot the pinned PC is cloned from @base, not the active @v2.
+    _tick(make_session, prov, T0)
+    _tick(make_session, prov, T0 + timedelta(seconds=40))
+    assert host.datasets["tank/ggnet/writebacks/pc02"]["origin"] == f"{MASTER}@base"
+
+    # Unpinned it follows the active version again.
+    r = client.put(f"/api/v1/machines/{other['id']}/pin", json={"snapshot": None})
+    assert r.json()["outdated"] is True
+    clones = _clones_made(host, "pc02")
+    client.post(f"/api/v1/machines/{other['id']}/discard-writeback")
+    assert _clones_made(host, "pc02") == clones + 1
+    assert host.datasets["tank/ggnet/writebacks/pc02"]["origin"] == f"{MASTER}@v2"
+
+
+def test_pin_to_an_older_version_moves_the_pc_at_reboot(client, host, disk):
+    keeper, _ = _two_versions(client, disk)
+    client.put(f"/api/v1/machines/{keeper['id']}/keep-writeback", json={"enabled": False})
+    r = client.put(f"/api/v1/machines/{keeper['id']}/pin", json={"snapshot": "base"})
+    assert r.json()["outdated"] is True               # runs @v2, should run @base
+    client.post(f"/api/v1/machines/{keeper['id']}/discard-writeback")
+    assert host.datasets["tank/ggnet/writebacks/pc01"]["origin"] == f"{MASTER}@base"
+
+
+def test_pin_validation(client, disk):
+    m = _machine(client, disk)
+    assert client.put(f"/api/v1/machines/{m['id']}/pin", json={"snapshot": "v9"}).status_code == 404
+    bare = client.post("/api/v1/machines", json={"name": "pc09"}).json()
+    assert client.put(f"/api/v1/machines/{bare['id']}/pin", json={"snapshot": "base"}).status_code == 409
+
+
+def test_pinned_version_is_listed_and_cannot_be_deleted(client, host, disk):
+    _, other = _two_versions(client, disk)
+    client.post(f"/api/v1/machines/{other['id']}/discard-writeback")   # pc02 moves to @v2
+    client.put(f"/api/v1/machines/{other['id']}/pin", json={"snapshot": "base"})
+
+    base = _versions(client, disk)[0]
+    assert (base["machines"], base["pinned"]) == ([], ["pc02"])
+    r = client.delete(f"/api/v1/game-disks/{disk['id']}/snapshots/base")
+    assert r.status_code == 409 and "pinned on pc02" in r.text
+    assert f"{MASTER}@base" in host.snapshots
+
+
+def test_switching_the_disk_or_applying_clears_the_pin(client, host, disk):
+    keeper, other = _two_versions(client, disk)
+    client.put(f"/api/v1/machines/{keeper['id']}/pin", json={"snapshot": "v2"})
+    r = client.post(f"/api/v1/machines/{keeper['id']}/apply-writebacks")
+    assert r.json()["pinned_snapshot"] is None and r.json()["clone_snapshot"] == f"{MASTER}@v3"
+
+    client.put(f"/api/v1/machines/{other['id']}/pin", json={"snapshot": "base"})
+    r = client.post(f"/api/v1/machines/{other['id']}/assign", json={"game_disk_id": None})
+    assert r.json()["pinned_snapshot"] is None
+
+
+def test_writebacks_show_the_pin(client, disk):
+    _, other = _two_versions(client, disk)
+    client.put(f"/api/v1/machines/{other['id']}/pin", json={"snapshot": "base"})
+    rows = {w["machine_name"]: w for w in client.get(f"/api/v1/game-disks/{disk['id']}/writebacks").json()}
+    assert (rows["pc02"]["pinned_snapshot"], rows["pc02"]["outdated"]) == ("base", False)

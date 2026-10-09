@@ -1,8 +1,9 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 import { api, type GameDisk, type Machine, type MachineMode } from "../api";
 import { AgentState } from "../components/AgentState";
 import { ErrorBanner } from "../components/ErrorBanner";
+import { ImageStatus } from "../components/ImageStatus";
 import { StatusBadge } from "../components/StatusBadge";
 import { useAsyncAction } from "../useAsyncAction";
 
@@ -25,8 +26,30 @@ export function MachinesPage({ disks, machines, reload }: Props) {
   const [mode, setMode] = useState<MachineMode>("disk");
   const [diskId, setDiskId] = useState("");
   const [allLetter, setAllLetter] = useState("D");
+  // Versions of each game disk in use, for the pin drop-down.
+  const [versions, setVersions] = useState<Record<number, string[]>>({});
 
   const published = disks.filter((d) => d.published);
+  const inUse = published.filter((d) => machines.some((m) => m.game_disk_id === d.id));
+  // Re-read when a disk gets a new version (Apply Writebacks, Make active).
+  const versionKey = inUse.map((d) => `${d.id}@${d.snapshot}`).join(",");
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all(
+      inUse.map((d) =>
+        api
+          .listSnapshots(d.id)
+          .then((s) => [d.id, s.map((v) => v.name)] as const)
+          .catch(() => [d.id, []] as const),
+      ),
+    ).then((pairs) => {
+      if (!cancelled) setVersions(Object.fromEntries(pairs));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [versionKey]); // inUse is derived from versionKey
   const diskName = (id: number | null) => disks.find((d) => d.id === id)?.name ?? "—";
 
   async function create(e: FormEvent) {
@@ -78,7 +101,12 @@ export function MachinesPage({ disks, machines, reload }: Props) {
     await reload();
   }
 
-  async function keep(m: Machine, enabled: boolean) {
+  async function pin(m: Machine, value: string) {
+    await run(`pin-${m.id}`, () => api.pinSnapshot(m.id, value || null));
+    await reload();
+  }
+
+    async function keep(m: Machine, enabled: boolean) {
     if (!enabled) {
       const msg =
         `Stop keeping the writeback of ${m.name}?\n\n` +
@@ -223,6 +251,28 @@ export function MachinesPage({ disks, machines, reload }: Props) {
                   ) : (
                     <span className="muted">—</span>
                   )}
+                  {m.mode === "disk" && m.game_disk_id !== null && m.status !== "editing" && (
+                    <div className="image-version">
+                      <select
+                        aria-label={`Version for ${m.name}`}
+                        value={m.pinned_snapshot ?? ""}
+                        onChange={(e) => pin(m, e.target.value)}
+                        disabled={busy !== null}
+                      >
+                        <option value="">
+                          Follow active (@{disks.find((d) => d.id === m.game_disk_id)?.snapshot})
+                        </option>
+                        {(versions[m.game_disk_id] ?? (m.pinned_snapshot ? [m.pinned_snapshot] : [])).map(
+                          (v) => (
+                            <option key={v} value={v}>
+                              Pin @{v}
+                            </option>
+                          ),
+                        )}
+                      </select>
+                      <ImageStatus machine={m} disk={disks.find((d) => d.id === m.game_disk_id)} />
+                    </div>
+                  )}
                 </td>
                 <td>
                   {m.mode === "disk" ? (
@@ -254,18 +304,6 @@ export function MachinesPage({ disks, machines, reload }: Props) {
                 </td>
                 <td>
                   <StatusBadge status={m.status} />
-                  {m.outdated && (
-                    <span
-                      className="badge badge-warn"
-                      title={
-                        m.keep_writeback
-                          ? "Keeps its writeback, so it stays on its version"
-                          : "Moves to the new version at its next reboot"
-                      }
-                    >
-                      Update available
-                    </span>
-                  )}
                   {m.last_error && <div className="error-text small">{m.last_error}</div>}
                 </td>
                 <td>

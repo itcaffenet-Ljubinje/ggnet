@@ -211,6 +211,7 @@ def list_snapshots(
             active=v["name"] == disk.snapshot,
             machines=sorted(by_clone[c].name if c in by_clone else c.rsplit("/", 1)[-1]
                             for c in v["clones"]),
+            pinned=sorted(m.name for m in disk.machines if m.pinned_snapshot == v["name"]),
         )
         for v in _versions(prov, disk)
     ]
@@ -252,6 +253,9 @@ def delete_snapshot(
         not_found("Snapshot", f"{disk.name}@{name}")
     if name == disk.snapshot:
         conflict(f"{disk.name}@{name} is the active version; make another one active first")
+    pinned = sorted(m.name for m in disk.machines if m.pinned_snapshot == name)
+    if pinned:
+        conflict(f"{disk.name}@{name} is pinned on {', '.join(pinned)}; unpin it first")
     if version["clones"]:
         by_clone = _machines_by_clone(db)
         users = sorted(by_clone[c].name if c in by_clone else c for c in version["clones"])
@@ -287,8 +291,9 @@ def list_writebacks(
             snapshot=snapshot,
             used_bytes=c["used"],
             keep_writeback=m.keep_writeback if m else False,
+            pinned_snapshot=m.pinned_snapshot if m else None,
             session_active=m.session_active if m else None,
-            outdated=snapshot != disk.snapshot,
+            outdated=m.outdated if m else snapshot != disk.snapshot,
         ))
     return sorted(out, key=lambda w: w.machine_name)
 
