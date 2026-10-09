@@ -12,19 +12,24 @@ discard after a reboot (app.services.writebacks), before the agent logs in.
 
 from __future__ import annotations
 
+import json
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
+from pydantic import ValidationError
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_provisioner, get_writeback_settings
 from app.api.v1.errors import not_found
-from app.api.v1.schemas import AgentConfig, AgentHeartbeat
+from app.api.v1.schemas import AgentConfig, AgentHeartbeat, AgentInventory
 from app.db.models import Machine, MachineMode, MachineStatus
 from app.db.session import get_db
 from app.services.provisioning import Provisioner
 from app.services.writebacks import WritebackSettings, on_heartbeat
+
+logger = logging.getLogger("ggnet.api.agent")
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -40,6 +45,21 @@ def heartbeat(
     if machine is None:
         not_found("Machine", body.name)
 
+    inventory: dict = {}
+    if body.inventory is not None:
+        try:
+            inv = AgentInventory.model_validate(body.inventory)
+        except ValidationError as e:
+            logger.warning("Ignoring the inventory of %s: %s", body.name, e.errors()[0]["msg"])
+        else:
+            hw = inv.model_dump(include={"nic", "cpu", "gpus", "motherboard", "memory_bytes"})
+            inventory = {
+                "reported_ip": inv.ip_address,
+                "reported_mac": inv.mac_address,
+                "link_speed_mbps": inv.link_speed_mbps,
+                "hardware": json.dumps(hw),
+            }
+
     # A Core UPDATE that keeps updated_at: a heartbeat every few seconds is
     # not a change to the machine record.
     db.execute(
@@ -51,6 +71,7 @@ def heartbeat(
             reported_iqn=body.initiator_iqn,
             iscsi_connected=body.iscsi_connected,
             reported_drive_letter=body.drive_letter if body.iscsi_connected else None,
+            **inventory,   # an old agent sends none: the last inventory stays
             updated_at=Machine.updated_at,
         )
     )

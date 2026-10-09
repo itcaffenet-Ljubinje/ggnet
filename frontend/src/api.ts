@@ -83,6 +83,15 @@ export interface Storage {
   warning: boolean;
 }
 
+/** Hardware the agent reports (ggRock's Hardware tab). */
+export interface MachineHardware {
+  nic: string | null;
+  cpu: string | null;
+  gpus: string[];
+  motherboard: string | null;
+  memory_bytes: number | null;
+}
+
 export type MachineMode = "disk" | "boot";
 export type MachineStatus = "idle" | "provisioned" | "editing" | "error";
 
@@ -97,6 +106,10 @@ export interface Machine {
   drive_letter: string;
   reported_drive_letter: string | null;
   pinned_snapshot: string | null;
+  reported_ip: string | null;
+  reported_mac: string | null;
+  link_speed_mbps: number | null;
+  hardware: MachineHardware | null;
   status: MachineStatus;
   last_error: string | null;
   clone_zvol: string | null;

@@ -73,7 +73,17 @@ The agent talks to the ggNet backend over HTTP (no authentication yet; JWT is pl
   "initiator_iqn": "iqn.1991-05.com.microsoft:pc01",
   "iscsi_connected": true,
   "booted_at": "2026-10-08T07:58:12.4810000+00:00",
-  "drive_letter": "D"
+  "drive_letter": "D",
+  "inventory": {
+    "ip_address": "192.168.0.21",
+    "mac_address": "AA-BB-CC-DD-EE-01",
+    "link_speed_mbps": 1000,
+    "nic": "Intel(R) Ethernet Connection I219-V",
+    "cpu": "AMD Ryzen 5 5600X 6-Core Processor",
+    "gpus": ["NVIDIA GeForce RTX 3060"],
+    "motherboard": "ASUSTeK COMPUTER INC. TUF GAMING B550-PLUS",
+    "memory_bytes": 17179869184
+  }
 }
 ```
 
@@ -82,6 +92,9 @@ The agent talks to the ggNet backend over HTTP (no authentication yet; JWT is pl
   IQN that does not match the server's ACL is visible.
 - `iscsi_connected`: whether the game disk target is currently connected.
 - `drive_letter`: the letter the game disk actually got (only while connected).
+- `inventory`: the network adapter the PC reaches the server on (IP, MAC, link speed) and its hardware,
+  read with CIM at start and then every 10 minutes. The server ignores an inventory it cannot parse;
+  the heartbeat itself never fails because of it.
 - `booted_at`: when Windows booted (restarting the agent service keeps it). When it changes the server
   discards the PC's old writeback before answering, so every boot gets a clean game disk
   (unless the machine has Keep Writeback).

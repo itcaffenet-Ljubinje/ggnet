@@ -14,7 +14,8 @@ public sealed class AgentWorker(
     IOptions<AgentOptions> options,
     ILogger<AgentWorker> logger,
     TimeProvider time,
-    Func<TimeSpan>? uptime = null) : BackgroundService
+    Func<TimeSpan>? uptime = null,
+    IInventory? inventory = null) : BackgroundService
 {
     internal static readonly string Version =
         typeof(AgentWorker).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
@@ -29,7 +30,14 @@ public sealed class AgentWorker(
     private readonly Func<TimeSpan> _uptime = uptime ?? (() => TimeSpan.FromMilliseconds(Environment.TickCount64));
     private DateTimeOffset? _bootedAt;
 
-    /// <summary>The ggNet target this agent connected (sessions are not persistent across reboots).</summary>
+    // Inventory (IP, link speed, hardware) costs a PowerShell run; read it at
+    // start and then every InventoryEvery, and send the last one each beat.
+    internal static readonly TimeSpan InventoryEvery = TimeSpan.FromMinutes(10);
+    private Inventory? _inventory;
+    private DateTimeOffset? _inventoryAt;
+    private string? _portalIp;
+
+        /// <summary>The ggNet target this agent connected (sessions are not persistent across reboots).</summary>
     internal string? ConnectedTarget { get; private set; }
 
     /// <summary>The letter the connection was made for, and the one the disk actually got.</summary>
@@ -84,12 +92,15 @@ public sealed class AgentWorker(
                 Forget();
             }
 
+            await RefreshInventoryAsync(ct);
+
             AgentConfig? config = null;
             try
             {
                 config = await server.HeartbeatAsync(
                     new Heartbeat(_machineName, Version, initiator, ConnectedTarget is not null, _bootedAt,
-                        DriveLetter), ct);
+                        DriveLetter, _inventory), ct);
+                _portalIp = config.PortalIp;
             }
             catch (Exception e) when (e is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
             {
@@ -113,7 +124,24 @@ public sealed class AgentWorker(
         }
     }
 
-    private async Task ApplyAsync(AgentAction action, CancellationToken ct)
+    private async Task RefreshInventoryAsync(CancellationToken ct)
+    {
+        var now = time.GetUtcNow();
+        if (inventory is null || (_inventoryAt is { } at && now - at < InventoryEvery)) return;
+        _inventoryAt = now;   // also after a failure: retry at the next interval, not every beat
+        try
+        {
+            // Before the first answer the portal is unknown; the server URL's host is the next best.
+            var server = _portalIp ?? new Uri(_options.ServerUrl).Host;
+            _inventory = await inventory.ReadAsync(server, ct) ?? _inventory;
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            logger.LogWarning("Reading the PC's inventory failed: {Error}", e.Message);
+        }
+    }
+
+        private async Task ApplyAsync(AgentAction action, CancellationToken ct)
     {
         switch (action)
         {

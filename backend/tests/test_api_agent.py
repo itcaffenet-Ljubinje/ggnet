@@ -136,3 +136,46 @@ def test_boot_mode_game_disk_is_always_d(client):
     assert r.status_code == 200 and r.json()["drive_letter"] == "D"
     r = client.patch(f"/api/v1/machines/{m['id']}", json={"drive_letter": "E"})
     assert r.status_code == 409
+
+
+# ── Inventory (IP, link speed, hardware) ──────────────────────────────
+
+INVENTORY = {
+    "ip_address": "192.168.0.21", "mac_address": "AA-BB-CC-DD-EE-01", "link_speed_mbps": 1000,
+    "nic": "Intel(R) Ethernet I219-V", "cpu": "AMD Ryzen 5 5600X", "gpus": ["NVIDIA GeForce RTX 3060"],
+    "motherboard": "ASUSTeK TUF GAMING B550-PLUS", "memory_bytes": 17179869184,
+}
+
+
+def test_heartbeat_stores_the_inventory(client):
+    m = client.post("/api/v1/machines", json={"name": "pc01"}).json()
+    r = client.post("/api/v1/agent/heartbeat",
+                    json={"name": "pc01", "agent_version": "0.1.6", "inventory": INVENTORY})
+    assert r.status_code == 200, r.text
+    got = client.get(f"/api/v1/machines/{m['id']}").json()
+    assert (got["reported_ip"], got["reported_mac"], got["link_speed_mbps"]) == (
+        "192.168.0.21", "aa:bb:cc:dd:ee:01", 1000)
+    assert got["hardware"] == {
+        "nic": "Intel(R) Ethernet I219-V", "cpu": "AMD Ryzen 5 5600X", "gpus": ["NVIDIA GeForce RTX 3060"],
+        "motherboard": "ASUSTeK TUF GAMING B550-PLUS", "memory_bytes": 17179869184,
+    }
+
+    # An agent without inventory (older version) keeps the last one.
+    client.post("/api/v1/agent/heartbeat", json={"name": "pc01", "agent_version": "0.1.5"})
+    assert client.get(f"/api/v1/machines/{m['id']}").json()["reported_ip"] == "192.168.0.21"
+
+
+@pytest.mark.parametrize("bad", [
+    {"ip_address": "not-an-ip"},
+    {"mac_address": "zz"},
+    {"link_speed_mbps": -5},
+    {"gpus": ["x"] * 20},
+    {"cpu": "x" * 500},
+])
+def test_a_bad_inventory_never_fails_the_heartbeat(client, bad):
+    m = client.post("/api/v1/machines", json={"name": "pc01"}).json()
+    r = client.post("/api/v1/agent/heartbeat",
+                    json={"name": "pc01", "agent_version": "0.1.6", "inventory": {**INVENTORY, **bad}})
+    assert r.status_code == 200, r.text
+    got = client.get(f"/api/v1/machines/{m['id']}").json()
+    assert (got["reported_ip"], got["hardware"], got["last_seen_at"] is not None) == (None, None, True)

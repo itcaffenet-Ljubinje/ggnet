@@ -1,4 +1,5 @@
 import type { Machine } from "../api";
+import { formatDuration, formatLink, SLOW_LINK_MBPS } from "../format";
 
 // The agent sends a heartbeat every 30 s; after 90 s without one it counts as offline.
 export const ONLINE_WINDOW_MS = 90_000;
@@ -34,10 +35,22 @@ export function AgentState({ machine: m, now = Date.now() }: Props) {
           {m.iscsi_connected ? "Disk connected" : "Disk not connected"}
         </span>
       )}
+      {online && m.link_speed_mbps !== null && m.link_speed_mbps < SLOW_LINK_MBPS && (
+        <span className="badge badge-warn" title="Below 1 Gbit/s: games load slowly from the game disk">
+          Link {formatLink(m.link_speed_mbps)}
+        </span>
+      )}
       <div className="muted">
         {ago(m.last_seen_at, now)}
         {m.agent_version && ` · agent ${m.agent_version}`}
       </div>
+      {online && (m.reported_ip || m.booted_at) && (
+        <div className="muted">
+          {m.reported_ip}
+          {m.reported_ip && m.link_speed_mbps !== null && ` · ${formatLink(m.link_speed_mbps)}`}
+          {m.booted_at && `${m.reported_ip ? " · " : ""}up ${formatDuration(now - Date.parse(m.booted_at))}`}
+        </div>
+      )}
       {iqnMismatch && (
         <div className="error-text" title="The iSCSI ACL only allows the expected IQN">
           PC reports IQN {m.reported_iqn}

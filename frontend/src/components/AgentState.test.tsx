@@ -53,4 +53,31 @@ describe("AgentState", () => {
     expect(screen.getByText(/PC reports IQN iqn\.1991-05\.com\.microsoft:pc01\.cafe\.local/))
       .toBeInTheDocument();
   });
+
+  it("shows IP, link speed and uptime while online, and flags a slow link", () => {
+    const now = Date.parse("2026-10-09T12:00:30Z");
+    render(
+      <AgentState
+        now={now}
+        machine={machine({
+          last_seen_at: "2026-10-09T12:00:00Z",
+          booted_at: "2026-10-09T09:55:00Z",
+          reported_ip: "192.168.0.21",
+          link_speed_mbps: 100,
+        })}
+      />,
+    );
+    expect(screen.getByText("192.168.0.21 · 100 Mbit/s · up 2 h 5 min")).toBeInTheDocument();
+    expect(screen.getByText("Link 100 Mbit/s")).toBeInTheDocument();
+  });
+
+  it("does not flag a 1 Gbit/s link", () => {
+    render(
+      <AgentState
+        now={Date.parse("2026-10-09T12:00:30Z")}
+        machine={machine({ last_seen_at: "2026-10-09T12:00:00Z", reported_ip: "192.168.0.21", link_speed_mbps: 1000 })}
+      />,
+    );
+    expect(screen.queryByText(/^Link /)).toBeNull();
+  });
 });
