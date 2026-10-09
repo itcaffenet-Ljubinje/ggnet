@@ -220,6 +220,14 @@ def test_keep_writeback_sets_sync_and_is_exclusive(client, host, disk):
     r = client.put(f"/api/v1/machines/{m1['id']}/keep-writeback", json={"enabled": True})
     assert r.status_code == 200 and r.json()["keep_writeback"] is True
     assert host.datasets["tank/ggnet/writebacks/pc01"]["props"]["sync"] == "standard"
+    # The kept writeback itself became the master: read-only, no writeback sync,
+    # same name; the old master head is gone and pc02 still runs on @base.
+    assert host.datasets[MASTER]["readonly"] is True and host.datasets[MASTER]["origin"] is None
+    assert "sync" not in host.datasets[MASTER].get("props", {})
+    assert f"{MASTER}_ggnet_old" not in host.datasets
+    assert host.snapshots[f"{MASTER}@base"] == {"ggnet:protected"}
+    assert host.datasets["tank/ggnet/writebacks/pc02"]["origin"] == f"{MASTER}@base"
+    assert host.visible(_iqn("pc01")) == ["/dev/zvol/tank/ggnet/writebacks/pc01"]
 
     r = client.put(f"/api/v1/machines/{m2['id']}/keep-writeback", json={"enabled": True})
     assert r.status_code == 409 and "pc01" in r.json()["detail"]["error"]
@@ -291,13 +299,37 @@ def test_apply_refused_when_master_moved_on(client, host, disk):
     assert "tank/ggnet/writebacks/pc01@ggnet-apply" not in host.snapshots
 
 
-def test_apply_send_failure_cleans_up(client, host, disk):
+@pytest.mark.parametrize("step", [
+    ("zfs", "snapshot"),
+    ("zfs", "promote", "tank/ggnet/writebacks/pc01"),
+    ("zfs", "rename", MASTER),
+    ("zfs", "rename", "tank/ggnet/writebacks/pc01"),
+])
+def test_apply_failure_rolls_back_and_maps_the_clone_again(client, host, disk, step):
     m = _keeper(client, disk)
-    host.fail_on[("zfs", "recv")] = "out of space"
+    other = _machine(client, disk, "pc02")
+    before_snaps = dict(host.snapshots)
+    host.fail_on[step] = "boom"
+
     r = client.post(f"/api/v1/machines/{m['id']}/apply-writebacks")
-    assert r.status_code == 502 and "out of space" in r.json()["detail"]["error"]
-    assert "tank/ggnet/writebacks/pc01@ggnet-apply" not in host.snapshots
+    assert r.status_code == 502 and "boom" in r.json()["detail"]["error"]
+    assert host.snapshots == before_snaps                       # no @v2, holds intact
+    assert host.datasets[MASTER]["origin"] is None              # still the master
+    assert host.datasets[MASTER]["readonly"] is True
+    clone = host.datasets["tank/ggnet/writebacks/pc01"]
+    assert (clone["origin"], clone["readonly"]) == (f"{MASTER}@base", False)
+    assert f"{MASTER}_ggnet_old" not in host.datasets
+    assert host.visible(_iqn("pc01")) == ["/dev/zvol/tank/ggnet/writebacks/pc01"]   # PC keeps its disk
+    assert host.visible(_iqn("pc02")) == ["/dev/zvol/tank/ggnet/writebacks/pc02"]
     assert client.get(f"/api/v1/game-disks/{disk['id']}").json()["snapshot"] == "base"
+    assert _get(client, other)["outdated"] is False
+
+
+def test_apply_does_not_use_send_recv(client, host, disk):
+    """A clone stream cannot be received into the existing master (real host error)."""
+    m = _keeper(client, disk)
+    assert client.post(f"/api/v1/machines/{m['id']}/apply-writebacks").status_code == 200
+    assert not any("|" in c for c in host.calls)
 
 
 # ── Runner pipe (real processes, no zfs) ──────────────────────────────
@@ -309,6 +341,14 @@ def test_run_pipe():
     assert not ok and err
     ok, _, err = r.run_pipe(["printf", "x"], ["sh", "-c", "cat >/dev/null; echo bad >&2; exit 3"])
     assert (ok, err) == (False, "bad")
+
+
+def test_run_pipe_reports_the_consumer_error_when_the_producer_got_sigpipe():
+    # Real host: zfs recv refused the stream at once, zfs send died of SIGPIPE
+    # and the error was only "exit code -13/1".
+    r = CommandRunner(timeout=10)
+    ok, _, err = r.run_pipe(["yes"], ["sh", "-c", "echo 'cannot receive: refused' >&2; exit 1"])
+    assert (ok, err) == (False, "cannot receive: refused")
 
 
 # ── Editing a draft master ────────────────────────────────────────────

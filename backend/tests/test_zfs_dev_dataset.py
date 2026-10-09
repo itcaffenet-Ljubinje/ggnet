@@ -69,3 +69,51 @@ def test_master_clone_reset_cycle(dev_zfs):
 
     assert not zfs.dataset_exists(client)
     assert not zfs.dataset_exists(master)
+
+
+def test_apply_clone_on_real_zfs(dev_zfs):
+    """
+    Apply Writebacks with real zfs: a kept writeback becomes master@v2 while
+    another client's clone stays on @base. (A send|recv of the clone stream
+    into the master was refused by the real host; only FakeHost accepted it.)
+    """
+    zfs = dev_zfs
+    master = f"{zfs.layout.images}/{MASTER_NAME}"
+    keeper = f"{zfs.layout.writebacks}/{CLIENT_NAME}"
+    other = f"{zfs.layout.writebacks}/pytest-pc02"
+    old = f"{master}_ggnet_old"
+    for ds in (master, keeper, other, old):
+        assert not zfs.dataset_exists(ds), f"{ds} left over from an earlier run"
+
+    try:
+        assert zfs.create_zvol(master, 1)
+        assert zfs.publish_master(master)
+        assert zfs.clone(f"{master}@base", keeper)
+        assert zfs.clone(f"{master}@base", other)
+        # The admin's change on the kept writeback (wait for udev's /dev/zvol link).
+        zfs.runner.run(["udevadm", "settle"])
+        ok, _, err = zfs.runner.run(["dd", "if=/dev/urandom", f"of={zfs.zvol_device_path(keeper)}",
+                                     "bs=1M", "count=4", "oflag=direct"])
+        assert ok, err
+
+        assert zfs.apply_clone(keeper, master, "base", "v2"), zfs.runner.last_error
+
+        assert zfs.list_snapshots(master) == ["base", "v2"]
+        assert zfs.get_property(master, "readonly") == "on"
+        assert zfs.get_property(master, "origin") == "-"
+        assert zfs.get_property(other, "origin") == f"{master}@base"
+        assert not zfs.dataset_exists(keeper) and not zfs.dataset_exists(old)
+        ok, out, _ = zfs.runner.run(["zfs", "holds", "-H", f"{master}@base", f"{master}@v2"])
+        assert ok and out.count("ggnet:protected") == 2
+    finally:
+        zfs.runner.run(["zfs", "release", "ggnet:protected", f"{keeper}@v2"], quiet=True)
+        for ds in (other, keeper):
+            if zfs.dataset_exists(ds):
+                zfs.destroy(ds, recursive=True)
+        if zfs.dataset_exists(old):
+            zfs.destroy(old)
+        if zfs.dataset_exists(master):
+            assert zfs.destroy_master(master)
+
+    for ds in (master, keeper, other, old):
+        assert not zfs.dataset_exists(ds)

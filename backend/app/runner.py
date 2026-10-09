@@ -100,7 +100,11 @@ class CommandRunner:
         prod.wait()
 
         if prod.returncode != 0 or cons.returncode != 0:
-            err = (prod_err if prod.returncode != 0 else cons.stderr.strip()) \
+            # When the consumer fails first, the producer dies of SIGPIPE with
+            # no message of its own; the consumer's stderr is the real reason.
+            errors = [prod_err, cons.stderr.strip()] if prod.returncode not in (0, -13) \
+                else [cons.stderr.strip(), prod_err]
+            err = next((e for e in errors if e), "") \
                 or f"exit code {prod.returncode}/{cons.returncode}"
             self.last_error = err
             logger.error("Pipe failed [%s]: %s", shown, err)

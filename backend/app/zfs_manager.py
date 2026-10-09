@@ -349,19 +349,27 @@ class ZFSManager:
     def apply_clone(self, clone: str, master: str, base_snap: str, new_snap: str) -> bool:
         """
         Turn a client's writeback into a new version of its master
-        (ggRock "Apply Writebacks"):
+        (ggRock "Apply Writebacks"), without copying any data:
 
-            clone@ggnet-apply → zfs send -i master@base_snap | zfs recv master
-            → master@ggnet-apply renamed to master@new_snap → hold
+            clone: readonly=on → @new_snap → hold
+            zfs promote clone      master's snapshots up to base_snap move to
+                                   the clone; the old master head becomes a
+                                   clone of clone@base_snap
+            master → <master>_ggnet_old, clone → master
+            destroy <master>_ggnet_old   (an empty head nobody depends on)
 
-        Only the changed blocks are written into the master; master@new_snap
-        is an ordinary snapshot with no dependency on the clone. Refused when
-        base_snap is not the master's newest snapshot (another version was
-        applied in between). The master stays readonly=on throughout; zfs recv
-        is not blocked by it.
+        `zfs send -i master@base clone@x | zfs recv master` cannot do this:
+        an incremental from a clone's origin is a clone stream, which zfs recv
+        only takes as a NEW dataset ("cannot receive new filesystem stream").
+
+        Every snapshot keeps its name and holds, so other clients' clones are
+        untouched. The clone must not be in use (no iSCSI backstore): it is
+        renamed. Refused when base_snap is not the master's newest snapshot.
+        Until the renames everything is rolled back on failure.
         """
-        tmp = "ggnet-apply"
+        old = f"{master}_ggnet_old"   # '_' never appears in a disk name
         base = f"{master}@{base_snap}"
+        new = f"{clone}@{new_snap}"
         if not (self._is_managed(clone, allow_snapshot=False)
                 and self._is_managed(master, allow_snapshot=False)
                 and self._is_managed(base) and _COMPONENT_RE.match(new_snap)):
@@ -380,30 +388,57 @@ class ZFSManager:
         if new_snap in snaps:
             self.runner.last_error = f"{master}@{new_snap} already exists"
             return False
-
-        # A leftover from an interrupted apply; it is ours, so drop it.
-        self._run(["zfs", "destroy", f"{clone}@{tmp}"], quiet=True)
-        if not self.snapshot(clone, tmp):
+        if self.get_property(clone, "origin") != base:
+            self.runner.last_error = f"{clone} is not a clone of {base}"
             return False
-        ok, _, err = self.runner.run_pipe(
-            ["zfs", "send", "-i", base, f"{clone}@{tmp}"],
-            ["zfs", "recv", master],
-        )
-        if not ok:
-            logger.error("Applying %s to %s failed: %s", clone, master, err)
-            self._run(["zfs", "destroy", f"{clone}@{tmp}"], quiet=True)
+        if self.dataset_exists(old):
+            self.runner.last_error = f"{old} is left over from an earlier apply; remove it first"
+            return False
+
+        def fail(step: str, undo: list[list[str]]) -> bool:
+            err = self.runner.last_error
+            logger.error("Applying %s to %s failed at %s: %s", clone, master, step, err)
+            for cmd in undo:
+                ok, _, uerr = self._run(cmd, quiet=True)
+                if not ok:
+                    logger.error("Rollback step %s failed: %s", cmd, uerr)
             self.runner.last_error = err
             return False
-        steps = [
-            ["zfs", "rename", f"{master}@{tmp}", f"{master}@{new_snap}"],
-            ["zfs", "hold", "ggnet:protected", f"{master}@{new_snap}"],
-        ]
-        for step in steps:
-            ok, _, err = self._run(step)
-            if not ok:
-                logger.error("Apply of %s left %s in place: %s", clone, step, err)
-                return False
-        self._run(["zfs", "destroy", f"{clone}@{tmp}"], quiet=True)
+
+        # A leftover of an interrupted apply on the clone; it is ours.
+        if new_snap in (self.list_snapshots(clone) or []):
+            self._run(["zfs", "release", "ggnet:protected", new], quiet=True)
+            self._run(["zfs", "destroy", new], quiet=True)
+
+        undo: list[list[str]] = [["zfs", "set", "readonly=off", clone]]
+        if not self.set_readonly(clone, True):
+            return fail("readonly", undo)
+        if not self.snapshot(clone, new_snap):
+            return fail("snapshot", undo)
+        undo.insert(0, ["zfs", "destroy", new])
+        if not self.protect_snapshot(new):
+            return fail("hold", undo)
+        undo.insert(0, ["zfs", "release", "ggnet:protected", new])
+
+        ok, _, _ = self._run(["zfs", "promote", clone])
+        if not ok:
+            return fail("promote", undo)
+        # Promoting the old master back returns base_snap and older to it.
+        undo.insert(0, ["zfs", "promote", master])
+
+        ok, _, _ = self._run(["zfs", "rename", master, old])
+        if not ok:
+            return fail("rename master", undo)
+        undo.insert(0, ["zfs", "rename", old, master])
+
+        ok, _, _ = self._run(["zfs", "rename", clone, master])
+        if not ok:
+            return fail("rename clone", undo)
+
+        # Applied. What is left only tidies up.
+        self._run(["zfs", "inherit", "sync", master], quiet=True)   # the writeback's sync
+        if not self.destroy(old):
+            logger.warning("Applied, but %s was left on the host", old)
         logger.info("Applied writeback %s to %s as @%s", clone, master, new_snap)
         return True
 

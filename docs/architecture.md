@@ -196,20 +196,28 @@ images/cs2@base  @v2  @v3(active)
                          └── writebacks/pc17               Keep Writeback: admin installs/updates games here
 ```
 
-**Apply Writebacks** (overflow menu of a powered-off PC with Keep Writeback):
+**Apply Writebacks** (overflow menu of a powered-off PC with Keep Writeback). The kept writeback itself becomes
+the master, so no data is copied:
 
 ```bash
-zfs snapshot tank/ggnet/writebacks/pc17@apply
-zfs send -i tank/ggnet/images/cs2@v3 tank/ggnet/writebacks/pc17@apply | zfs recv tank/ggnet/images/cs2
-zfs rename tank/ggnet/images/cs2@apply tank/ggnet/images/cs2@v4
-zfs hold ggnet:protected tank/ggnet/images/cs2@v4
-# active = v4; pc17's writeback is re-cloned from @v4 (same content), Keep Writeback stays on
+# pc17 is unmapped from iSCSI first (its zvol is renamed)
+zfs set readonly=on tank/ggnet/writebacks/pc17
+zfs snapshot tank/ggnet/writebacks/pc17@v4
+zfs hold ggnet:protected tank/ggnet/writebacks/pc17@v4
+zfs promote tank/ggnet/writebacks/pc17          # @base..@v3 (with their holds) move to pc17
+zfs rename tank/ggnet/images/cs2 tank/ggnet/images/cs2_ggnet_old
+zfs rename tank/ggnet/writebacks/pc17 tank/ggnet/images/cs2
+zfs inherit sync tank/ggnet/images/cs2
+zfs destroy tank/ggnet/images/cs2_ggnet_old      # the old head: an empty clone of @v3
+# active = v4; pc17 gets a new writeback cloned from @v4 (same content), Keep Writeback stays on
 ```
 
-The incremental send writes only the changed blocks into the master, so `@v4` is a normal snapshot of the master
-with no dependency on pc17, and `@v3` stays intact. `zfs recv` works on a `readonly=on` zvol, so the master is
-never writable. Apply is refused when `@v3` is no longer the newest snapshot of the master (someone applied
-in between, as ggRock does); the admin then discards the PC's writeback and redoes the change.
+Every snapshot keeps its name and hold, so the other PCs' clones of `@v3` (or older) are not touched and move to
+`@v4` at their next reboot. Until the two renames succeed, a failure rolls everything back (promote the old master
+again, drop `@v4`) and pc17 is mapped again. `zfs send -i cs2@v3 pc17@x | zfs recv cs2` does not work: an
+incremental from a clone's origin is a clone stream, which `zfs recv` only accepts as a new dataset. Apply is
+refused when `@v3` is no longer the newest snapshot of the master (someone applied in between, as ggRock does);
+the admin then discards the PC's writeback and redoes the change.
 
 PCs that are running when a new version is applied keep their current snapshot until they reboot. The Machines
 page shows this with the ggRock status icons: on the active snapshot; on an older one and will move on reboot;
