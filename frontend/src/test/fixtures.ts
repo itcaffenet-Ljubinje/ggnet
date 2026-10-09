@@ -28,6 +28,7 @@ export function machine(overrides: Partial<Machine> = {}): Machine {
     drive_letter: "D",
     reported_drive_letter: null,
     pinned_snapshot: null,
+    pending_command: null,
     reported_ip: null,
     reported_mac: null,
     link_speed_mbps: null,

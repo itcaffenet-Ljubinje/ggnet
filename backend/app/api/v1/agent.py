@@ -26,6 +26,7 @@ from app.api.v1.errors import not_found
 from app.api.v1.schemas import AgentConfig, AgentHeartbeat, AgentInventory
 from app.db.models import Machine, MachineMode, MachineStatus
 from app.db.session import get_db
+from app.services.power import take_command
 from app.services.provisioning import Provisioner
 from app.services.writebacks import WritebackSettings, on_heartbeat
 
@@ -78,6 +79,8 @@ def heartbeat(
     db.commit()
     db.refresh(machine)
     on_heartbeat(db, prov, machine, body.booted_at, body.iscsi_connected, settings)
+    command = take_command(machine)
+    db.commit()
 
     # While editing, the draft master is the machine's game disk.
     mapped = machine.status in (MachineStatus.PROVISIONED, MachineStatus.EDITING)
@@ -93,4 +96,5 @@ def heartbeat(
         portal_port=prov.iscsi.portal_port,
         game_disk=disk.name if disk else None,
         drive_letter=machine.drive_letter if machine.mode is MachineMode.DISK else "D",
+        command=command,
     )

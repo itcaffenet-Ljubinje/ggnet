@@ -5,7 +5,7 @@ from __future__ import annotations
 import ipaddress
 import re
 from datetime import datetime, timezone
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -242,6 +242,7 @@ class MachineOut(BaseModel):
     drive_letter: str
     reported_drive_letter: str | None
     pinned_snapshot: str | None
+    pending_command: str | None
     reported_ip: str | None
     reported_mac: str | None
     link_speed_mbps: int | None
@@ -353,6 +354,7 @@ class AgentConfig(BaseModel):
     portal_port: int
     game_disk: str | None
     drive_letter: str                   # the letter the game disk should get
+    command: str | None = None          # "shutdown" | "reboot", handed out once
 
 
 # ── Settings: retention and storage ───────────────────────────────────
@@ -407,3 +409,7 @@ class MachineTrafficOut(BaseModel):
     received_bytes: int             # written by the PC (its writeback)
     sent_bps: float | None          # bytes/s since the previous read; None on the first
     received_bps: float | None
+
+
+class PowerAction(BaseModel):
+    action: Literal["on", "shutdown", "reboot"]   # on = Wake-on-LAN; the others go through the agent

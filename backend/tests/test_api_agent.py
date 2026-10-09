@@ -33,6 +33,7 @@ def test_heartbeat_returns_target_and_portal(client, host):
         "portal_port": 3260,
         "game_disk": "cs2",
         "drive_letter": "D",
+        "command": None,
     }
     assert host.calls == []   # a heartbeat never touches the host
 

@@ -112,7 +112,8 @@ Response `200`:
   "portal_ip": "192.168.0.10",
   "portal_port": 3260,
   "game_disk": "steam-main",
-  "drive_letter": "D"
+  "drive_letter": "D",
+  "command": null
 }
 ```
 
@@ -120,6 +121,9 @@ Response `200`:
   `editing` a draft game disk). It is null while the machine has no disk or is in `error`.
 - `drive_letter` (D-Z) is the letter the game disk should get; when it changes while
   connected, move the disk to it (no reconnect).
+- `command` is `"shutdown"` or `"reboot"` when the admin clicked Shutdown / Reboot in the UI
+  (sent once; the server drops it after 2 minutes). The agent runs `shutdown.exe` with a
+  10-second notice and ignores any other value.
 - The server's ACL allows only `initiator_iqn`; the agent must use that initiator name.
 - If `iscsi_target_iqn` changes or becomes null (disk switched, removed or reset in
   the UI), disconnect the old target before connecting a new one.

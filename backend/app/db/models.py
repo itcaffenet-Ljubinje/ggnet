@@ -184,6 +184,10 @@ class Machine(Base):
     reported_drive_letter: Mapped[str | None] = mapped_column(String(1), default=None)
     # Inventory from the agent: the network it reaches the server on and the
     # hardware (ggRock's IP and Link Speed columns, Hardware tab). JSON text.
+    # Shutdown / reboot for the agent: handed out once in the next heartbeat
+    # answer, and dropped when older than POWER_COMMAND_TTL (app.services.power).
+    pending_command: Mapped[str | None] = mapped_column(String(16), default=None)
+    pending_command_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), default=None)
     reported_ip: Mapped[str | None] = mapped_column(String(45), default=None)
     reported_mac: Mapped[str | None] = mapped_column(String(17), default=None)
     link_speed_mbps: Mapped[int | None] = mapped_column(Integer, default=None)

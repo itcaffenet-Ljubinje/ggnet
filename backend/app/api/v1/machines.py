@@ -20,19 +20,21 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_provisioner, get_traffic_monitor
+from app.api.deps import get_provisioner, get_traffic_monitor, get_wol_sender
 from app.api.v1.errors import conflict, host_failed, not_found
 from app.api.v1.schemas import (
     BOOT_MODE_LETTER,
     DriveLetterAll,
     KeepWriteback,
     MachinePin,
+    PowerAction,
     MachineTrafficOut,
     MachineAssign,
     MachineCreate,
@@ -50,6 +52,9 @@ logger = logging.getLogger("ggnet.api.machines")
 router = APIRouter(prefix="/machines", tags=["machines"])
 
 DUPLICATE = "A machine with that name, IQN or MAC address already exists"
+
+# The agent beats every 30 s; like the UI, 90 s without one counts as offline.
+AGENT_ONLINE = timedelta(seconds=90)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
@@ -357,6 +362,38 @@ def pin_snapshot(
         if body.snapshot not in {v["name"] for v in versions}:
             not_found("Snapshot", f"{disk.name}@{body.snapshot}")
     machine.pinned_snapshot = body.snapshot
+    db.commit()
+    return machine
+
+
+@router.post("/{machine_id}/power", response_model=MachineOut)
+def power(
+    machine_id: int,
+    body: PowerAction,
+    db: Session = Depends(get_db),
+    wol=Depends(get_wol_sender),
+):
+    """
+    Turn On sends Wake-on-LAN now. Shutdown and Reboot wait for the agent's
+    next heartbeat (up to its interval) and expire after a few minutes.
+    """
+    machine = _get(db, machine_id)
+    if body.action == "on":
+        mac = machine.mac or machine.reported_mac
+        if mac is None:
+            conflict(f"'{machine.name}' has no MAC address; set one or let the agent report it")
+        try:
+            wol(mac)
+        except OSError as e:
+            host_failed(f"Sending Wake-on-LAN to {mac} failed: {e}", machine_id=machine.id)
+        return machine
+
+    online = machine.last_seen_at is not None and \
+        datetime.now(timezone.utc) - machine.last_seen_at < AGENT_ONLINE
+    if not online:
+        conflict(f"'{machine.name}' is offline; its agent cannot receive a {body.action}")
+    machine.pending_command = body.action
+    machine.pending_command_at = datetime.now(timezone.utc)
     db.commit()
     return machine
 
