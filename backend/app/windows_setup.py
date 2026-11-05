@@ -182,6 +182,31 @@ def _reg_blocks(export: str) -> list[tuple[str, list[str]]]:
 NIC_INSTANCE_RE = re.compile(r"^[A-Za-z0-9&_.-]{1,64}$")
 
 
+def installed_nics(export: str) -> list[tuple[str, str, str]]:
+    """
+    The network cards installed in an image, from a `hivexregedit --export` of
+    <ControlSet>\\Enum\\PCI: (hardware ID, instance ID, model name) of each
+    Net class device with a driver service, the name as Windows shows it.
+    """
+    found: list[tuple[str, str, str]] = []
+    for path, values in _reg_blocks(export):
+        _, marker, rest = path.partition("\\Enum\\PCI\\")
+        parts = rest.split("\\")
+        if not marker or len(parts) != 2:
+            continue
+        nic, instance = parts[0].upper(), parts[1].upper()
+        text = {v.partition("=")[0].strip('"'): v.partition("=")[2] for v in values}
+        if (_reg_text(text.get("ClassGUID", "")).lower() != NET_CLASS or not _reg_text(text.get("Service", ""))
+                or not NIC_ID_RE.match(nic) or not NIC_INSTANCE_RE.match(instance)):
+            continue
+        # DeviceDesc is "@net1ic64.inf,%e15bcnc.devicedesc%;Intel(R) Ethernet Connection (7) I219-V".
+        name = (_reg_text(text.get("FriendlyName", "")) or _reg_text(text.get("DeviceDesc", "")).split(";")[-1]
+                or nic).strip()
+        name = re.sub(r" #\d+$", "", name)      # Windows numbers a second card of a model: "… #2"
+        found.append((nic, instance, name))
+    return found
+
+
 def nic_known(export: str, nic: str, instance: str | None = None) -> bool:
     """
     Whether the image, from a `hivexregedit --export` of <ControlSet>\\Enum\\PCI,
@@ -781,6 +806,24 @@ class WindowsSetup:
         except Exception as e:     # never fail the apply it is part of
             logger.exception("Preparing the image on %s failed", device)
             return f"unexpected error: {e}"
+
+    def list_nics(self, device: str) -> list[tuple[str, str, str]] | str:
+        """installed_nics() of the Windows on `device`, or why it cannot be read. Mounted read-only."""
+        found: list[tuple[str, str, str]] = []
+
+        def work(root: Path, hive: Path) -> str | None:
+            export = self.enum_pci(hive, self.control_set(hive))
+            if export is None:
+                return "the image's PCI devices cannot be read"
+            found.extend(installed_nics(export))
+            return None
+
+        try:
+            problem = self._on_windows(device, "nic-list", work, readonly=True)
+        except Exception as e:
+            logger.exception("Listing the network cards of %s failed", device)
+            return f"unexpected error: {e}"
+        return problem or found
 
     def nic_support(self, device: str, nics: Sequence[tuple[str, str | None]]
                     ) -> dict[tuple[str, str | None], str] | str:

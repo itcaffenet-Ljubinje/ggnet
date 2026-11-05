@@ -11,6 +11,7 @@ import {
   Monitor,
   Pencil,
   Plus,
+  ScanSearch,
   Trash2,
   Wand2,
   XCircle,
@@ -112,6 +113,19 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
     await reload();
   }
 
+  async function checkHardware(disk: GameDisk) {
+    await run(`check-${disk.id}`, async () => {
+      const checked = await api.checkHardware(disk.id);
+      const models = checked.nic_models ?? [];
+      setNotice(
+        models.length
+          ? `${disk.name}@${checked.snapshot} has these network cards: ${models.join(", ")}.`
+          : `${disk.name}@${checked.snapshot} has no network card installed yet: run Add new hardware.`,
+      );
+    });
+    await reload();
+  }
+
   async function cancelImport(disk: GameDisk) {
     if (!window.confirm(`Stop importing "${disk.name}"? What was imported so far is removed.`)) return;
     await run(`cancel-${disk.id}`, () => api.cancelImport(disk.id));
@@ -176,6 +190,13 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
               onSelect: () => setAddingHardware(d.id),
               disabled: busy !== null,
               title: "Add a new board type's network card to the image (once per board type)",
+            },
+            {
+              label: "Check network cards",
+              icon: ScanSearch,
+              onSelect: () => checkHardware(d),
+              disabled: busy !== null,
+              title: "Read the network cards installed in the active version from the image itself",
             },
           ]
         : []),

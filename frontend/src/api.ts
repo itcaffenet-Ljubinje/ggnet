@@ -578,6 +578,7 @@ export const api = {
     request<GameDisk>("POST", "/v1/imports", { name, kind, path, ...options }),
   cancelImport: (id: number) => request<void>("POST", `/v1/imports/${id}/cancel`),
   getAddHardware: (id: number) => request<AddHardwareStatus>("GET", `/v1/game-disks/${id}/add-hardware`),
+  checkHardware: (id: number) => request<GameDisk>("POST", `/v1/game-disks/${id}/check-hardware`),
   openHardwareWizard: (id: number) =>
     request<AddHardwareStatus>("POST", `/v1/game-disks/${id}/add-hardware/wizard`),
   closeHardwareWizard: (id: number) =>

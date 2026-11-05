@@ -93,6 +93,9 @@ class NewCardWindows(FakeWindows):
     def start_toolchain(self, device, nics, prep, label="image"):
         self.started = list(nics)
 
+    def list_nics(self, device):
+        return [(I219, INSTANCE, "Intel(R) Ethernet Connection (2) I219-V")] if self.installed else []
+
     def toolchain_result(self, device, label="image"):
         self.installed = True
         return {"ok": True, "devices": [{"instance_id": f"PCI\\{I219}\\{INSTANCE}", "ok": True,
@@ -331,3 +334,16 @@ def test_merge_into_base_keeps_the_cards(client, pc):
     assert r.status_code == 200, r.text
     assert r.json()["snapshot"] == "base"
     assert r.json()["nic_models"] == ["Intel(R) Ethernet Connection (2) I219-V"]
+
+
+def test_check_network_cards_reads_them_from_the_image(client, prov, pc):
+    disk = pc["os_disk_id"]
+    r = client.post(f"/api/v1/game-disks/{disk}/check-hardware")
+    assert r.status_code == 200, r.text
+    assert r.json()["nic_models"] == []                       # the image has no card yet
+    prov.windows.installed = True                             # e.g. an image made on that PC
+    assert client.post(f"/api/v1/game-disks/{disk}/check-hardware").json()["nic_models"] == [
+        "Intel(R) Ethernet Connection (2) I219-V"]
+    r = client.post(f"/api/v1/game-disks/{disk}/check-hardware")          # again: the same card, no clash
+    assert r.status_code == 200, r.text
+    assert "tank/ggnet/writebacks/win11_ggnet_hw" not in prov.zfs.runner.datasets   # the clone is gone

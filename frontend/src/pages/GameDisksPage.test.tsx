@@ -307,4 +307,17 @@ describe("GameDisksPage", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  it("checks an OS image's network cards and says what it found", async () => {
+    const fetchMock = stubFetch(
+      200,
+      disk({ id: 3, name: "win11", kind: "os", snapshot: "v2", nic_models: ["Realtek PCIe GbE Family Controller"] }),
+    );
+    const reload = vi.fn().mockResolvedValue(undefined);
+    render(<GameDisksPage disks={[disk({ id: 3, name: "win11", kind: "os" })]} machines={[]} reload={reload} />);
+    await menu("win11", "Check network cards");
+    expect(calls(fetchMock)).toEqual([{ url: "/api/v1/game-disks/3/check-hardware", method: "POST", body: undefined }]);
+    expect(await screen.findByText(/win11@v2 has these network cards: Realtek PCIe GbE Family Controller/))
+      .toBeInTheDocument();
+    expect(reload).toHaveBeenCalled();
+  });
 });

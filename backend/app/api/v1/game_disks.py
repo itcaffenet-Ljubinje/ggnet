@@ -357,6 +357,32 @@ def cancel_add_hardware(disk_id: int, db: Session = Depends(get_db), adder=Depen
     return _job_out(adder.job(disk.zvol_path))
 
 
+@router.post("/{disk_id}/check-hardware", response_model=GameDiskOut)
+def check_hardware(disk_id: int, db: Session = Depends(get_db), prov: Provisioner = Depends(get_provisioner)):
+    """
+    Read the network cards installed in the OS image's active version (its
+    registry, mounted read-only on a temporary clone) and make them the
+    image's card list: for an image made on a real PC, or after versions
+    were deleted or merged.
+    """
+    disk = _get(db, disk_id)
+    _published(disk)
+    _not_copying(disk)
+    if disk.kind is not DiskKind.OS:
+        conflict(f"'{disk.name}' is a game disk; only OS images have network cards")
+    found = prov.list_nics(disk.zvol_path, disk.snapshot)
+    if isinstance(found, str):
+        host_failed(f"Reading the network cards of {disk.name}@{disk.snapshot} failed: {found}")
+    disk.hardware.clear()
+    db.flush()                          # the old rows go first: a card found again has the same key
+    disk.hardware.extend(ImageHardware(nic=nic, instance=instance, name=name[:255], snapshot=disk.snapshot)
+                         for nic, instance, name in found)
+    db.commit()
+    db.refresh(disk)
+    logger.info("'%s'@%s network cards: %s", disk.name, disk.snapshot, ", ".join(disk.nic_models) or "none")
+    return disk
+
+
 def _keep_hardware(db: Session, disk: GameDisk, snapshots: list[str]) -> None:
     """
     The image's network cards after versions are gone: a card added at a
