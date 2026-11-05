@@ -424,6 +424,11 @@ data_dir = "$DATA_DIR"
 database = "sqlite:///$DATA_DIR/ggnet.db"
 # Unpacked ggnet-agent-win-x64.zip, offered in the web UI (Settings → Client app).
 agent_dir = "$DATA_DIR/agent"
+# The hardware scan (Settings → Hardware scan): wimboot and Windows PE, its
+# network driver packages, and where Windows ISOs are looked for.
+winpe_dir = "$DATA_DIR/winpe"
+winpe_drivers = "$DATA_DIR/winpe-drivers"
+iso_dirs = ["/var/lib/vz/template/iso"]
 EOF
 chmod 640 "$CONF_FILE"
 
@@ -437,6 +442,25 @@ info "Setting up PXE (proxyDHCP + TFTP) on $IFACE..."
 # iPXE asks ggNet for the PC's script by MAC. The router keeps handing out
 # addresses; dnsmasq only adds the boot information (proxy mode, no DNS).
 install -m 644 /usr/lib/ipxe/snponly.efi /usr/lib/ipxe/ipxe.efi "$DATA_DIR/tftp/"
+
+# Add new hardware boots a new PC once into Windows PE to read its network
+# card (Settings -> Hardware scan). wimboot (iPXE project, GPL) is downloaded
+# here, pinned and checked; Windows PE itself is taken from a Windows ISO in
+# the web UI and the network drivers are added there (never shipped).
+WIMBOOT_VERSION="2.9.0"
+WIMBOOT_SHA256="5f067ccdc4d084d5bf77b6c853bd0f8402dfc2b4cd1b103d358993ae97fae8e3"
+install -d -m 755 "$DATA_DIR/winpe" "$DATA_DIR/winpe-drivers"
+if ! echo "$WIMBOOT_SHA256  $DATA_DIR/winpe/wimboot" | sha256sum -c --status 2>/dev/null; then
+    info "Downloading wimboot $WIMBOOT_VERSION (for the hardware scan)..."
+    WIMBOOT_TMP="$(mktemp)"
+    if wget -qO "$WIMBOOT_TMP" "https://github.com/ipxe/wimboot/releases/download/v$WIMBOOT_VERSION/wimboot" \
+        && echo "$WIMBOOT_SHA256  $WIMBOOT_TMP" | sha256sum -c --status; then
+        install -m 644 "$WIMBOOT_TMP" "$DATA_DIR/winpe/wimboot"
+    else
+        red "Could not download wimboot $WIMBOOT_VERSION; Add new hardware needs it. Run the installer again later."
+    fi
+    rm -f "$WIMBOOT_TMP"
+fi
 
 # Secure Boot: the PCs load shim (signed by Microsoft) from sb/, and shim
 # loads sb/grubx64.efi, which is snponly.efi signed with the ggNet key. A PC

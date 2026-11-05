@@ -97,6 +97,56 @@ export interface AddHardwareStatus {
   job: AddHardwareJob | null;
   /** PCs on screen waiting for Add new hardware for this image. */
   waiting: string[];
+  /** The hardware scan's Windows PE is set up (Settings → Hardware scan). */
+  winpe_ready: boolean;
+}
+
+/** Settings → Hardware scan: Windows PE, the ISOs it can come from and its network drivers. */
+export interface WinPeFile {
+  name: string;
+  present: boolean;
+  size: number | null;
+}
+
+export interface IsoFile {
+  path: string;
+  name: string;
+  size: number;
+}
+
+export interface WinPeDevice {
+  /** 8086-15bc */
+  chip: string;
+  vendor: string;
+  name: string;
+}
+
+export interface WinPePackage {
+  name: string;
+  files: number;
+  size: number;
+  devices: WinPeDevice[];
+}
+
+export interface WinPeChip {
+  chip: string;
+  vendor: string;
+  /** From the driver package that covers it. */
+  name: string | null;
+  package: string | null;
+  pcs: number;
+}
+
+export interface WinPe {
+  folder: string;
+  ready: boolean;
+  files: WinPeFile[];
+  scanner: boolean;
+  isos: IsoFile[];
+  iso_folders: string[];
+  drivers_folder: string;
+  packages: WinPePackage[];
+  pc_chips: WinPeChip[];
 }
 
 export interface ImportSources {
@@ -126,6 +176,36 @@ export function uploadImage(file: File, onProgress: (sent: number, total: number
     xhr.onerror = () => reject(new ApiError(0, "The upload was interrupted"));
     xhr.send(file);
   });
+}
+
+/** Upload one file of a Windows PE driver package (the body is the file). */
+async function putFile(path: string, file: Blob): Promise<void> {
+  const res = await fetch(`/api${path}`, { method: "PUT", body: file });
+  if (res.ok) return;
+  let data: unknown = null;
+  try {
+    data = await res.json();
+  } catch {
+    // Not JSON (a proxy error page).
+  }
+  if (res.status === 401) window.dispatchEvent(new Event(SIGNED_OUT));
+  throw new ApiError(res.status, errorMessage(res.status, data));
+}
+
+/** Add a driver package: start, upload its files one by one, then check and add it. */
+export async function uploadDriverPackage(
+  name: string,
+  files: File[],
+  onProgress: (done: number, total: number) => void,
+): Promise<WinPePackage> {
+  const base = `/v1/winpe/drivers/${encodeURIComponent(name)}`;
+  await request<void>("POST", `${base}/upload`);
+  for (const [i, f] of files.entries()) {
+    onProgress(i, files.length);
+    await putFile(`${base}/files/${encodeURIComponent(f.name)}`, f);
+  }
+  onProgress(files.length, files.length);
+  return request<WinPePackage>("POST", base);
 }
 
 /** Which kept writebacks Apply Writebacks turns into versions (Boot Mode has two). */
@@ -605,6 +685,9 @@ export const api = {
   listWritebacks: (id: number) => request<Writeback[]>("GET", `/v1/game-disks/${id}/writebacks`),
 
   getAgentPackage: () => request<AgentPackage>("GET", "/v1/agent/package"),
+  getWinPe: () => request<WinPe>("GET", "/v1/winpe"),
+  winPeFromIso: (path: string) => request<WinPe>("POST", "/v1/winpe/from-iso", { path }),
+  removeDriverPackage: (name: string) => request<void>("DELETE", `/v1/winpe/drivers/${encodeURIComponent(name)}`),
   getStorage: () => request<Storage>("GET", "/v1/storage"),
   getServer: () => request<ServerStatus>("GET", "/v1/server"),
   scrub: (action: "start" | "stop") => request<ServerStatus>("POST", "/v1/server/scrub", { action }),

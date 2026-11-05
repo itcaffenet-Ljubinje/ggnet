@@ -2126,8 +2126,25 @@ label.check {
   margin: 8px 0;
 }
 
-.copy-row input {
+.copy-row input,
+.copy-row select {
   flex: 1;
+  min-width: 0;
+}
+
+.driver-upload {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.driver-upload label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
 }
 
 .bulk-bar {

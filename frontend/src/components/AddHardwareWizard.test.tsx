@@ -21,7 +21,7 @@ let status: AddHardwareStatus;
 let calls: { method: string; url: string }[];
 
 beforeEach(() => {
-  status = { wizard: null, job: null, waiting: ["komp-11"] };
+  status = { wizard: null, job: null, waiting: ["komp-11"], winpe_ready: true };
   calls = [];
   vi.stubGlobal(
     "fetch",
@@ -59,9 +59,15 @@ describe("AddHardwareWizard", () => {
   });
 
   it("shows why it stopped", async () => {
-    status = { wizard: wizard("failed", { error: "Windows could not install the hardware" }), job: null, waiting: [] };
+    status = { wizard: wizard("failed", { error: "Windows could not install the hardware" }), job: null, waiting: [], winpe_ready: true };
     render(<AddHardwareWizard disk={disk({ id: 8, kind: "os" })} onClose={() => {}} />);
     expect(await screen.findByText(/Windows could not install the hardware/)).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Close" })).toHaveLength(2);   // header × and footer
+  });
+
+  it("warns when the hardware scan is not set up", async () => {
+    status = { ...status, winpe_ready: false };
+    render(<AddHardwareWizard disk={disk({ id: 8, kind: "os" })} onClose={() => {}} />);
+    expect(await screen.findByText(/Settings → Hardware scan needs Windows PE/)).toBeInTheDocument();
   });
 });

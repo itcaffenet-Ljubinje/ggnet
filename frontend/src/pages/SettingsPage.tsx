@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Download, HardDrive, Network, UserRound, Users } from "lucide-react";
+import { Cpu, Download, HardDrive, Network, UserRound, Users } from "lucide-react";
 
 import {
   api,
@@ -14,6 +14,7 @@ import { ErrorBanner } from "../components/ErrorBanner";
 import { NetworkBoot } from "../components/NetworkBoot";
 import { SubNav, useSection, type SubNavItem } from "../components/SubNav";
 import { AccountCard, ActivityCard, UsersCard } from "../components/Users";
+import { WinPeSetup } from "../components/WinPeSetup";
 import { formatBytes } from "../format";
 import { useAsyncAction } from "../useAsyncAction";
 
@@ -76,11 +77,12 @@ function settingsOf(r: Retention): RetentionSettings {
   return s;
 }
 
-type SettingsSection = "storage" | "boot" | "client" | "users" | "account";
+type SettingsSection = "storage" | "boot" | "scan" | "client" | "users" | "account";
 
 const ADMIN_SECTIONS: SubNavItem<SettingsSection>[] = [
   { id: "storage", label: "Storage", icon: HardDrive },
   { id: "boot", label: "Network boot", icon: Network },
+  { id: "scan", label: "Hardware scan", icon: Cpu },
   { id: "client", label: "Client app", icon: Download },
   { id: "users", label: "Users", icon: Users },
 ];
@@ -99,6 +101,7 @@ export function SettingsPage({ storage, reload, user, onPasswordChanged = () => 
       <SubNav label="Settings sections" items={items} active={section} onSelect={setSection} />
       {section === "storage" && <StorageSettings storage={storage} reload={reload} />}
       {section === "boot" && <NetworkBoot />}
+      {section === "scan" && <WinPeSetup />}
       {section === "client" && <ClientApp />}
       {section === "users" && user && (
         <>
