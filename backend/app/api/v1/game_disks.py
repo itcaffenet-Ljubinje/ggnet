@@ -17,12 +17,16 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
-from app.api.deps import get_disk_copier, get_provisioner
+from app.api.deps import get_disk_copier, get_hardware_adder, get_provisioner
 from app.api.v1.errors import conflict, host_failed, not_found
 from app.api.v1.schemas import (
     ActiveSnapshot,
+    AddHardwareIn,
+    AddHardwareJobOut,
+    AddHardwareStatusOut,
+    AddHardwareWizardOut,
     GameDiskCopy,
     GameDiskCreate,
     GameDiskGrow,
@@ -30,17 +34,21 @@ from app.api.v1.schemas import (
     GameDiskEdit,
     GameDiskOut,
     GameDiskRename,
+    HardwareOut,
+    NicSupportOut,
     PrepareImage,
     SnapshotComment,
     SnapshotLock,
     SnapshotOut,
     WritebackOut,
 )
-from app.db.models import DiskKind, GameDisk, Machine, MachineMode, MachineStatus
+from app.db.models import DiskKind, GameDisk, ImageHardware, Machine, MachineMode, MachineStatus
 from app.db.session import get_db
 from app.services.agent_package import default_package
 from app.services.os_setup import image_prep
 from app.services.provisioning import Provisioner, ProvisioningError
+from app.services.scan import nic_status
+from app.services.toolchain import activate_when_done
 
 logger = logging.getLogger("ggnet.api.game_disks")
 
@@ -145,6 +153,9 @@ def copy_disk(
         conflict(f"Zvol {path} already exists on the host")
     disk = GameDisk(name=body.name, zvol_path=path, size_gb=src.size_gb, kind=src.kind,
                     copy_source=f"{src.zvol_path}@{snap}", copy_percent=0)
+    # The copy knows the cards the copied version has.
+    disk.hardware = [ImageHardware(nic=h.nic, instance=h.instance, name=h.name, snapshot=h.snapshot)
+                     for h in src.hardware if _version_number(h.snapshot) <= _version_number(snap)]
     db.add(disk)
     try:
         db.commit()
@@ -210,6 +221,138 @@ def grow_disk(
     logger.info("'%s' grown from %s to %s GB%s", disk.name, old, body.size_gb, f" as @{version}" if version else "")
     return GameDiskGrown(disk=GameDiskOut.model_validate(disk), version=version,
                          extended=bool(result and result.extended), note=note)
+
+
+@router.get("/{disk_id}/hardware", response_model=HardwareOut)
+def hardware(disk_id: int, db: Session = Depends(get_db), prov: Provisioner = Depends(get_provisioner)):
+    """
+    Which PCs the OS image's active version can boot: each boot network card
+    the PCs reported (iPXE, and the agent or the hardware scan its instance
+    ID) is "ready" (installed in the image) or "missing" (those PCs need Add
+    new hardware). PCs that never booted over the network are "unknown".
+    """
+    disk = _get(db, disk_id)
+    if disk.kind is not DiskKind.OS:
+        conflict(f"'{disk.name}' is a game disk; only OS images are checked")
+    if not disk.published or disk.copying:
+        return HardwareOut(snapshot=None, problem="not published yet", nics=[])
+    by_card: dict[tuple[str, str | None] | None, list[str]] = {}
+    for m in db.scalars(select(Machine).order_by(Machine.name)):
+        card = (m.boot_nic, m.nic_instance) if m.boot_nic else None
+        by_card.setdefault(card, []).append(m.name)
+    cards = tuple(sorted((c for c in by_card if c), key=lambda c: (c[0], c[1] or "")))
+    found = nic_status(prov, disk.zvol_path, disk.snapshot, list(cards)) if cards else {}
+    if isinstance(found, str):
+        return HardwareOut(snapshot=disk.snapshot, problem=found, nics=[])
+    out = [NicSupportOut(nic=c[0], instance=c[1], status=found.get(c, "unknown"), machines=by_card[c])
+           for c in cards]
+    if None in by_card:
+        out.append(NicSupportOut(nic=None, status="unknown", machines=by_card[None]))
+    return HardwareOut(snapshot=disk.snapshot, problem=None, nics=out)
+
+
+def _job_out(job) -> AddHardwareJobOut | None:
+    return None if job is None else AddHardwareJobOut.model_validate(job.out())
+
+
+def _status_out(adder, master: str) -> AddHardwareStatusOut:
+    wizard = adder.wizard(master)
+    return AddHardwareStatusOut(
+        wizard=AddHardwareWizardOut.model_validate(wizard.out()) if wizard else None,
+        job=_job_out(adder.job(master)),
+        waiting=adder.waiting_machines(master),
+    )
+
+
+@router.get("/{disk_id}/add-hardware", response_model=AddHardwareStatusOut)
+def add_hardware_status(disk_id: int, db: Session = Depends(get_db), adder=Depends(get_hardware_adder)):
+    """The image's Add new hardware wizard and last run (since ggNet started), and the PCs waiting for it."""
+    return _status_out(adder, _get(db, disk_id).zvol_path)
+
+
+@router.post("/{disk_id}/add-hardware/wizard", response_model=AddHardwareStatusOut)
+def open_hardware_wizard(
+    disk_id: int,
+    db: Session = Depends(get_db),
+    prov: Provisioner = Depends(get_provisioner),
+    adder=Depends(get_hardware_adder),
+):
+    """
+    Open the Add new hardware wizard (app.services.toolchain.HardwareWizard):
+    the next PC that boots this image and whose network card it cannot start
+    gets the card added to a new version, then boots it.
+    """
+    disk = _get(db, disk_id)
+    _published(disk)
+    _not_copying(disk)
+    if disk.kind is not DiskKind.OS:
+        conflict(f"'{disk.name}' is a game disk; only OS images get new hardware")
+    names = [v["name"] for v in _versions(prov, disk)]
+    if names and names[-1] != disk.snapshot:
+        conflict(f"@{disk.snapshot} is active but @{names[-1]} is newer; "
+                 f"make @{names[-1]} active first (a new version always follows the newest)")
+    try:
+        adder.start_wizard(disk.zvol_path, disk.id, disk.snapshot)
+    except ValueError as e:
+        conflict(str(e))
+    return _status_out(adder, disk.zvol_path)
+
+
+@router.delete("/{disk_id}/add-hardware/wizard", response_model=AddHardwareStatusOut)
+def close_hardware_wizard(disk_id: int, db: Session = Depends(get_db), adder=Depends(get_hardware_adder)):
+    """Finish the wizard, or cancel it (a running install is stopped)."""
+    disk = _get(db, disk_id)
+    adder.close_wizard(disk.zvol_path)
+    return _status_out(adder, disk.zvol_path)
+
+
+@router.post("/{disk_id}/add-hardware", response_model=AddHardwareJobOut, status_code=status.HTTP_202_ACCEPTED)
+def add_hardware(
+    disk_id: int,
+    body: AddHardwareIn,
+    db: Session = Depends(get_db),
+    prov: Provisioner = Depends(get_provisioner),
+    adder=Depends(get_hardware_adder),
+):
+    """
+    Add new hardware (app.services.toolchain): Windows installs these boot
+    network cards in a clone of the image's newest version, booted in a
+    temporary VM on this server; the clone becomes the next version and is
+    made active. Runs in the background (a few minutes); GET shows how far.
+    """
+    disk = _get(db, disk_id)
+    _published(disk)
+    _not_copying(disk)
+    if disk.kind is not DiskKind.OS:
+        conflict(f"'{disk.name}' is a game disk; only OS images get new hardware")
+    names = [v["name"] for v in _versions(prov, disk)]
+    if names and names[-1] != disk.snapshot:
+        conflict(f"@{disk.snapshot} is active but @{names[-1]} is newer; "
+                 f"make @{names[-1]} active first (a new version always follows the newest)")
+    done = activate_when_done(sessionmaker(bind=db.get_bind(), expire_on_commit=False), disk_id, disk.snapshot)
+
+    try:
+        job = adder.start(disk.zvol_path, [(c.nic, c.instance) for c in body.cards], done)
+    except ValueError as e:
+        conflict(str(e))
+    logger.info("Add new hardware on '%s': %s", disk.name, ", ".join(f"{c.nic}\\{c.instance}" for c in body.cards))
+    return _job_out(job)
+
+
+@router.post("/{disk_id}/add-hardware/cancel", response_model=AddHardwareJobOut | None)
+def cancel_add_hardware(disk_id: int, db: Session = Depends(get_db), adder=Depends(get_hardware_adder)):
+    """Stop a running Add new hardware: the VM is stopped and the clone removed."""
+    disk = _get(db, disk_id)
+    if not adder.cancel(disk.zvol_path):
+        conflict(f"Add new hardware is not running for '{disk.name}'")
+    return _job_out(adder.job(disk.zvol_path))
+
+
+def _version_number(snapshot: str | None) -> int:
+    """base → 1, vN → N (a copy made later from @v3 has no card added at @v5); unknown counts as 1."""
+    if snapshot and snapshot.startswith("v") and snapshot[1:].isdigit():
+        return int(snapshot[1:])
+    return 1
 
 
 def _not_copying(disk: GameDisk) -> None:
@@ -480,7 +623,7 @@ def prepare_image(
     if names and names[-1] != disk.snapshot:
         conflict(f"@{disk.snapshot} is active but @{names[-1]} is newer; "
                  f"make @{names[-1]} active first (a new version always follows the newest)")
-    prep = image_prep(defender_off=bool(body and body.defender_off))
+    prep = image_prep(defender_off=bool(body and body.defender_off), services_off=bool(body and body.services_off))
     try:
         new = prov.prepare_image(disk.zvol_path, prep)
     except ProvisioningError as e:
@@ -490,7 +633,8 @@ def prepare_image(
     version = default_package().info()
     agent = f", agent {version.version}" if prep.agent and version and version.version else ""
     try:
-        defender = ", Defender off" if prep.defender_off else ""
+        defender = (", Defender off" if prep.defender_off else "") + \
+            (", background services off" if prep.services_off else "")
         prov.set_comment(disk.zvol_path, new, f"ggNet: prepared for all PCs{agent}{defender}")
     except ProvisioningError as e:   # the version exists; only its comment is missing
         logger.warning("%s", e)

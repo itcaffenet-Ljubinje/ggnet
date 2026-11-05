@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>ggnet-agent</AssemblyName>
     <RootNamespace>GgnetAgent</RootNamespace>
-    <Version>0.1.13</Version>
+    <Version>0.1.21</Version>
     <InvariantGlobalization>true</InvariantGlobalization>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <!-- LibraryImport (UEFI variables for Secure Boot key enrollment) generates unsafe marshalling code. -->

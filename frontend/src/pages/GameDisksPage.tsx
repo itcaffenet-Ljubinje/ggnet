@@ -2,7 +2,9 @@ import { Fragment, useState, type FormEvent } from "react";
 import {
   CheckCircle2,
   Copy,
+  Cpu,
   Gamepad2,
+  HardDriveDownload,
   HardDrive,
   Info,
   Layers,
@@ -11,12 +13,23 @@ import {
   Plus,
   Trash2,
   Wand2,
+  XCircle,
   type LucideIcon,
 } from "lucide-react";
 
-import { api, type DiskKind, type GameDisk, type Machine } from "../api";
+import {
+  api,
+  isImport,
+  needsHardware,
+  type DiskKind,
+  type GameDisk,
+  type Machine,
+  type PrepareOptions,
+} from "../api";
 import { ActionMenu, type MenuAction } from "../components/ActionMenu";
 import { EditImage } from "../components/EditImage";
+import { ImportImage } from "../components/ImportImage";
+import { AddHardwareWizard } from "../components/AddHardwareWizard";
 import { PrepareImage } from "../components/PrepareImage";
 import { ErrorBanner } from "../components/ErrorBanner";
 import { useAsyncAction } from "../useAsyncAction";
@@ -45,6 +58,9 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
   const [notice, setNotice] = useState<string | null>(null);
   // The OS image in the Prepare image dialog.
   const [preparing, setPreparing] = useState<number | null>(null);
+  // The OS image in the Add new hardware wizard.
+  const [addingHardware, setAddingHardware] = useState<number | null>(null);
+  const [importing, setImporting] = useState(false);
 
   const assigned = (id: number) =>
     machines.filter((m) => m.game_disk_id === id || m.os_disk_id === id).length;
@@ -90,9 +106,15 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
     await reload();
   }
 
-  async function prepare(disk: GameDisk, options: { defender_off: boolean }) {
+  async function prepare(disk: GameDisk, options: PrepareOptions) {
     const ok = await run(`prepare-${disk.id}`, () => api.prepareImage(disk.id, options));
     if (ok) setPreparing(null);
+    await reload();
+  }
+
+  async function cancelImport(disk: GameDisk) {
+    if (!window.confirm(`Stop importing "${disk.name}"? What was imported so far is removed.`)) return;
+    await run(`cancel-${disk.id}`, () => api.cancelImport(disk.id));
     await reload();
   }
 
@@ -148,6 +170,24 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
               disabled: busy !== null,
               title: "New version with the server's agent and the settings every PC needs",
             },
+            {
+              label: "Add new hardware",
+              icon: Cpu,
+              onSelect: () => setAddingHardware(d.id),
+              disabled: busy !== null,
+              title: "Add a new board type's network card to the image (once per board type)",
+            },
+          ]
+        : []),
+      ...(copying(d) && isImport(d.copy_source)
+        ? [
+            {
+              label: "Cancel import",
+              icon: XCircle,
+              onSelect: () => cancelImport(d),
+              disabled: busy !== null,
+              title: "Stop the import; the disk can then be removed",
+            },
           ]
         : []),
       {
@@ -188,6 +228,10 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
       onPrepare={(options) => prepare(preparedDisk, options)}
     />
   );
+  const hardwareDisk = disks.find((d) => d.id === addingHardware);
+  const hardwareDialog = hardwareDisk && (
+    <AddHardwareWizard disk={hardwareDisk} onClose={() => setAddingHardware(null)} onChanged={reload} />
+  );
   const noticeBanner = notice && (
     <div className="banner banner-info" role="status">
       <span>{notice}</span>
@@ -205,11 +249,13 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
         {noticeBanner}
         {editDialog}
         {prepareDialog}
+        {hardwareDialog}
         <ImageDetailsPage
           disk={shown}
           machines={machines}
           reload={reload}
           onBack={() => setOpen(null)}
+          onAddHardware={() => setAddingHardware(shown.id)}
           menu={<ActionMenu label={`Actions for ${shown.name}`} actions={menuFor(shown).filter((a) => a.label !== "Details")} />}
         />
       </>
@@ -264,11 +310,15 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
                       <td>
                         {copying(d) ? (
                           <span className="badge badge-editing" title={`From ${d.copy_source}`}>
-                            Copying {d.copy_percent ?? 0}%
+                            {isImport(d.copy_source) ? "Importing" : "Copying"} {d.copy_percent ?? 0}%
                           </span>
                         ) : d.copy_error ? (
                           <span className="badge badge-error" title={d.copy_error}>
-                            Copy failed
+                            {isImport(d.copy_source) ? "Import failed" : "Copy failed"}
+                          </span>
+                        ) : needsHardware(d) ? (
+                          <span className="badge badge-warn" title="No PC can boot it yet: run Add new hardware">
+                            Needs hardware
                           </span>
                         ) : d.published ? (
                           <span className="badge badge-provisioned">Published @{d.snapshot}</span>
@@ -346,6 +396,7 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
       {noticeBanner}
       {editDialog}
       {prepareDialog}
+      {hardwareDialog}
 
       <ImageKpis disks={disks} machines={machines} />
 
@@ -382,7 +433,26 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
           <Plus size={14} />
           {busy === "create" ? "Creating…" : "Create"}
         </button>
+        <button
+          type="button"
+          className="secondary"
+          onClick={() => setImporting(true)}
+          disabled={busy !== null}
+          title="A new image from a VHD, VHDX, QCOW2, VMDK or RAW file"
+        >
+          <HardDriveDownload size={14} />
+          Import
+        </button>
       </form>
+      {importing && (
+        <ImportImage
+          onClose={() => setImporting(false)}
+          onStarted={async () => {
+            setImporting(false);
+            await reload();
+          }}
+        />
+      )}
 
       {section("OS images", Monitor, disks.filter((d) => d.kind === "os"), "No OS images yet.")}
       {section("Game disks", Gamepad2, disks.filter((d) => d.kind !== "os"), "No game disks yet.")}

@@ -10,6 +10,16 @@ var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
 
 builder.Services.AddWindowsService(o => o.ServiceName = "ggnet-agent");
 
+// Add new hardware: the server booted a clone of the image in a VM to install a PC's devices.
+if (File.Exists(Path.Combine(ToolchainJob.Folder, ToolchainJob.JobFile)))
+{
+    builder.Services.AddSingleton<IDeviceInstaller, SetupApiInstaller>();
+    builder.Services.AddSingleton<IPowerControl, WindowsPowerControl>();
+    builder.Services.AddHostedService<ToolchainWorker>();
+    builder.Build().Run();
+    return;
+}
+
 builder.Services.AddOptions<AgentOptions>()
     .Bind(builder.Configuration.GetSection(AgentOptions.Section))
     .ValidateOnStart();
@@ -26,6 +36,7 @@ builder.Services.AddSingleton<IIscsiInitiator, WindowsIscsiInitiator>();
 builder.Services.AddSingleton<IInventory, WindowsInventory>();
 builder.Services.AddSingleton<IPowerControl, WindowsPowerControl>();
 builder.Services.AddSingleton<ILocalDisks, WindowsLocalDisks>();
+builder.Services.AddSingleton<IIdleTasks, WindowsIdleTasks>();
 builder.Services.AddSingleton<IUefiVariables, WindowsUefiVariables>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddHostedService<AgentWorker>();

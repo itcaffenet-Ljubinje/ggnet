@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/GgnetAgent/GgnetAgent.csproj" />
+    <Project Path="src/GgnetScan/GgnetScan.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/GgnetAgent.Tests/GgnetAgent.Tests.csproj" />

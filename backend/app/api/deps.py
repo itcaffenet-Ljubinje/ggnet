@@ -34,6 +34,43 @@ def get_disk_copier(db: Session = Depends(get_db), prov: Provisioner = Depends(g
     return DiskCopier(sessionmaker(bind=db.get_bind(), expire_on_commit=False), prov)
 
 
+def get_disk_importer(db: Session = Depends(get_db), prov: Provisioner = Depends(get_provisioner)):
+    """Runs image imports in the background, on the request's database."""
+    from sqlalchemy.orm import sessionmaker
+
+    from app.services.imports import DiskImporter
+
+    return DiskImporter(sessionmaker(bind=db.get_bind(), expire_on_commit=False), prov)
+
+
+@lru_cache(maxsize=4)
+def _hardware_adder(prov: Provisioner):
+    from app.services.os_setup import image_prep
+    from app.services.toolchain import HardwareAdder, ToolchainVm
+
+    return HardwareAdder(prov, ToolchainVm(prov.zfs.runner), image_prep)
+
+
+def get_hardware_adder(prov: Provisioner = Depends(get_provisioner)):
+    """Add new hardware jobs (one per image), kept in memory for the whole process."""
+    return _hardware_adder(prov)
+
+
+@lru_cache(maxsize=1)
+def get_driver_library():
+    """Signed network driver packages for the hardware scan's Windows PE ([paths] winpe_drivers)."""
+    from app.services.scan import DriverLibrary, winpe_drivers_dir
+
+    return DriverLibrary(winpe_drivers_dir(get_config()))
+
+
+def get_usb_disks(prov: Provisioner = Depends(get_provisioner)):
+    """The server's USB disks that image files can be imported from."""
+    from app.services.imports import UsbDisks
+
+    return UsbDisks(prov.zfs.runner)
+
+
 def get_writeback_settings() -> WritebackSettings:
     return WritebackSettings.from_config(get_config())
 

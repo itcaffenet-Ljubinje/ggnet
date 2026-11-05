@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 import { ArrowLeft, Gamepad2, GitBranch, HardDrive, Layers, Monitor } from "lucide-react";
 
-import type { GameDisk, Machine, Snapshot, Writeback } from "../api";
+import { isImport, needsHardware, type GameDisk, type Machine, type Snapshot, type Writeback } from "../api";
 import { DiskDetails } from "../components/DiskDetails";
+import { HardwarePanel } from "../components/HardwarePanel";
 import { formatBytes } from "../format";
 
 interface Props {
@@ -12,10 +13,12 @@ interface Props {
   onBack: () => void;
   /** The image's ⋮ menu, the same as on the list. */
   menu?: ReactNode;
+  /** Open the Add new hardware wizard (OS images). */
+  onAddHardware?: () => void;
 }
 
 /** One image on its own page: what it is, its snapshots and the PCs' writebacks. */
-export function ImageDetailsPage({ disk, machines, reload, onBack, menu }: Props) {
+export function ImageDetailsPage({ disk, machines, reload, onBack, menu, onAddHardware }: Props) {
   const KindIcon = disk.kind === "os" ? Monitor : Gamepad2;
   const editor = machines.find((m) => m.id === disk.editor_id);
   return (
@@ -30,9 +33,13 @@ export function ImageDetailsPage({ disk, machines, reload, onBack, menu }: Props
         <h2>{disk.name}</h2>
         <span className="badge">{disk.kind === "os" ? "OS image" : "Game disk"}</span>
         {disk.copy_source && !disk.copy_error ? (
-          <span className="badge badge-editing">Copying {disk.copy_percent ?? 0}%</span>
+          <span className="badge badge-editing">
+            {isImport(disk.copy_source) ? "Importing" : "Copying"} {disk.copy_percent ?? 0}%
+          </span>
         ) : disk.copy_error ? (
-          <span className="badge badge-error">Copy failed</span>
+          <span className="badge badge-error">{isImport(disk.copy_source) ? "Import failed" : "Copy failed"}</span>
+        ) : needsHardware(disk) ? (
+          <span className="badge badge-warn">Needs hardware</span>
         ) : disk.published ? (
           <span className="badge badge-provisioned">Active @{disk.snapshot}</span>
         ) : editor ? (
@@ -47,16 +54,20 @@ export function ImageDetailsPage({ disk, machines, reload, onBack, menu }: Props
       {disk.copy_source ? (
         <p className={disk.copy_error ? "error-text" : "empty"}>
           {disk.copy_error
-            ? `The copy from ${disk.copy_source} failed: ${disk.copy_error}`
-            : `Copying from ${disk.copy_source}: ${disk.copy_percent ?? 0}% done. It is published by itself when the copy ends.`}
+            ? `${isImport(disk.copy_source) ? "The import" : "The copy"} from ${disk.copy_source} failed: ${disk.copy_error}`
+            : `${isImport(disk.copy_source) ? "Importing" : "Copying"} from ${disk.copy_source}: ` +
+              `${disk.copy_percent ?? 0}% done. It is published by itself when it ends.`}
         </p>
       ) : disk.published ? (
-        <DiskDetails
-          disk={disk}
-          onChanged={reload}
-          refreshKey={machines}
-          summary={(snapshots, writebacks) => <Summary disk={disk} snapshots={snapshots} writebacks={writebacks} />}
-        />
+        <>
+          {disk.kind === "os" && <HardwarePanel disk={disk} onAddHardware={onAddHardware} />}
+          <DiskDetails
+            disk={disk}
+            onChanged={reload}
+            refreshKey={machines}
+            summary={(snapshots, writebacks) => <Summary disk={disk} snapshots={snapshots} writebacks={writebacks} />}
+          />
+        </>
       ) : (
         <p className="empty">
           A draft has no snapshots or writebacks yet: fill it {disk.kind === "os" ? "" : "on a PC "}and publish it.

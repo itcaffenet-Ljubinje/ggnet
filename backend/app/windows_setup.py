@@ -15,8 +15,6 @@ an extra reboot:
     Services\\Tcpip\\Parameters\\Interfaces\\{...}
                                         a fixed IPv4 address becomes DHCP again
     MountedDevices                      every drive letter but C: is forgotten
-    Enum\\PCI\\<boot NIC>               added when the image knows the PC's network
-                                        chip only in another revision or board
 
 The fixed address and the letters are the image's, so prepare_image() clears
 them once; a writeback only does it when the image still has them (an image
@@ -31,13 +29,11 @@ local D:, E:, F:). On another PC those volumes do not exist, yet Windows
 keeps the letters for them, so the agent could not give the game disk D:
 (Set-Partition 42012). Windows gives present volumes letters again at boot.
 
-Add hardware: Windows boots from iSCSI only if its boot network card is
-installed before Plug and Play runs, so a PC whose card the image has never
-seen stops at 0x7B. The same chip in another revision or on another board
-(Realtek 8168 REV_15 on the PC the image was made on, REV_16 on the next
-board) only has another hardware ID: its Enum entry is copied from the
-known one with the new IDs (iPXE reports them, app.api.v1.boot), so it
-binds the same driver. A chip the image has no driver for is reported.
+The PC's boot network card is never written into its writeback: Windows
+boots from iSCSI only if the card is installed in the image under the
+card's own instance ID, which the Add new hardware wizard does once per
+board type (app.services.toolchain). nic_support() tells which cards an
+image knows.
 
 prepare_image() makes what is the same on every PC part of the image, once
 per version (on Apply Writebacks of an OS image, or "Prepare image" in the
@@ -116,8 +112,6 @@ class OsSetup:
 
     computer_name: str                        # the machine name, [a-z0-9-], at most 15
     env: Mapping[str, str] = field(default_factory=dict)
-    # The boot network card's hardware ID (VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_16), if known.
-    boot_nic: str | None = None
 
 
 @dataclass(frozen=True)
@@ -129,6 +123,8 @@ class ImagePrep:
     tuning: bool = True
     # Microsoft Defender's services and drivers off (defender_off_lines()).
     defender_off: bool = False
+    # Background services a cafe PC does not need off, for a faster startup (services_off_lines()).
+    services_off: bool = False
 
 
 def _reg_string(value: str) -> str:
@@ -183,67 +179,78 @@ def _reg_blocks(export: str) -> list[tuple[str, list[str]]]:
     return blocks
 
 
-def _swap_ids(line: str, swaps: Sequence[tuple[str, str]]) -> str:
-    """A .reg value line with each old ID replaced, in text and in UTF-16 hex data."""
-    name, sep, data = line.partition("=")
-    if not sep:
-        return line
-    m = re.match(r"^(hex(?:\([0-9a-fA-F]+\))?:)([0-9a-fA-F,]*)$", data)
-    if m:
-        raw = bytes(int(x, 16) for x in m.group(2).split(",") if x)
-        for old, new in swaps:
-            raw = raw.replace(old.encode("utf-16-le"), new.encode("utf-16-le"))
-        data = m.group(1) + ",".join(f"{b:02x}" for b in raw)
-    else:
-        for old, new in swaps:
-            data = data.replace(old, new)
-    return f"{name}={data}"
+NIC_INSTANCE_RE = re.compile(r"^[A-Za-z0-9&_.-]{1,64}$")
 
 
-def nic_patch(export: str, nic: str) -> tuple[str | None, str | None]:
+def nic_known(export: str, nic: str, instance: str | None = None) -> bool:
     """
-    Add hardware for the boot NIC, from a `hivexregedit --export` of
-    <ControlSet>\\Enum\\PCI: (.reg lines to merge, None) when the image knows
-    the chip under another hardware ID, (None, None) when it knows this one,
-    (None, why) when it has no driver for the chip.
-
-    The entry is copied from the image's entry for the same vendor and device
-    (the same subsystem first, as it is the same board family) that has a
-    driver service; its key and the IDs in its values get the PC's subsystem
-    and revision.
+    Whether the image, from a `hivexregedit --export` of <ControlSet>\\Enum\\PCI,
+    has this boot network card installed: an entry for the card's hardware
+    ID with a driver service, under the PC's own instance ID when it is known
+    (Windows starts the boot card from that entry only). An entry whose
+    install failed has no driver (ConfigFlags "reinstall") and does not count.
     """
-    want = NIC_ID_RE.match(nic)
-    if want is None:
+    if NIC_ID_RE.match(nic) is None:
         raise ValueError(f"Invalid PCI hardware ID: {nic!r}")
-    ven, dev, sub, rev = want.groups()
-    blocks = _reg_blocks(export)
-    devices: dict[str, str] = {}            # upper-case device key name -> key path prefix
-    services: set[str] = set()
-    for path, values in blocks:
-        head, marker, rest = path.partition("\\Enum\\PCI\\")
-        if not marker or not rest:
-            continue
-        name = rest.split("\\", 1)[0]
-        devices.setdefault(name.upper(), f"{head}\\Enum\\PCI\\{name}")
-        if any(v.startswith('"Service"=') for v in values):
-            services.add(name.upper())
-    if nic in devices:
-        return None, None
-    siblings = sorted(n for n in services
-                      if (m := NIC_ID_RE.match(n)) and m.group(1) == ven and m.group(2) == dev)
-    if not siblings:
-        return None, f"the image has no driver for the boot network card PCI\\{nic}"
-    source = next((n for n in siblings if NIC_ID_RE.match(n).group(3) == sub), siblings[0])
-    _, _, old_sub, old_rev = NIC_ID_RE.match(source).groups()
-    swaps = [(source, nic), (f"SUBSYS_{old_sub}", f"SUBSYS_{sub}"), (f"REV_{old_rev}", f"REV_{rev}")]
-    prefix = devices[source]
+    if instance is not None and not NIC_INSTANCE_RE.match(instance):
+        raise ValueError(f"Invalid device instance ID: {instance!r}")
+    installed: set[str] = set()
+    for path, values in _reg_blocks(export):
+        _, marker, rest = path.partition("\\Enum\\PCI\\")
+        parts = rest.split("\\")
+        if marker and len(parts) == 2 and parts[0].upper() == nic.upper() \
+                and any(v.startswith('"Service"=') for v in values):
+            installed.add(parts[1].upper())
+    return bool(installed) if instance is None else instance.upper() in installed
+
+
+# Add new hardware (app.services.toolchain): the agent in a clone of the image,
+# booted in a VM, installs the devices of this job (agent/src/GgnetAgent/Toolchain.cs).
+TOOLCHAIN_DIR = ("ProgramData", "ggNet", "toolchain")
+TOOLCHAIN_JOB, TOOLCHAIN_RESULT, TOOLCHAIN_DONE = "job.json", "result.json", "job.done"
+# The VM's disk is on its SATA controller: that driver has to start at boot.
+TOOLCHAIN_BOOT_DRIVERS = ("storahci",)
+
+
+def pci_ids(nic: str) -> tuple[list[str], list[str]]:
+    """
+    The hardware and compatible IDs Windows reads from a PCI network card
+    (class 02, subclass 00) with this hardware ID, best match first, as an
+    INF matches them.
+    """
+    m = NIC_ID_RE.match(nic)
+    if m is None:
+        raise ValueError(f"Invalid PCI hardware ID: {nic!r}")
+    ven, dev, sub, rev = m.groups()
+    vd = f"PCI\\VEN_{ven}&DEV_{dev}"
+    hardware = [f"{vd}&SUBSYS_{sub}&REV_{rev}", f"{vd}&SUBSYS_{sub}", f"{vd}&CC_020000", f"{vd}&CC_0200"]
+    compatible = [f"{vd}&REV_{rev}", vd, f"PCI\\VEN_{ven}&CC_020000", f"PCI\\VEN_{ven}&CC_0200",
+                  f"PCI\\VEN_{ven}", "PCI\\CC_020000", "PCI\\CC_0200"]
+    return hardware, compatible
+
+
+def toolchain_job(nics: Sequence[tuple[str, str]]) -> dict:
+    """job.json for the agent: each card as (PCI hardware ID, instance ID)."""
+    devices = []
+    for nic, instance in nics:
+        if not NIC_INSTANCE_RE.match(instance or ""):
+            raise ValueError(f"Invalid device instance ID: {instance!r}")
+        hardware, compatible = pci_ids(nic)
+        devices.append({"instance_id": f"PCI\\{nic}\\{instance}", "hardware_ids": hardware,
+                        "compatible_ids": compatible, "class_guid": NET_CLASS})
+    if not devices:
+        raise ValueError("No devices to add")
+    return {"devices": devices}
+
+
+def toolchain_boot_lines(control_set: int) -> list[str]:
+    """The VM's disk driver started at boot (it may be off in an image made on an NVMe PC)."""
+    cs = f"\\ControlSet{control_set:03d}"
     lines: list[str] = []
-    for path, values in blocks:
-        if path.upper() != prefix.upper() and not path.upper().startswith(prefix.upper() + "\\"):
-            continue
-        new_path = prefix[: -len(source)] + nic + path[len(prefix):]
-        lines += ["", f"[{new_path}]", *(_swap_ids(v, swaps) for v in values)]
-    return "\n".join(lines).lstrip("\n"), None
+    for name in TOOLCHAIN_BOOT_DRIVERS:
+        lines += ["", f"[{cs}\\Services\\{name}]", '"Start"=dword:00000000',
+                  "", f"[-{cs}\\Services\\{name}\\StartOverride]"]
+    return lines
 
 
 def _hex(kind: str, data: bytes) -> str:
@@ -350,6 +357,98 @@ def group_order_lines(cs: str, export: str) -> list[str]:
     ]
 
 
+# Drivers and services of other diskless systems. In an image made for one of
+# them they sit in the way of the disk and the network card (one such system
+# puts its cache driver above every volume and its own filter on every network
+# card) and stop Windows booting over plain iSCSI (0x7B). Prepare image turns
+# them off and takes them out of the device classes' filter lists.
+FOREIGN_DISKLESS = (
+    "CCacheX", "CCBootPNPX", "CCBootPNP", "CCopyFile", "CCBootClient",
+)
+_CLASS_KEY = re.compile(r"\\Control\\Class\\(\{[0-9A-Fa-f-]{36}\})$")
+
+
+def _multi_sz(line: str) -> list[str] | None:
+    """The strings of a .reg REG_MULTI_SZ line (hex(7)), or None."""
+    raw = line.partition("=")[2]
+    if not raw.startswith("hex(7):"):
+        return None
+    try:
+        return [s for s in bytes(int(x, 16) for x in raw[7:].split(",") if x).decode("utf-16-le").split("\0") if s]
+    except ValueError:
+        return None
+
+
+def foreign_filter_lines(cs: str, class_export: str, foreign: Sequence[str]) -> list[str]:
+    """
+    The device classes' UpperFilters/LowerFilters without the `foreign`
+    drivers; `class_export` is a `hivexregedit --export` of Control\\Class.
+    A list left empty is deleted.
+    """
+    gone = {f.lower() for f in foreign}
+    lines: list[str] = []
+    for path, values in _reg_blocks(class_export):
+        m = _CLASS_KEY.search(path)
+        if not m:
+            continue
+        changed = []
+        for v in values:
+            name = v.partition("=")[0]
+            if name not in ('"UpperFilters"', '"LowerFilters"'):
+                continue
+            items = _multi_sz(v)
+            if items is None or not any(i.lower() in gone for i in items):
+                continue
+            kept = [i for i in items if i.lower() not in gone]
+            data = ("\0".join(kept) + "\0\0").encode("utf-16-le")
+            changed.append(f"{name}={_hex('hex(7)', data)}" if kept else f"{name}=-")
+        if changed:
+            lines += ["", f"[{cs}\\Control\\Class\\{m.group(1)}]", *changed]
+    return lines
+
+
+def nic_services(enum_pci_export: str) -> list[str]:
+    """The drivers of the image's PCI network cards (the services of Net class devices)."""
+    found: list[str] = []
+    for _, values in _reg_blocks(enum_pci_export):
+        text = {v.partition("=")[0].strip('"'): v.partition("=")[2] for v in values}
+        cls = _reg_text(text.get("ClassGUID", ""))
+        service = _reg_text(text.get("Service", ""))
+        if cls.lower() == NET_CLASS and service and service not in found:
+            found.append(service)
+    return found
+
+
+def _reg_text(data: str) -> str:
+    """A .reg string value (quoted, or hex(1)/hex(2) UTF-16) as text; "" when unreadable."""
+    if data.startswith('"') and data.endswith('"'):
+        return data[1:-1].replace("\\\\", "\\")
+    m = re.match(r"^hex\((?:1|2)\):([0-9a-fA-F,]*)$", data)
+    if not m:
+        return ""
+    try:
+        return bytes(int(x, 16) for x in m.group(1).split(",") if x).decode("utf-16-le").rstrip("\0")
+    except ValueError:
+        return ""
+
+
+def diskless_boot_lines(control_set: int, class_export: str, enum_pci_export: str,
+                        foreign: Sequence[str]) -> list[str]:
+    """
+    SYSTEM hive lines so the image boots over plain iSCSI: other diskless
+    systems' drivers off and out of the filter lists, and the network cards'
+    drivers marked for a network boot (BootFlags 1, as Windows marks the card
+    it was installed to boot from), so Windows loads the PC's card early.
+    """
+    cs = f"\\ControlSet{control_set:03d}"
+    lines = foreign_filter_lines(cs, class_export, foreign)
+    for name in foreign:
+        lines += ["", f"[{cs}\\Services\\{name}]", '"Start"=dword:00000004']
+    for service in nic_services(enum_pci_export):
+        lines += ["", f"[{cs}\\Services\\{service}]", '"BootFlags"=dword:00000001']
+    return lines
+
+
 def tuning_patch(control_set: int, net_class_export: str = "", group_order_export: str = "") -> list[str]:
     """
     SYSTEM hive lines for a diskless PC: High performance with nothing ever
@@ -428,6 +527,85 @@ def software_patch() -> str:
 DEFENDER_SERVICES = ("WinDefend", "WdNisSvc", "WdNisDrv", "WdFilter", "WdBoot", "Sense", "MDCoreSvc")
 
 
+# Background services a diskless cafe PC does not need, which start with
+# Windows, run at idle or write to the disk: the writeback is discarded at
+# every restart, so their work is redone at every boot. Not touched: what
+# games, launchers, anti-cheat and Microsoft/Xbox sign-in rely on (TokenBroker,
+# InstallService, SENS, Xbox services, FontCache, Windows Update itself).
+BACKGROUND_SERVICES = (
+    "DoSvc",                    # Delivery Optimization: peer-to-peer update downloads
+    "WaaSMedicSvc",             # Windows Update Medic: turns automatic updates back on
+    "DiagTrack",                # telemetry
+    "dmwappushservice",         # telemetry push messages
+    "diagnosticshub.standardcollector.service",
+    "WdiServiceHost", "WdiSystemHost",   # diagnostic policy hosts
+    "WerSvc",                   # Windows Error Reporting
+    "PcaSvc",                   # Program Compatibility Assistant
+    "defragsvc",                # Optimize drives
+    "MapsBroker",               # downloaded maps
+    "lfsvc",                    # geolocation
+    "SensorDataService", "SensorService", "SensrSvc",    # sensors a desktop has none of
+    "BDESVC",                   # BitLocker
+    "SharedAccess",             # Internet Connection Sharing
+    "StiSvc",                   # scanners
+    "wmiApSrv",                 # WMI performance adapter
+    "RetailDemo", "WMPNetworkSvc", "Fax",
+)
+# Browser updaters (their service names carry a version): they update the
+# browsers at every boot, and the writeback throws it away.
+BACKGROUND_SERVICE_PREFIXES = ("edgeupdate", "GoogleUpdater", "gupdate", "MozillaMaintenance", "brave")
+
+
+def background_services(services_export: str, control_set: int) -> list[str]:
+    """The BACKGROUND_SERVICES and browser updaters in an export of <ControlSet>\\Services."""
+    prefix = f"\\ControlSet{control_set:03d}\\Services\\".lower()
+    present = []
+    for path, _ in _reg_blocks(services_export):
+        if not path.lower().startswith(prefix):
+            continue
+        name = path[len(prefix):]
+        if "\\" in name:
+            continue
+        if name in BACKGROUND_SERVICES or name.lower().startswith(
+                tuple(p.lower() for p in BACKGROUND_SERVICE_PREFIXES)):
+            present.append(name)
+    return present
+
+
+def services_off_lines(control_set: int, present: Sequence[str]) -> str:
+    """SYSTEM hive .reg: these services disabled, and NTFS no longer writes last-access times."""
+    cs = f"\\ControlSet{control_set:03d}"
+    lines = ["Windows Registry Editor Version 5.00",
+             "", f"[{cs}\\Control\\FileSystem]",
+             '"NtfsDisableLastAccessUpdate"=dword:80000001']
+    for name in present:
+        lines += ["", f"[{cs}\\Services\\{name}]", '"Start"=dword:00000004']
+    return "\n".join(lines) + "\n"
+
+
+def services_policy_patch() -> str:
+    """
+    SOFTWARE hive .reg: no telemetry, no apps Windows installs by itself
+    (consumer features), no error reports and no System Restore points,
+    which would all be redone at every boot of a diskless PC.
+    """
+    return "\n".join([
+        "Windows Registry Editor Version 5.00",
+        "", "[\\Policies\\Microsoft]",
+        "", "[\\Policies\\Microsoft\\Windows]",
+        "", "[\\Policies\\Microsoft\\Windows\\DataCollection]",
+        '"AllowTelemetry"=dword:00000000',
+        "", "[\\Policies\\Microsoft\\Windows\\CloudContent]",
+        '"DisableWindowsConsumerFeatures"=dword:00000001',
+        "", "[\\Policies\\Microsoft\\Windows\\Windows Error Reporting]",
+        '"Disabled"=dword:00000001',
+        "", "[\\Policies\\Microsoft\\Windows NT]",
+        "", "[\\Policies\\Microsoft\\Windows NT\\SystemRestore]",
+        '"DisableSR"=dword:00000001',
+        '"DisableConfig"=dword:00000001',
+    ]) + "\n"
+
+
 def defender_off_lines(control_set: int, present: Sequence[str]) -> str:
     """
     SYSTEM hive .reg that keeps Defender from starting: its services and
@@ -497,7 +675,7 @@ def image_patch(control_set: int, dhcp_interfaces: Sequence[str] = (), forget_le
 
 
 def registry_patch(setup: OsSetup, control_set: int, dhcp_interfaces: Sequence[str] = (),
-                   forget_letters: Sequence[str] = (), extra: str | None = None) -> str:
+                   forget_letters: Sequence[str] = ()) -> str:
     """The .reg text hivexregedit merges into the SYSTEM hive."""
     if not _NAME_RE.match(setup.computer_name):
         raise ValueError(f"Invalid computer name: {setup.computer_name!r}")
@@ -519,8 +697,6 @@ def registry_patch(setup: OsSetup, control_set: int, dhcp_interfaces: Sequence[s
                 raise ValueError(f"Invalid environment variable name: {key!r}")
             lines.append(f"{_reg_string(key)}={_reg_string(value)}")
     lines += _cleanup_lines(cs, dhcp_interfaces, forget_letters)
-    if extra:
-        lines += ["", extra]
     return "\n".join(lines) + "\n"
 
 
@@ -586,8 +762,6 @@ class WindowsSetup:
         """
         try:
             registry_patch(setup, 1)   # validate before touching the host
-            if setup.boot_nic and not NIC_ID_RE.match(setup.boot_nic):
-                raise ValueError(f"Invalid PCI hardware ID: {setup.boot_nic!r}")
         except ValueError as e:
             return str(e)
         try:
@@ -608,7 +782,124 @@ class WindowsSetup:
             logger.exception("Preparing the image on %s failed", device)
             return f"unexpected error: {e}"
 
-    def _on_windows(self, device: str, name: str, work: Callable[[Path, Path], str | None]) -> str | None:
+    def nic_support(self, device: str, nics: Sequence[tuple[str, str | None]]
+                    ) -> dict[tuple[str, str | None], str] | str:
+        """
+        Whether the Windows on `device` can boot PCs with these boot network
+        cards, each a (PCI hardware ID, instance ID or None): "ready" when the
+        card is installed (under that instance, when known, nic_known), else
+        "missing": those PCs need Add new hardware. A string says why it could
+        not be read. Mounted read-only.
+        """
+        result: dict[tuple[str, str | None], str] = {}
+
+        def work(root: Path, hive: Path) -> str | None:
+            export = self.enum_pci(hive, self.control_set(hive))
+            if export is None:
+                return "the image's PCI devices cannot be read"
+            for nic, instance in nics:
+                result[(nic, instance)] = "ready" if nic_known(export, nic, instance) else "missing"
+            return None
+
+        for nic, instance in nics:
+            if not NIC_ID_RE.match(nic) or (instance is not None and not NIC_INSTANCE_RE.match(instance)):
+                return f"Invalid network card: {nic!r} {instance!r}"
+        try:
+            problem = self._on_windows(device, "hardware-check", work, readonly=True)
+        except Exception as e:
+            logger.exception("Checking the hardware of %s failed", device)
+            return f"unexpected error: {e}"
+        return problem or result
+
+    def start_toolchain(self, device: str, nics: Sequence[tuple[str, str]], prep: ImagePrep,
+                        label: str = "image") -> str | None:
+        """
+        Make an OS clone ready to boot in the toolchain VM (Add new hardware):
+        the server's agent and its service, the VM's disk driver started at
+        boot, and the job naming the cards to install (each a PCI hardware
+        ID and instance ID). None when done, else why not.
+        """
+        try:
+            job = toolchain_job(nics)
+        except ValueError as e:
+            return str(e)
+        if prep.agent is None:
+            return "the agent that installs the devices is not on this server"
+        agent = prep.agent
+
+        def work(root: Path, hive: Path) -> str | None:
+            agent_ok, problem = self._install_agent(root, agent)
+            if not agent_ok:
+                return problem or "the agent could not be copied into the image"
+            control_set = self.control_set(hive)
+            patch = "\n".join(["Windows Registry Editor Version 5.00", *agent_service_patch(control_set),
+                               *toolchain_boot_lines(control_set)]) + "\n"
+            problem = self._merge_reg(hive, f"toolchain-{label}", patch)
+            if problem:
+                return problem
+            folder = _toolchain_dir(root, create=True)
+            if folder is None:
+                return "no ProgramData folder in the image"
+            try:
+                for name in (TOOLCHAIN_RESULT, TOOLCHAIN_DONE):
+                    (folder / name).unlink(missing_ok=True)
+                (folder / TOOLCHAIN_JOB).write_text(json.dumps(job, indent=2), encoding="utf-8")
+            except OSError as e:
+                return f"writing the job failed: {e}"
+            logger.info("Toolchain job written for %s", ", ".join(d["instance_id"] for d in job["devices"]))
+            return None
+
+        try:
+            return self._on_windows(device, f"toolchain-{label}", work)
+        except Exception as e:
+            logger.exception("Preparing the toolchain run on %s failed", device)
+            return f"unexpected error: {e}"
+
+    def toolchain_result(self, device: str, label: str = "image") -> dict | str:
+        """
+        What the agent wrote after the toolchain run (see ToolchainResult in
+        the agent), or why it cannot be read. The job's files are removed
+        from the image.
+        """
+        result: dict = {}
+
+        def work(root: Path, hive: Path) -> str | None:
+            # What Windows did while installing, for when it went wrong.
+            log = _find(root, ("Windows", "INF", "setupapi.dev.log"))
+            if log is not None and log.is_file():
+                saved = self.run_dir / f"toolchain-{label}-setupapi.dev.log"
+                try:
+                    shutil.copyfile(log, saved)
+                    logger.info("Windows' device install log of the toolchain run saved in %s", saved)
+                except OSError as e:
+                    logger.warning("Could not save %s: %s", log, e)
+            folder = _toolchain_dir(root)
+            path = folder / TOOLCHAIN_RESULT if folder else None
+            if path is None or not path.is_file():
+                return "the VM left no result: Windows did not start the agent"
+            try:
+                data = json.loads(path.read_text(encoding="utf-8-sig"))
+            except (OSError, ValueError) as e:
+                return f"the result cannot be read: {e}"
+            if not isinstance(data, dict) or not isinstance(data.get("devices"), list):
+                return "the result is not what the agent writes"
+            result.update(data)
+            for name in (TOOLCHAIN_JOB, TOOLCHAIN_DONE, TOOLCHAIN_RESULT):
+                try:
+                    (folder / name).unlink(missing_ok=True)
+                except OSError as e:
+                    logger.warning("Could not remove %s from the image: %s", name, e)
+            return None
+
+        try:
+            problem = self._on_windows(device, f"toolchain-{label}", work)
+        except Exception as e:
+            logger.exception("Reading the toolchain result on %s failed", device)
+            return f"unexpected error: {e}"
+        return problem or result
+
+    def _on_windows(self, device: str, name: str, work: Callable[[Path, Path], str | None],
+                    readonly: bool = False) -> str | None:
         """Mount the disk's Windows partition and run `work(root, SYSTEM hive)` on it."""
         parts = self.ntfs_partitions(device)
         if not parts:
@@ -620,7 +911,7 @@ class WindowsSetup:
                 mount.mkdir(parents=True, exist_ok=True)
             except OSError as e:
                 return f"cannot create {mount}: {e}"
-            ok, _, err = self._run(["ntfs-3g", "-o", "rw,noatime", part, str(mount)])
+            ok, _, err = self._run(["ntfs-3g", "-o", "ro" if readonly else "rw,noatime", part, str(mount)])
             if not ok:
                 reasons.append(f"{part}: {err.strip() or 'mount failed'}")
                 continue
@@ -694,15 +985,55 @@ class WindowsSetup:
         problem = self._merge_reg(hive, "prepare", image_patch(control_set, fixed, letters, agent_ok,
                                                                prep.tuning, nics, order))
         tuning_problem = self._tune_software(root) if prep.tuning and problem is None else None
+        diskless_problem = self._diskless_boot(hive, control_set) if prep.tuning and problem is None else None
         defender_problem = self._defender_off(root, hive, control_set) \
             if prep.defender_off and problem is None else None
+        services_problem = self._services_off(root, hive, control_set) \
+            if prep.services_off and problem is None else None
         if problem is None:
-            logger.info("Image prepared (agent: %s, diskless tuning: %s, Defender off: %s, DHCP: %s, "
-                        "letters forgotten: %s)",
+            logger.info("Image prepared (agent: %s, diskless tuning: %s, Defender off: %s, "
+                        "background services off: %s, DHCP: %s, letters forgotten: %s)",
                         "yes" if agent_ok else "no", "yes" if prep.tuning and not tuning_problem else "no",
                         "yes" if prep.defender_off and not defender_problem else "no",
+                        "yes" if prep.services_off and not services_problem else "no",
                         ", ".join(fixed) or "-", ", ".join(letters) or "-")
-        return "; ".join(p for p in (problem, agent_problem, tuning_problem, defender_problem) if p) or None
+        return "; ".join(p for p in (problem, agent_problem, tuning_problem, diskless_problem, defender_problem,
+                                     services_problem) if p) or None
+
+    def _has_key(self, hive: Path, key: str) -> bool:
+        ok, out, _ = self._run(["hivexregedit", "--export", str(hive), key], quiet=True)
+        return ok and f"[{key}]".lower() in out.lower()
+
+    def _diskless_boot(self, hive: Path, control_set: int) -> str | None:
+        """Other diskless systems' drivers off and out of the way; network card drivers marked for a network boot."""
+        cs = f"\\ControlSet{control_set:03d}"
+        foreign = [name for name in FOREIGN_DISKLESS if self._has_key(hive, f"{cs}\\Services\\{name}")]
+        ok, classes, _ = self._run(["hivexregedit", "--export", str(hive), f"{cs}\\Control\\Class"], quiet=True)
+        enum = self.enum_pci(hive, control_set) or ""
+        lines = diskless_boot_lines(control_set, classes if ok else "", enum, foreign)
+        if not lines:
+            return None
+        problem = self._merge_reg(hive, "prepare-diskless", "\n".join(["Windows Registry Editor Version 5.00", *lines]) + "\n")
+        if problem:
+            return f"diskless boot: {problem}"
+        if foreign:
+            logger.info("Other diskless systems' drivers turned off in the image: %s", ", ".join(foreign))
+        return None
+
+    def _services_off(self, root: Path, hive: Path, control_set: int) -> str | None:
+        """Background services off and NTFS last-access times (SYSTEM), their policies (SOFTWARE)."""
+        ok, out, _ = self._run(["hivexregedit", "--export", str(hive),
+                                f"\\ControlSet{control_set:03d}\\Services"], quiet=True)
+        present = background_services(out, control_set) if ok else []
+        problem = self._merge_reg(hive, "prepare-services", services_off_lines(control_set, present))
+        if problem:
+            return f"background services: {problem}"
+        software = _find(root, SOFTWARE_HIVE)
+        if software is None:
+            return "background services: no SOFTWARE hive in the image"
+        problem = self._merge_reg(software, "prepare-services-policy", services_policy_patch())
+        logger.info("Background services turned off in the image: %s", ", ".join(present) or "none found")
+        return f"background services: {problem}" if problem else None
 
     def _defender_off(self, root: Path, hive: Path, control_set: int) -> str | None:
         """Defender's services and drivers disabled (SYSTEM), its policies off (SOFTWARE)."""
@@ -736,14 +1067,7 @@ class WindowsSetup:
         control_set = self.control_set(hive)
         fixed = self.static_interfaces(hive, control_set)
         letters = self.reserved_letters(hive)
-        nic_reg, nic_problem = None, None
-        if setup.boot_nic:
-            export = self.enum_pci(hive, control_set)
-            if export is None:
-                nic_problem = "cannot read the image's PCI devices"
-            else:
-                nic_reg, nic_problem = nic_patch(export, setup.boot_nic)
-        patch = registry_patch(setup, control_set, fixed, letters, nic_reg)
+        patch = registry_patch(setup, control_set, fixed, letters)
         problem = self._merge_reg(hive, name or setup.computer_name, patch)
         if problem:
             return problem
@@ -753,11 +1077,7 @@ class WindowsSetup:
                         ", ".join(fixed))
         if letters:
             logger.info("Drive letters forgotten on %s: %s", setup.computer_name, ", ".join(letters))
-        if nic_reg:
-            logger.info("Boot network card PCI\\%s added for %s", setup.boot_nic, setup.computer_name)
-        if nic_problem:
-            logger.warning("%s: %s", setup.computer_name, nic_problem)
-        return nic_problem
+        return None
 
 
 def agent_settings(server_url: str) -> dict:
@@ -787,6 +1107,20 @@ def _same_file(path: Path, source: Path, sha256: str) -> bool:
         return h.hexdigest() == sha256
     except OSError:
         return False
+
+
+def _toolchain_dir(root: Path, create: bool = False) -> Path | None:
+    """C:\\ProgramData\\ggNet\\toolchain in a mounted Windows (created when asked)."""
+    found = _find_dir(root, TOOLCHAIN_DIR)
+    if found is not None or not create:
+        return found
+    program_data = _find_dir(root, TOOLCHAIN_DIR[:1])
+    if program_data is None:
+        return None
+    ggnet = _find_dir(program_data, TOOLCHAIN_DIR[1:2]) or program_data / TOOLCHAIN_DIR[1]
+    folder = ggnet / TOOLCHAIN_DIR[2]
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
 
 
 def _find_dir(root: Path, parts: tuple[str, ...]) -> Path | None:

@@ -307,7 +307,7 @@ def create_machine(
 
     machine = Machine(name=body.name, mode=body.mode, mac=body.mac, drive_letter=body.drive_letter,
                       initiator_iqn=body.initiator_iqn or default_iqn(prov, body.name, body.mac),
-                      # Known when it waited on the iPXE screen: Add hardware works on its first boot.
+                      # Known when it waited on the iPXE screen: shown in the image's hardware check.
                       boot_nic=discovery.boot_nic_of(db, body.mac))
     db.add(machine)
     try:

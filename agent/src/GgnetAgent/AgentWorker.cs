@@ -18,7 +18,8 @@ public sealed class AgentWorker(
     IInventory? inventory = null,
     IPowerControl? power = null,
     ILocalDisks? localDisks = null,
-    IUefiVariables? uefi = null) : BackgroundService
+    IUefiVariables? uefi = null,
+    IIdleTasks? idleTasks = null) : BackgroundService
 {
     internal static readonly string Version =
         typeof(AgentWorker).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
@@ -46,6 +47,8 @@ public sealed class AgentWorker(
     private string? _portalIp;
     // Boot Mode: local disks are taken offline once per service start.
     private bool _disksHidden;
+    // Boot Mode: Windows' startup scans and clean-up tasks are turned off once per service start.
+    private bool _tasksOff;
     // Boot Mode: the Secure Boot key is checked (and asked for) once per service start.
     private string? _mok;
     private bool _mokChecked;
@@ -123,6 +126,7 @@ public sealed class AgentWorker(
             }
 
             await HideLocalDisksAsync(config, ct);
+            await DisableIdleTasksAsync(config, ct);
             EnrollSecureBootKey(config);
 
             var actions = Planner.Plan(config, new LocalState(initiator, ConnectedTarget, RequestedLetter),
@@ -140,6 +144,23 @@ public sealed class AgentWorker(
         catch (Exception e)
         {
             logger.LogError("{Error}", e.Message);
+        }
+    }
+
+    private async Task DisableIdleTasksAsync(AgentConfig? config, CancellationToken ct)
+    {
+        if (_tasksOff || idleTasks is null || !_options.DisableIdleTasks || config?.Mode != "boot") return;
+        try
+        {
+            var off = await idleTasks.DisableAsync(ct);
+            _tasksOff = true;
+            if (off.Count > 0)
+                logger.LogInformation("Boot Mode: scheduled tasks turned off: {Tasks}", string.Join(", ", off));
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            // Retried on the next heartbeat.
+            logger.LogWarning("Turning off scheduled tasks failed: {Error}", e.Message);
         }
     }
 

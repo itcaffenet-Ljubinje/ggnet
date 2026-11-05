@@ -61,8 +61,11 @@ Why these values:
 - `volblocksize` is fixed at creation and a clone inherits it from its origin. Changing it later means a new
   master and copying the data.
 
-`create_zvol()` currently creates game masters with `compression=off` and `sync=disabled`; this changes to the
-table above with the image-versioning work.
+The installer creates the `writebacks` dataset with `sync=disabled` and the ggNet root with `checksum=blake3`: a
+strong checksum lets ZFS skip a block rewritten with the same data (nop-write), so a writeback's registry hive,
+rewritten whole for the PC's name, costs only the changed blocks. Images written before keep their checksum
+until they are copied. (LIO's `emulate_write_cache` cannot be set on a block backstore: the zvol reports its
+own write cache, and setting it fails with EINVAL.)
 
 ### ARC
 
@@ -509,7 +512,7 @@ network throughput of the iSCSI interface.
 | Maintenance VM: the installer offers one Proxmox VM (UEFI, TPM, no disk, stopped; its ID in config.toml); Images → OS image → Edit in VM attaches the image, Finish makes a new version | planned |
 | Boot Mode: first diskless boot on real PCs (dev dnsmasq + `snponly.efi`, 4 PCs, 2 board types) | done |
 | Boot Mode: proxyDHCP / TFTP set up by the installer (`ggnet-pxe`, answers every PC); unregistered PCs wait for registration | done |
-| Boot Mode: import `.vhdx` into an OS image (new GUIDs, boot-start iSCSI, NDIS NIC driver), Add hardware, Secure Boot (shim + MOK) | planned |
+| Boot Mode: import `.vhdx` into an OS image (new GUIDs, boot-start iSCSI, NDIS NIC driver), Add new hardware wizard, Secure Boot (shim + MOK) | planned |
 | ZFS property defaults from section 1, Server monitor page | next |
 | Boot Mode: OS images, proxyDHCP, iPXE build, per-MAC script, Add Machines wizard | after Disk Mode |
 | Sign-in (users, roles, sessions, activity log) | done |

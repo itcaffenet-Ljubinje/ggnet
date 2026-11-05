@@ -66,7 +66,8 @@ def _mark_dirty(db_url) -> None:
 
 
 def _clones_made(host) -> list[str]:
-    return [c[-1] for c in host.calls if c[:2] == ["zfs", "clone"]]
+    """Clones made for PCs (not the image's temporary hardware-check clone)."""
+    return [c[-1] for c in host.calls if c[:2] == ["zfs", "clone"] and not c[-1].endswith("_ggnet_hw")]
 
 
 @pytest.fixture
@@ -472,6 +473,16 @@ class FakeWindows:
 
     prep_problem: str | None = None
 
+    def nic_support(self, device, nics):
+        self.checked = getattr(self, "checked", []) + [(device, list(nics))]
+        if getattr(self, "check_problem", None):
+            return self.check_problem
+        known = {"VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_15": "ready",
+                 "VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_16": "ready"}
+        # A reported instance the image does not have is added at boot.
+        # Installed under another board's instance only: that PC needs Add new hardware.
+        return {(n, i): "missing" if i == "6&95d5d6a&0&0000020A" else known.get(n, "missing") for n, i in nics}
+
     def prepare_image(self, device, prep, label="image"):
         # Whether the clone was already made a version when it was prepared.
         promoted = any(c[:2] == ["zfs", "promote"] for c in self.host.calls)
@@ -595,23 +606,17 @@ def test_a_waiting_pc_reports_its_nic_and_keeps_it_when_added(client, disks, win
         "name": "pc-99", "mode": "boot", "game_disk_id": disks[1]["id"], "os_disk_id": disks[0]["id"]})
     assert r.status_code == 201, r.text
     assert r.json()["boot_nic"] == NIC_ID
-    [(_, setup, _)] = windows.done
-    assert setup.boot_nic == NIC_ID         # Add hardware on its very first boot
 
 
-def test_a_new_nic_gets_a_fresh_os_writeback_before_boot(client, host, disks, auto, windows):
+def test_a_new_nic_is_recorded_and_never_written_into_the_writeback(client, host, disks, auto, windows):
     m = _boot_machine(client, disks)
     assert _get(client, m)["boot_nic"] is None
     windows.done.clear()
     host.calls.clear()
     assert "sanboot" in _ipxe_nic(client)
     assert _get(client, m)["boot_nic"] == NIC_ID
-    assert sorted(_clones_made(host)) == [GAME_CLONE, OS_CLONE]
-    assert [s.boot_nic for _, s, _ in windows.done] == [NIC_ID]
-    # The same NIC next time: nothing to redo on a clean writeback.
-    host.calls.clear()
-    assert "sanboot" in _ipxe_nic(client)
-    assert _clones_made(host) == []
+    assert _clones_made(host) == []                     # the card is the image's business, not the writeback's
+    assert windows.done == []
 
 
 def test_a_new_nic_never_touches_a_kept_writeback(client, host, disks, auto):
@@ -691,6 +696,58 @@ def test_a_failed_prepare_changes_nothing(client, host, disks, windows):
     assert "no Program Files folder" in r.text
     assert client.get(f"/api/v1/game-disks/{os_disk['id']}").json()["snapshot"] == "base"
     assert ["zfs", "destroy", "tank/ggnet/writebacks/win11_ggnet_prep"] in [c[:3] for c in host.calls]
+
+
+def test_hardware_check_tells_which_pcs_the_image_can_boot(client, host, disks, windows, db_url):
+    os_disk, game = disks
+    for name, nic, inst in (("komp-01", "VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_16", None),
+                            ("vip-01", "VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_15", "01000000684CE00000"),
+                            ("asus-01", "VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_15", "6&95d5d6a&0&0000020A"),
+                            ("new-pc", "VEN_8086&DEV_15B8&SUBSYS_86721043&REV_00", None),
+                            ("disk-pc", None, None)):
+        client.post("/api/v1/machines", json={"name": name, "game_disk_id": game["id"]})
+        if nic:
+            engine = make_engine(db_url)
+            with engine.begin() as conn:
+                conn.execute(text("UPDATE machines SET boot_nic = :n, nic_instance = :i WHERE name = :m"),
+                             {"n": nic, "i": inst, "m": name})
+            engine.dispose()
+    host.calls.clear()
+    r = client.get(f"/api/v1/game-disks/{os_disk['id']}/hardware")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["snapshot"] == "base" and body["problem"] is None
+    assert [(n["status"], n["instance"], n["machines"]) for n in body["nics"]] == [
+        ("ready", "01000000684CE00000", ["vip-01"]),
+        ("missing", "6&95d5d6a&0&0000020A", ["asus-01"]),    # same card, another board: Add new hardware
+        ("ready", None, ["komp-01"]),
+        ("missing", None, ["new-pc"]),
+        ("unknown", None, ["disk-pc"]),
+    ]
+    tmp = "tank/ggnet/writebacks/win11_ggnet_hw"
+    assert windows.checked == [(f"/dev/zvol/{tmp}", [
+        ("VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_15", "01000000684CE00000"),
+        ("VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_15", "6&95d5d6a&0&0000020A"),
+        ("VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_16", None),
+        ("VEN_8086&DEV_15B8&SUBSYS_86721043&REV_00", None)])]
+    assert tmp not in host.datasets                                   # the temporary clone is gone
+    client.get(f"/api/v1/game-disks/{os_disk['id']}/hardware")
+    assert len(windows.checked) == 1                                  # a version is checked once
+    assert client.get(f"/api/v1/game-disks/{game['id']}/hardware").status_code == 409
+
+
+def test_a_failed_hardware_check_is_reported_and_retried(client, host, disks, windows, db_url):
+    os_disk, game = disks
+    client.post("/api/v1/machines", json={"name": "komp-01", "game_disk_id": game["id"]})
+    engine = make_engine(db_url)
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE machines SET boot_nic = 'VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_16'"))
+    engine.dispose()
+    windows.check_problem = "no Windows partition found"
+    body = client.get(f"/api/v1/game-disks/{os_disk['id']}/hardware").json()
+    assert (body["problem"], body["nics"]) == ("no Windows partition found", [])
+    windows.check_problem = None
+    assert client.get(f"/api/v1/game-disks/{os_disk['id']}/hardware").json()["nics"][0]["status"] == "ready"
 
 
 # ── Spare writebacks ──────────────────────────────────────────────────

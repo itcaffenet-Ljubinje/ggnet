@@ -7,6 +7,13 @@ export interface Health {
   server_ip: string;
 }
 
+/** Prepare image's options beyond what every image gets. */
+export interface PrepareOptions {
+  defender_off: boolean;
+  /** Background services a cafe PC does not need off (faster startup). */
+  services_off: boolean;
+}
+
 export interface GameDisk {
   id: number;
   name: string;
@@ -22,9 +29,104 @@ export interface GameDisk {
   copy_source?: string | null;
   copy_percent?: number | null;
   copy_error?: string | null;
+  /** OS image: the network card models Add new hardware installed; none: it needs hardware. */
+  nic_models?: string[];
 }
 
+/** An OS image no PC can boot yet: Add new hardware has not added any network card. */
+export const needsHardware = (d: GameDisk) => d.kind === "os" && d.published && (d.nic_models ?? []).length === 0;
+
 export type DiskKind = "game" | "os";
+
+/** Whether a disk's copy_source is an image file being imported (a path), not a version being copied. */
+export const isImport = (source: string | null | undefined) => !!source && source.startsWith("/");
+
+/** An image file that can be imported (Images → Import). */
+export interface ImageFile {
+  path: string;
+  name: string;
+  size: number;
+  /** qemu-img's name: vpc (VHD), vhdx, qcow2, vmdk, raw */
+  format: string;
+}
+
+/** A file system on a USB disk plugged into the server. */
+export interface UsbPart {
+  name: string;
+  path: string;
+  size: number;
+  fstype: string;
+  label: string | null;
+  model: string | null;
+  /** Where ggNet opened it read-only, or null. */
+  mounted: string | null;
+}
+
+export interface HardwareCard {
+  /** PCI hardware ID: VEN_8086&DEV_15BC&SUBSYS_86721043&REV_10 */
+  nic: string;
+  /** Its instance ID on the PC: 3&11583659&0&FE */
+  instance: string;
+}
+
+/** An Add new hardware run: Windows installs the cards in a VM, then a new version. */
+export interface AddHardwareJob {
+  cards: HardwareCard[];
+  step: "starting" | "job" | "vm" | "result" | "prepare" | "apply" | "done";
+  running: boolean;
+  error: string | null;
+  snapshot: string | null;
+  devices: { instance_id: string; ok: boolean; driver?: string | null; error?: string | null }[];
+  started: number;
+  finished: number | null;
+}
+
+/** The Add new hardware wizard of an image (step by step, as the new PC boots). */
+export interface AddHardwareWizard {
+  step: "waiting" | "scanning" | "collected" | "adding" | "rebooting" | "done" | "failed";
+  active: boolean;
+  machine: string | null;
+  card: HardwareCard | null;
+  error: string | null;
+  started: number;
+  finished: number | null;
+}
+
+export interface AddHardwareStatus {
+  wizard: AddHardwareWizard | null;
+  job: AddHardwareJob | null;
+  /** PCs on screen waiting for Add new hardware for this image. */
+  waiting: string[];
+}
+
+export interface ImportSources {
+  /** The imports folder on the pool; null when its dataset is missing. */
+  folder: string | null;
+  files: ImageFile[];
+  usb: UsbPart[];
+}
+
+/** Upload a file into the imports folder, reporting the bytes sent. */
+export function uploadImage(file: File, onProgress: (sent: number, total: number) => void): Promise<ImageFile> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", `/api/v1/imports/upload/${encodeURIComponent(file.name)}`);
+    xhr.upload.onprogress = (e) => onProgress(e.loaded, e.lengthComputable ? e.total : file.size);
+    xhr.onload = () => {
+      let data: unknown = null;
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {
+        // Not JSON (a proxy error page).
+      }
+      if (xhr.status === 401) window.dispatchEvent(new Event(SIGNED_OUT));
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data as ImageFile);
+      else reject(new ApiError(xhr.status, errorMessage(xhr.status, data)));
+    };
+    xhr.onerror = () => reject(new ApiError(0, "The upload was interrupted"));
+    xhr.send(file);
+  });
+}
 
 /** Which kept writebacks Apply Writebacks turns into versions (Boot Mode has two). */
 export interface ApplyChoice {
@@ -462,6 +564,24 @@ export const api = {
       `/v1/game-disks/${id}/grow`,
       { size_gb, extend },
     ),
+  importSources: () => request<ImportSources>("GET", "/v1/imports"),
+  openUsb: (part: string) =>
+    request<{ part: string; folder: string; files: ImageFile[] }>("POST", `/v1/imports/usb/${part}/open`),
+  ejectUsb: (part: string) => request<void>("POST", `/v1/imports/usb/${part}/eject`),
+  deleteImportFile: (path: string) =>
+    request<void>("DELETE", `/v1/imports/file?path=${encodeURIComponent(path)}`),
+  startImport: (name: string, kind: DiskKind, path: string, options: { prepare: boolean } & PrepareOptions) =>
+    request<GameDisk>("POST", "/v1/imports", { name, kind, path, ...options }),
+  cancelImport: (id: number) => request<void>("POST", `/v1/imports/${id}/cancel`),
+  getAddHardware: (id: number) => request<AddHardwareStatus>("GET", `/v1/game-disks/${id}/add-hardware`),
+  openHardwareWizard: (id: number) =>
+    request<AddHardwareStatus>("POST", `/v1/game-disks/${id}/add-hardware/wizard`),
+  closeHardwareWizard: (id: number) =>
+    request<AddHardwareStatus>("DELETE", `/v1/game-disks/${id}/add-hardware/wizard`),
+  addHardware: (id: number, cards: HardwareCard[]) =>
+    request<AddHardwareJob>("POST", `/v1/game-disks/${id}/add-hardware`, { cards }),
+  cancelAddHardware: (id: number) =>
+    request<AddHardwareJob | null>("POST", `/v1/game-disks/${id}/add-hardware/cancel`),
   copyDisk: (id: number, name: string, snapshot?: string) =>
     request<GameDisk>("POST", `/v1/game-disks/${id}/copy`, snapshot ? { name, snapshot } : { name }),
   listSnapshots: (id: number) => request<Snapshot[]>("GET", `/v1/game-disks/${id}/snapshots`),
@@ -473,7 +593,7 @@ export const api = {
     request<Snapshot>("PUT", `/v1/game-disks/${id}/snapshots/${encodeURIComponent(name)}/comment`, { comment }),
   setSnapshotLock: (id: number, name: string, locked: boolean) =>
     request<Snapshot>("PUT", `/v1/game-disks/${id}/snapshots/${encodeURIComponent(name)}/lock`, { locked }),
-  prepareImage: (id: number, options?: { defender_off: boolean }) =>
+  prepareImage: (id: number, options?: PrepareOptions) =>
     request<GameDisk>("POST", `/v1/game-disks/${id}/prepare`, options),
   mergeIntoBase: (id: number, name: string) =>
     request<GameDisk>("POST", `/v1/game-disks/${id}/snapshots/${encodeURIComponent(name)}/merge-into-base`),

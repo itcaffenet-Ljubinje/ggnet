@@ -80,6 +80,121 @@ class GameDiskCreate(BaseModel):
     check_name = field_validator("name")(_disk_name)
 
 
+class ImageFileOut(BaseModel):
+    path: str
+    name: str
+    size: int
+    format: str           # qemu-img's name: vpc (VHD), vhdx, qcow2, vmdk, raw
+
+
+class UsbPartOut(BaseModel):
+    name: str             # the partition, e.g. sdj1
+    path: str
+    size: int
+    fstype: str
+    label: str | None
+    model: str | None
+    mounted: str | None   # where ggNet opened it (read-only), or None
+
+
+class ImportSources(BaseModel):
+    folder: str | None    # the imports folder, None when its dataset is missing
+    files: list[ImageFileOut]
+    usb: list[UsbPartOut]
+
+
+class UsbFolderOut(BaseModel):
+    part: str
+    folder: str
+    files: list[ImageFileOut]
+
+
+class ImportIn(BaseModel):
+    """A new disk from an image file in the imports folder or on an opened USB disk."""
+
+    name: str
+    kind: DiskKind = DiskKind.OS
+    path: str
+    prepare: bool = True          # an OS image: Prepare image right after the import
+    defender_off: bool = False    # ... with Microsoft Defender turned off
+    services_off: bool = False    # ... with background services a cafe PC does not need turned off
+
+    check_name = field_validator("name")(_disk_name)
+
+
+class NicSupportOut(BaseModel):
+    """Whether an OS image's active version can boot the PCs with one boot network card."""
+
+    nic: str | None              # PCI hardware ID (VEN_..&DEV_..&SUBSYS_..&REV_..); None: never booted over the network
+    instance: str | None = None  # the card's instance ID on these PCs, when their agent reported it
+    status: str                  # ready | added | missing | unknown
+    machines: list[str]
+
+
+class HardwareOut(BaseModel):
+    snapshot: str | None
+    problem: str | None          # why the image could not be checked
+    nics: list[NicSupportOut]
+
+
+class HardwareCard(BaseModel):
+    """A PC's boot network card for Add new hardware."""
+
+    nic: str                     # PCI hardware ID: VEN_8086&DEV_15BC&SUBSYS_86721043&REV_10
+    instance: str                # its instance ID on that PC: 3&11583659&0&FE
+
+    @field_validator("nic")
+    @classmethod
+    def _nic(cls, v: str) -> str:
+        from app.windows_setup import NIC_ID_RE
+
+        v = v.strip().upper().removeprefix("PCI\\")
+        if not NIC_ID_RE.match(v):
+            raise ValueError("must be a PCI hardware ID like VEN_8086&DEV_15BC&SUBSYS_86721043&REV_10")
+        return v
+
+    @field_validator("instance")
+    @classmethod
+    def _instance(cls, v: str) -> str:
+        from app.windows_setup import NIC_INSTANCE_RE
+
+        v = v.strip().upper()
+        if not NIC_INSTANCE_RE.match(v):
+            raise ValueError("must be the device instance ID, the part after the hardware ID (e.g. 3&11583659&0&FE)")
+        return v
+
+
+class AddHardwareIn(BaseModel):
+    cards: list[HardwareCard] = Field(min_length=1, max_length=8)
+
+
+class AddHardwareJobOut(BaseModel):
+    cards: list[HardwareCard]
+    step: str                    # starting | job | vm | result | prepare | apply | done
+    running: bool
+    error: str | None
+    snapshot: str | None         # the new version, when done
+    devices: list[dict[str, Any]]
+    started: float
+    finished: float | None
+
+
+class AddHardwareWizardOut(BaseModel):
+    step: str                    # waiting | scanning | collected | adding | rebooting | done | failed
+    active: bool
+    machine: str | None          # the PC the wizard works on
+    card: HardwareCard | None
+    error: str | None
+    started: float
+    finished: float | None
+
+
+class AddHardwareStatusOut(BaseModel):
+    wizard: AddHardwareWizardOut | None
+    job: AddHardwareJobOut | None
+    waiting: list[str]           # PCs on screen waiting for Add new hardware for this image
+
+
 class GameDiskCopy(BaseModel):
     """A new image from one version of this one (default: the active version)."""
 
@@ -93,6 +208,7 @@ class PrepareImage(BaseModel):
     """Options of Prepare image beyond what every image gets."""
 
     defender_off: bool = False     # Microsoft Defender's services and drivers disabled
+    services_off: bool = False     # background services a cafe PC does not need disabled (faster startup)
 
 
 class GameDiskGrow(BaseModel):
@@ -132,6 +248,8 @@ class GameDiskOut(BaseModel):
     copy_source: str | None = None    # being copied (or failed) from this master@version
     copy_percent: int | None = None
     copy_error: str | None = None
+    # OS image: the network card models Add new hardware installed; none: it needs hardware.
+    nic_models: list[str] = []
 
 
 class GameDiskEdit(BaseModel):
@@ -337,6 +455,7 @@ class MachineOut(BaseModel):
     link_speed_mbps: int | None
     hardware: MachineHardware | None = Field(validation_alias="hardware_info")
     boot_nic: str | None
+    nic_instance: str | None = None   # the boot card's instance ID on this PC (agent)
     mok_state: str | None
     status: MachineStatus
     last_error: str | None
@@ -423,6 +542,8 @@ class AgentInventory(BaseModel):
     memory_bytes: int | None = Field(None, ge=0)
     # Windows booted with UEFI Secure Boot on (null: not UEFI, or an older agent).
     secure_boot: bool | None = None
+    # The network card's Plug and Play ID: PCI\\<hardware ID>\\<instance ID>.
+    nic_pnp_id: str | None = Field(None, max_length=200)
 
     @field_validator("ip_address")
     @classmethod

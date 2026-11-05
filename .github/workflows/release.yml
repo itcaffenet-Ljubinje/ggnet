@@ -53,8 +53,11 @@ jobs:
         run: |
           dotnet publish agent/src/GgnetAgent -c Release -r win-x64 -o dist/agent \
             -p:Version="${GITHUB_REF_NAME#v}"
+          # The hardware scanner that new PCs run in Windows PE (app.services.scan).
+          dotnet publish agent/src/GgnetScan -c Release -r win-x64 -o dist/scan \
+            -p:Version="${GITHUB_REF_NAME#v}"
           mkdir -p dist/ggnet-agent
-          cp dist/agent/ggnet-agent.exe agent/scripts/*.ps1 agent/README.md dist/ggnet-agent/
+          cp dist/agent/ggnet-agent.exe dist/scan/ggnet-scan.exe agent/scripts/*.ps1 agent/README.md dist/ggnet-agent/
           # The web UI (Settings → Client app) shows this version.
           echo "${GITHUB_REF_NAME#v}" > dist/ggnet-agent/VERSION
           (cd dist && zip -r ../ggnet-agent-win-x64.zip ggnet-agent)

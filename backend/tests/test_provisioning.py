@@ -100,6 +100,15 @@ def test_reset_sends_few_targetcli_commands(host, prov, published):
     assert host.visible(IQN) == [DEV]
 
 
+def test_new_game_disks_get_64k_blocks_and_lz4(host, prov):
+    prov.create_disk("cs2", 10)
+    prov.create_disk("win11", 10, os_image=True)
+    creates = {c[-1]: c for c in host.calls if c[:2] == ["zfs", "create"]}
+    game, os_ = creates["tank/ggnet/images/cs2"], creates["tank/ggnet/images/win11"]
+    assert "volblocksize=64k" in game and "compression=lz4" in game and "sync=standard" in game
+    assert "volblocksize=16k" in os_ and "compression=lz4" in os_
+
+
 def test_reset_of_an_old_per_client_machine_still_cleans_up(host, prov, published):
     prov.provision("pc01", IQN, SNAP)
     host.calls.clear()

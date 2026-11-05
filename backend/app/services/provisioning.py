@@ -26,6 +26,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass
+from typing import Callable
 
 from app.disk_grow import GrowResult, PartitionGrower
 from app.iscsi_manager import SLOTS, Disk, ISCSIManager
@@ -70,7 +71,7 @@ def setup_tag(setup: OsSetup | None) -> str:
     """A short fingerprint of what personalize() writes, to tell a stale OS spare."""
     if setup is None:
         return "none"
-    data = json.dumps([setup.computer_name, sorted(setup.env.items()), setup.boot_nic])
+    data = json.dumps([setup.computer_name, sorted(setup.env.items())])
     return hashlib.sha256(data.encode()).hexdigest()[:16]
 
 
@@ -252,11 +253,12 @@ class Provisioner:
     def create_disk(self, name: str, size_gb: int, os_image: bool = False) -> str:
         """
         Empty zvol for a master (draft). Returns the ZFS path. An OS image
-        gets the properties for Windows' small random I/O (16k, lz4, sync);
-        see docs/architecture.md, "Properties".
+        gets 16k blocks for Windows' small random I/O, a game disk 64k for
+        large game files read in one go; both lz4 and sync=standard (a
+        master must survive a host crash). See docs/architecture.md, "Properties".
         """
         path = self.image_path(name)
-        props = dict(volblocksize="16k", compression="lz4", sync="standard") if os_image else {}
+        props = dict(volblocksize="16k" if os_image else "64k", compression="lz4", sync="standard")
         with self.lock:
             self._clear()
             if self.zfs.dataset_exists(path):
@@ -303,6 +305,67 @@ class Provisioner:
             if not self.zfs.destroy(tmp):
                 logger.error("Could not remove %s after a failed resize", tmp)
             raise err
+
+    def _on_version(self, master: str, snapshot: str, what: str, work: Callable[[str], object]):
+        """
+        `work(device)` on a temporary clone of one version of an image (a
+        snapshot has no device of its own), removed after. A string result
+        says why the clone could not be made.
+        """
+        tmp = f"{self.zfs.layout.writebacks}/{master.rsplit('/', 1)[-1]}_ggnet_hw"   # '_': never a PC
+        with self.lock:
+            self._clear()
+            if self.zfs.dataset_exists(tmp) and not self.zfs.destroy(tmp):
+                return f"{tmp} is left over from an earlier check and cannot be removed"
+            if not self.zfs.clone(f"{master}@{snapshot}", tmp):
+                return f"Cloning {master}@{snapshot} failed: {self.zfs.runner.last_error}"
+            try:
+                self.zfs.runner.run(["udevadm", "settle"])
+                return work(self.zfs.zvol_device_path(tmp))
+            finally:
+                if not self.zfs.destroy(tmp):
+                    logger.error("Could not remove %s after the %s", tmp, what)
+
+    def check_hardware(self, master: str, snapshot: str, nics: list[tuple[str, str | None]]
+                       ) -> dict[tuple[str, str | None], str] | str:
+        """WindowsSetup.nic_support() on one version of an OS image."""
+        if self.windows is None:
+            return "Windows setup is not available on this server"
+        windows = self.windows
+        return self._on_version(master, snapshot, "hardware check", lambda device: windows.nic_support(device, nics))
+
+    def import_disk(self, source: str, fmt: str, target: str, progress=None, cancel=None) -> bool:
+        """
+        Fill the new, empty master `target` from an image file and publish it
+        at @base. Without the lock while the data is written (it can take an
+        hour). The zvol is removed again when anything fails.
+        """
+        from app.services.imports import IMPORT_TIMEOUT, qemu_percent
+
+        def line(text: str) -> None:
+            percent = qemu_percent(text)
+            if progress and percent is not None:
+                progress(percent)
+
+        runner = self.zfs.runner
+        ok, _, err = runner.run_stream(
+            ["qemu-img", "convert", "-p", "-n", "--target-is-zero", "-f", fmt, "-O", "raw",
+             source, self.zfs.zvol_device_path(target)],
+            line, timeout=IMPORT_TIMEOUT, cancel=cancel,
+        )
+        if cancel is not None and cancel.is_set():
+            err = "Cancelled"
+        if ok:
+            try:
+                self.publish_disk(target)
+                return True
+            except ProvisioningError as e:
+                err = str(e)
+        logger.error("Importing %s into %s failed: %s", source, target, err)
+        if self.zfs.dataset_exists(target) and not self.zfs.destroy(target, recursive=True):
+            logger.error("Could not remove %s after a failed import", target)
+        runner.last_error = err
+        return False
 
     def copy_disk(self, snapshot: str, target: str, progress=None) -> bool:
         """
@@ -620,6 +683,69 @@ class Provisioner:
             if not self.zfs.destroy(tmp):
                 logger.error("Could not remove %s after a failed prepare", tmp)
             raise err
+
+    def add_hardware(self, master: str, nics: list[tuple[str, str]], prep: ImagePrep,
+                     boot: Callable[[str], str | None], step: Callable[[str], None] = lambda s: None,
+                     ) -> tuple[str, list[dict]]:
+        """
+        Add new hardware: a new version of an OS image with these network
+        cards (PCI hardware ID, instance ID) installed by Windows itself. Its
+        newest version is cloned, the agent and a job are written into the
+        clone, `boot(device)` runs the clone in the toolchain VM until the
+        agent has installed the cards and shut it down (None, or why it
+        failed), the clone is prepared again (the new card's driver marked
+        for a network boot) and made the next version. Returns the new
+        snapshot and the agent's per-device results. Nothing changes on
+        failure. The lock is not held while the VM runs.
+        """
+        if self.windows is None:
+            raise ProvisioningError("Windows setup is not available on this server")
+        label = master.rsplit("/", 1)[-1]
+        tmp = f"{self.zfs.layout.writebacks}/{label}_ggnet_hwadd"   # '_': never a PC
+        with self.lock:
+            self._clear()
+            snaps = self.zfs.list_snapshots(master)
+            if not snaps:
+                raise self._fail(f"Listing versions of {master} failed")
+            base = snaps[-1]
+            if self.zfs.dataset_exists(tmp) and not self.zfs.destroy(tmp):
+                raise self._fail(f"{tmp} is left over from an earlier run and cannot be removed")
+            if not self.zfs.clone(f"{master}@{base}", tmp):
+                raise self._fail(f"Cloning {master}@{base} failed")
+        device = self.zfs.zvol_device_path(tmp)
+        try:
+            step("job")
+            problem = self.windows.start_toolchain(device, nics, prep, label=label)
+            if problem:
+                raise ProvisioningError(f"Preparing the toolchain run failed: {problem}")
+            step("vm")
+            problem = boot(device)
+            if problem:
+                raise ProvisioningError(problem)
+            step("result")
+            result = self.windows.toolchain_result(device, label=label)
+            if isinstance(result, str):
+                raise ProvisioningError(result)
+            devices = [d for d in result.get("devices", []) if isinstance(d, dict)]
+            if not result.get("ok"):
+                failed = "; ".join(f"{d.get('instance_id')}: {d.get('error')}" for d in devices if not d.get("ok"))
+                raise ProvisioningError(f"Windows could not install the hardware: {failed or result.get('error')}")
+            step("prepare")
+            problem = self.windows.prepare_image(device, prep, label=f"hwadd-{label}")
+            if problem:
+                raise ProvisioningError(f"Preparing the new version failed: {problem}")
+            step("apply")
+            with self.lock:
+                self._clear()
+                snaps = self.zfs.list_snapshots(master) or [base]
+                new = next_version(snaps)
+                if not self.zfs.apply_clone(tmp, master, base, new):
+                    raise self._fail(f"Making {tmp} the next version of {master} failed")
+            return new, devices
+        except BaseException:
+            if self.zfs.dataset_exists(tmp) and not self.zfs.destroy(tmp):
+                logger.error("Could not remove %s after a failed Add new hardware", tmp)
+            raise
 
     def deprovision(
         self, machine_name: str, initiator_iqn: str, clone_zvol: str | None,

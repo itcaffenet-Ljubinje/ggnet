@@ -2,7 +2,7 @@
 What a Boot Mode PC's Windows is told about itself at every fresh OS
 writeback (app.windows_setup): its computer name, environment variables
 the agent and other software on the PC can read instead of being configured
-in the image, and its boot network card (Add hardware).
+in the image. Its network card is the image's (Add new hardware).
 
 image_prep(): what every OS image version gets once (app.windows_setup.prepare_image).
 """
@@ -39,9 +39,9 @@ def os_setup_for(m: Machine) -> OsSetup | None:
         "GGNET_SERVER": server_url(),
         "GGNET_MACHINE_ID": str(m.id),
         "GGNET_MACHINE_NAME": m.name,
-    }, boot_nic=m.boot_nic)
+    })
 
 
-def image_prep(defender_off: bool = False) -> ImagePrep:
+def image_prep(defender_off: bool = False, services_off: bool = False) -> ImagePrep:
     """What prepare_image makes part of an OS image: the server's agent, if any."""
-    return ImagePrep(agent=agent_install(), defender_off=defender_off)
+    return ImagePrep(agent=agent_install(), defender_off=defender_off, services_off=services_off)

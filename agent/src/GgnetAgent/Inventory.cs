@@ -4,8 +4,11 @@ namespace GgnetAgent;
 
 /// <summary>
 /// What the PC reports about itself: the network it reaches the server on
-/// (the IP and Link Speed columns), its hardware (the Hardware tab) and
-/// whether Windows booted with UEFI Secure Boot on (anti-cheats need it).
+/// (the IP and Link Speed columns), its hardware (the Hardware tab),
+/// whether Windows booted with UEFI Secure Boot on (anti-cheats need it) and
+/// the network card's Plug and Play ID (PCI\&lt;hardware ID&gt;\&lt;instance ID&gt;): the
+/// server writes the card under exactly this instance when it adds the PC's
+/// hardware to an OS image, since the instance depends on the board.
 /// </summary>
 public sealed record Inventory(
     string? IpAddress,
@@ -16,7 +19,8 @@ public sealed record Inventory(
     IReadOnlyList<string>? Gpus,
     string? Motherboard,
     long? MemoryBytes,
-    bool? SecureBoot = null);
+    bool? SecureBoot = null,
+    string? NicPnpId = null);
 
 public interface IInventory
 {
@@ -52,6 +56,7 @@ public sealed class WindowsInventory(IScriptRunner runner) : IInventory
                 motherboard = "$($board.Manufacturer) $($board.Product)"
                 memory_bytes = [int64](Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory
                 secure_boot = if ($sb -and $null -ne $sb.UEFISecureBootEnabled) { $sb.UEFISecureBootEnabled -eq 1 } else { $null }
+                nic_pnp_id = if ($nic) { [string]$nic.PnPDeviceID } else { $null }
             } | ConvertTo-Json -Compress
             """;
     }
@@ -80,6 +85,7 @@ public sealed class WindowsInventory(IScriptRunner runner) : IInventory
             IpAddress = Clean(raw.IpAddress),
             MacAddress = Clean(raw.MacAddress),
             Nic = Clean(raw.Nic),
+            NicPnpId = raw.NicPnpId?.Trim() is { Length: > 0 and <= 200 } id ? id : null,
             Cpu = Clean(raw.Cpu),
             Motherboard = Clean(raw.Motherboard),
             Gpus = (raw.Gpus ?? []).Select(Clean).OfType<string>().Take(8).ToList(),

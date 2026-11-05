@@ -168,6 +168,42 @@ def test_heartbeat_stores_the_inventory(client):
     assert client.get(f"/api/v1/machines/{m['id']}").json()["reported_ip"] == "192.168.0.21"
 
 
+REV16 = "VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_16"
+
+
+def _beat(client, pnp_id):
+    r = client.post("/api/v1/agent/heartbeat", json={
+        "name": "pc01", "agent_version": "0.1.14", "inventory": {**INVENTORY, "nic_pnp_id": pnp_id}})
+    assert r.status_code == 200, r.text
+
+
+def test_the_boot_cards_instance_is_kept_for_add_hardware(client, db_url):
+    from sqlalchemy import text
+
+    from app.db.session import make_engine
+
+    m = client.post("/api/v1/machines", json={"name": "pc01"}).json()
+    # A Disk Mode PC that never booted over the network: its card becomes the boot card.
+    _beat(client, f"PCI\\{REV16}\\01000000684CE00000")
+    got = client.get(f"/api/v1/machines/{m['id']}").json()
+    assert (got["boot_nic"], got["nic_instance"]) == (REV16, "01000000684CE00000")
+
+    # Another card (Wi-Fi, a second port) never replaces the boot card's instance.
+    _beat(client, "PCI\\VEN_8086&DEV_2725&SUBSYS_00248086&REV_1A\\4&2a5b9a1c&0&00E8")
+    _beat(client, "USB\\VID_0BDA&PID_8153\\000001")
+    _beat(client, f"PCI\\{REV16}\\bad instance")
+    got = client.get(f"/api/v1/machines/{m['id']}").json()
+    assert (got["boot_nic"], got["nic_instance"]) == (REV16, "01000000684CE00000")
+
+    # The same card on another board: a bus-location instance.
+    engine = make_engine(db_url)
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE machines SET nic_instance = NULL"))
+    engine.dispose()
+    _beat(client, f"PCI\\{REV16.lower()}\\6&95d5d6a&0&0000020A")
+    assert client.get(f"/api/v1/machines/{m['id']}").json()["nic_instance"] == "6&95d5d6a&0&0000020A"
+
+
 @pytest.mark.parametrize("bad", [
     {"ip_address": "not-an-ip"},
     {"mac_address": "zz"},
@@ -182,3 +218,13 @@ def test_a_bad_inventory_never_fails_the_heartbeat(client, bad):
     assert r.status_code == 200, r.text
     got = client.get(f"/api/v1/machines/{m['id']}").json()
     assert (got["reported_ip"], got["hardware"], got["last_seen_at"] is not None) == (None, None, True)
+
+
+def test_the_writeback_never_gets_the_card():
+    from app.db.models import Machine, MachineMode
+    from app.services.os_setup import os_setup_for
+
+    m = Machine(id=3, name="komp-01", mode=MachineMode.BOOT,
+                boot_nic="VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_16", nic_instance="01000000684CE00000")
+    assert os_setup_for(m).env["GGNET_MACHINE_NAME"] == "komp-01"
+    assert not hasattr(os_setup_for(m), "boot_nic")          # the card belongs in the image

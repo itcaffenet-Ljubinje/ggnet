@@ -19,7 +19,10 @@ Every 30 seconds (and at startup) the agent:
    or the disk Windows boots from), so games are not installed on a local disk that only this PC sees.
    The offline state lives in the booted Windows (the writeback), not on the disk, so the PC's local
    Windows still sees its disk. Turn off with `HideLocalDisks`.
-5. in Boot Mode, once per start, while the server asks for it (Settings → Network boot): checks that the
+5. in Boot Mode, once per start: turns off Windows' startup scans and clean-up tasks (compatibility appraiser,
+   telemetry, defragmentation, disk diagnostics, WinSAT…), in the booted Windows only. Their work is thrown away
+   with the writeback at every restart, so they only slow the start. Turn off with `DisableIdleTasks`.
+6. in Boot Mode, once per start, while the server asks for it (Settings → Network boot): checks that the
    PC trusts the ggNet Secure Boot key (shim's `MokListRT`), else asks shim to enroll it as
    `mokutil --import` does (`MokNew` + `MokAuth` UEFI variables). At the next boot MokManager asks to
    confirm Enroll MOK with the password from the UI. The state (enrolled / requested / failed) goes to

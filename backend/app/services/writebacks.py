@@ -191,10 +191,8 @@ def on_ipxe(db: Session, prov: Provisioner, m: Machine, settings: WritebackSetti
     window in which the watcher leaves the PC alone. False only when a
     discard failed.
 
-    `boot_nic` is the network card iPXE read. A card the server did not know
-    yet (a new PC added by hand, or a new board) needs Add hardware in the
-    OS writeback, which is only written into a fresh one: the writebacks are
-    discarded for it as well, unless the PC keeps them.
+    `boot_nic` is the network card iPXE read; it is kept for the image's
+    hardware check and Add new hardware (app.services.toolchain).
     """
     values: dict = {"ipxe_at": now or _now()}
     new_nic = bool(boot_nic) and boot_nic != m.boot_nic
@@ -206,9 +204,7 @@ def on_ipxe(db: Session, prov: Provisioner, m: Machine, settings: WritebackSetti
                .values(**values, updated_at=Machine.updated_at))
     db.commit()
     db.refresh(m)
-    if new_nic and m.keep_writeback:
-        logger.warning("%s keeps its writeback: the new network card is added at its next reset", m.name)
-    due = _needs_discard(m) or (new_nic and not m.keep_writeback)
+    due = _needs_discard(m)
     if not (settings.auto_discard and _managed(m) and due):
         return True
     if prov.session_active(m.initiator_iqn, m.iscsi_target_iqn) is not False:

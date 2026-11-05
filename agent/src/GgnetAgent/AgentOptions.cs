@@ -22,6 +22,9 @@ public sealed class AgentOptions
     /// <summary>Boot Mode: take the PC's own disks offline (see ILocalDisks).</summary>
     public bool HideLocalDisks { get; set; } = true;
 
+    /// <summary>Boot Mode: turn off Windows' startup scans and clean-up tasks (see IIdleTasks).</summary>
+    public bool DisableIdleTasks { get; set; } = true;
+
     /// <summary>Returns the problems with these settings; empty when they are valid.</summary>
     public IReadOnlyList<string> Validate()
     {

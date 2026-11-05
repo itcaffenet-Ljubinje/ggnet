@@ -186,6 +186,7 @@ def test_setup_dataset_tree_creates_missing(zfs, runner):
         "tank/ggnet/writebacks",
         "tank/ggnet/snapshots",
         "tank/ggnet/iscsi_targets",
+        "tank/ggnet/imports",             # default: <root_dataset>/imports
     ]
 
 
@@ -367,3 +368,27 @@ def test_pool_commands_use_configured_pool(zfs, runner):
     zfs.scrub_start()
     zfs.scrub_stop()
     assert [c[-1] for c in runner.calls] == ["tank", "tank", "tank"]
+
+
+def test_destroy_waits_for_a_zvol_ntfs3g_still_holds(zfs, runner):
+    answers = [(False, "", "cannot destroy 'tank/ggnet/writebacks/pc-os_spare': dataset is busy")] * 2
+    runner.on("zfs", "destroy", result=lambda cmd: answers.pop(0) if answers else (True, "", ""))
+    waits = []
+    zfs.sleep = waits.append
+    assert zfs.destroy("tank/ggnet/writebacks/pc-os_spare", recursive=True)
+    assert len(waits) == 2
+    assert ["udevadm", "settle", "--timeout=5"] in runner.calls
+
+
+def test_destroy_gives_up_on_a_zvol_that_stays_busy_and_never_retries_other_errors(zfs, runner):
+    from app.zfs_manager import BUSY_RETRIES
+
+    runner.on("zfs", "destroy", result=(False, "", "cannot destroy: dataset is busy"))
+    waits = []
+    zfs.sleep = waits.append
+    assert not zfs.destroy("tank/ggnet/writebacks/pc-os_spare")
+    assert len(waits) == BUSY_RETRIES
+    runner.on("zfs", "destroy", result=(False, "", "cannot destroy: has dependent clones"))
+    waits.clear()
+    assert not zfs.destroy("tank/ggnet/writebacks/pc-os_spare")
+    assert waits == []

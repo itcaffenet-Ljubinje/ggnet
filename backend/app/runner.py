@@ -65,6 +65,60 @@ class CommandRunner:
                 )
         return ok, result.stdout.strip(), result.stderr.strip()
 
+    def run_stream(
+        self,
+        cmd: list[str],
+        on_output: Callable[[str], None],
+        timeout: Optional[int] = None,
+        cancel: Optional[threading.Event] = None,
+    ) -> tuple[bool, str, str]:
+        """
+        Run a long command and hand each piece of its stdout to `on_output` as
+        it comes (split on newlines and carriage returns, as progress bars
+        like `qemu-img convert -p` print). Setting `cancel` stops it.
+        Returns (success, "", stderr).
+        """
+        timeout = timeout or self.timeout
+        str_cmd = [str(c) for c in cmd]
+        try:
+            proc = subprocess.Popen(str_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except FileNotFoundError as e:
+            self.last_error = str(e)
+            return False, "", str(e)
+        err_lines: list[bytes] = []
+        drain = threading.Thread(target=lambda: err_lines.extend(proc.stderr), daemon=True)
+        drain.start()
+        timer = threading.Timer(timeout, proc.kill)
+        timer.start()
+        if cancel is not None:
+            def watch() -> None:
+                while proc.poll() is None:
+                    if cancel.wait(0.5):
+                        proc.kill()
+                        return
+            threading.Thread(target=watch, daemon=True).start()
+        try:
+            buf = b""
+            while chunk := proc.stdout.read1(4096):
+                buf += chunk
+                *pieces, buf = re.split(rb"[\r\n]", buf)
+                for piece in pieces:
+                    if piece.strip():
+                        try:
+                            on_output(piece.decode(errors="replace").strip())
+                        except Exception:     # a progress callback never breaks the command
+                            logger.exception("Output callback failed")
+            proc.wait()
+        finally:
+            timer.cancel()
+        drain.join(timeout=10)
+        err = b"".join(err_lines).decode(errors="replace").strip()
+        if proc.returncode != 0:
+            self.last_error = err or ("timeout" if proc.returncode == -9 else f"exit code {proc.returncode}")
+            logger.error("Command failed [%s]: %s", " ".join(str_cmd), self.last_error)
+            return False, "", self.last_error
+        return True, "", err
+
     def run_pipe(
         self,
         producer: list[str],

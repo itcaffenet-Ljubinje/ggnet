@@ -1,18 +1,19 @@
 import { useState } from "react";
 import { Monitor, Wand2, X } from "lucide-react";
 
-import type { GameDisk } from "../api";
+import type { GameDisk, PrepareOptions } from "../api";
 
 interface Props {
   disk: GameDisk;
   busy: boolean;
   onClose: () => void;
-  onPrepare: (options: { defender_off: boolean }) => void;
+  onPrepare: (options: PrepareOptions) => void;
 }
 
 /** What Prepare image does to an OS image, and its options. */
 export function PrepareImage({ disk, busy, onClose, onPrepare }: Props) {
   const [defenderOff, setDefenderOff] = useState(false);
+  const [servicesOff, setServicesOff] = useState(true);
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
@@ -46,6 +47,16 @@ export function PrepareImage({ disk, busy, onClose, onPrepare }: Props) {
             <li>the iSCSI driver loaded after the network (about 25 s faster starts)</li>
           </ul>
           <label className="check">
+            <input type="checkbox" checked={servicesOff} onChange={(e) => setServicesOff(e.target.checked)} />
+            Turn off background services a cafe PC does not need (faster startup)
+          </label>
+          <p className="muted small">
+            Delivery Optimization, Update Medic, telemetry, error reporting, diagnostics, Optimize drives, maps,
+            location, sensors, BitLocker, scanners and the browsers&apos; updaters; no System Restore, no apps Windows
+            installs by itself, no NTFS last-access writes. What games, launchers, anti-cheat and Microsoft/Xbox
+            sign-in need stays on, and so does Windows Update for updating the image by hand.
+          </p>
+          <label className="check">
             <input type="checkbox" checked={defenderOff} onChange={(e) => setDefenderOff(e.target.checked)} />
             Turn off Microsoft Defender
           </label>
@@ -65,7 +76,7 @@ export function PrepareImage({ disk, busy, onClose, onPrepare }: Props) {
               type="button"
               className="btn-primary"
               disabled={busy}
-              onClick={() => onPrepare({ defender_off: defenderOff })}
+              onClick={() => onPrepare({ defender_off: defenderOff, services_off: servicesOff })}
             >
               <Wand2 size={14} />
               {busy ? "Preparing…" : "Prepare image"}

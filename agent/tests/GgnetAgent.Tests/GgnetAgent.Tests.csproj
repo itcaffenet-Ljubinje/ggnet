@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\GgnetAgent\GgnetAgent.csproj" />
+    <ProjectReference Include="..\..\src\GgnetScan\GgnetScan.csproj" />
   </ItemGroup>
 
   <ItemGroup>

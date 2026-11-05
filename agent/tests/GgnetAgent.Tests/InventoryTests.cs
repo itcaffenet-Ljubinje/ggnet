@@ -13,10 +13,12 @@ public class InventoryTests
             {"ip_address":"192.168.0.21","mac_address":"AA-BB-CC-DD-EE-01","link_speed_mbps":1000,
              "nic":"Intel(R) Ethernet I219-V","cpu":"  AMD Ryzen 5 5600X 6-Core Processor  ",
              "gpus":["NVIDIA GeForce RTX 3060",""],"motherboard":" ASUSTeK TUF GAMING B550-PLUS ",
-             "memory_bytes":17179869184,"secure_boot":true}
+             "memory_bytes":17179869184,"secure_boot":true,
+             "nic_pnp_id":"PCI\\VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_16\\01000000684CE00000 "}
             """;
         var inv = WindowsInventory.Parse(json)!;
         Assert.True(inv.SecureBoot);
+        Assert.Equal(@"PCI\VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_16\01000000684CE00000", inv.NicPnpId);
         Assert.Equal("192.168.0.21", inv.IpAddress);
         Assert.Equal(1000, inv.LinkSpeedMbps);
         Assert.Equal("AMD Ryzen 5 5600X 6-Core Processor", inv.Cpu);
@@ -59,7 +61,7 @@ public class InventoryTests
     {
         var script = WindowsInventory.Script("192.168.0.40");
         foreach (var name in new[] { "ip_address", "mac_address", "link_speed_mbps", "nic", "cpu", "gpus",
-                                     "motherboard", "memory_bytes" })
+                                     "motherboard", "memory_bytes", "nic_pnp_id" })
         {
             Assert.Contains($"{name} = ", script);
         }

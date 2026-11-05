@@ -49,6 +49,19 @@ from app.services.power import take_command
 from app.services.pxe import PxeService
 from app.services.provisioning import Provisioner
 from app.services.writebacks import WritebackSettings, on_heartbeat
+from app.windows_setup import NIC_ID_RE, NIC_INSTANCE_RE
+
+def split_pnp_id(pnp_id: str | None) -> tuple[str, str] | None:
+    """PCI\\<hardware ID>\\<instance ID> as (hardware ID, instance ID); None for anything else."""
+    if not pnp_id:
+        return None
+    bus, _, rest = pnp_id.partition("\\")
+    hwid, _, instance = rest.partition("\\")
+    hwid = hwid.upper()
+    if bus.upper() != "PCI" or not NIC_ID_RE.match(hwid) or not NIC_INSTANCE_RE.match(instance):
+        return None
+    return hwid, instance
+
 
 logger = logging.getLogger("ggnet.api.agent")
 
@@ -106,6 +119,14 @@ def heartbeat(
             "link_speed_mbps": inv.link_speed_mbps,
             "hardware": json.dumps(hw),
         }
+        card = split_pnp_id(inv.nic_pnp_id)
+        # The card's instance on this board, for Add new hardware: only for the
+        # card the PC boots from (iPXE's), or any card while iPXE has not
+        # reported one (a Disk Mode PC), which then becomes the boot card.
+        if card is not None and machine.boot_nic in (None, card[0]):
+            inventory["nic_instance"] = card[1]
+            if machine.boot_nic is None:
+                inventory["boot_nic"] = card[0]
 
     # A Core UPDATE that keeps updated_at: a heartbeat every few seconds is
     # not a change to the machine record.

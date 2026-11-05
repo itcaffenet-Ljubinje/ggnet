@@ -10,7 +10,7 @@ import pytest
 from app.windows_setup import (
     OsSetup,
     WindowsSetup,
-    nic_patch,
+    nic_known,
     registry_patch,
     reserved_letters,
     static_interfaces,
@@ -325,67 +325,48 @@ ENUM = (
 )
 
 
-def test_nic_patch_copies_the_known_revision():
-    reg, problem = nic_patch(ENUM, REV16)
-    assert problem is None
-    assert reg == (
-        f"[\\ControlSet002\\Enum\\PCI\\{REV16}]\n\n"
-        f"[\\ControlSet002\\Enum\\PCI\\{REV16}\\{INSTANCE}]\n"
-        f'"HardwareID"={_multi_sz("PCI\\" + REV16, "PCI\\VEN_10EC&DEV_8168&SUBSYS_E0001458")}\n'
-        f'"CompatibleIDs"={_multi_sz("PCI\\VEN_10EC&DEV_8168&REV_16", "PCI\\VEN_10EC&DEV_8168")}\n'
-        '"Service"="rt640x64"\n'
-        f'"Driver"={_sz("{4d36e972-e325-11ce-bfc1-08002be10318}\\0001")}\n\n'
-        f"[\\ControlSet002\\Enum\\PCI\\{REV16}\\{INSTANCE}\\Device Parameters]\n"
-        '"InterruptManagement"=dword:00000001'
-    )
+ASUS = "6&95d5d6a&0&0000020A"     # a bus-location instance ID: a board without the card's serial number
 
 
-def test_nic_patch_on_another_board_gets_its_subsystem():
-    reg, _ = nic_patch(ENUM, OTHER_BOARD)
-    assert f"[\\ControlSet002\\Enum\\PCI\\{OTHER_BOARD}\\{INSTANCE}]" in reg
-    assert _multi_sz("PCI\\" + OTHER_BOARD, "PCI\\VEN_10EC&DEV_8168&SUBSYS_86771043") in reg
-    assert "E0001458" not in reg and "e0001458" not in reg
+def test_nic_known_needs_the_card_installed_under_its_instance():
+    assert nic_known(ENUM, REV15)                                   # installed (instance not reported yet)
+    assert nic_known(ENUM, REV15, INSTANCE)                         # exactly this one
+    assert not nic_known(ENUM, REV15, ASUS)                         # the same chip on another board
+    assert not nic_known(ENUM, REV16)                               # another revision: Add new hardware
+    assert not nic_known(ENUM, "VEN_10EC&DEV_8168&SUBSYS_00000000&REV_01")   # seen, never installed
+    for bad in (("VEN_10EC&DEV_8168", None), (REV16, "bad instance\\x")):
+        with pytest.raises(ValueError):
+            nic_known(ENUM, *bad)
 
 
-def test_nic_patch_leaves_a_known_nic_and_reports_an_unknown_chip():
-    assert nic_patch(ENUM, REV15) == (None, None)
-    reg, problem = nic_patch(ENUM, "VEN_8086&DEV_15F3&SUBSYS_00008086&REV_03")
-    assert reg is None and "no driver for the boot network card PCI\\VEN_8086&DEV_15F3" in problem
-    with pytest.raises(ValueError):
-        nic_patch(ENUM, "VEN_10EC&DEV_8168")
-
-
-def test_personalize_adds_the_boot_nic(windows, runner):
-    _windows_on(windows, "pc-05")
+def test_nic_support_reads_the_image_read_only(windows, runner):
+    _windows_on(windows, "hardware-check")
     select = runner.responses[("hivexregedit", "--export")]
-    merged = {}
+    runner.responses[("hivexregedit", "--export")] = lambda cmd: (
+        (True, ENUM, "") if cmd[-1].endswith("\\Enum\\PCI") else select)
+    intel = "VEN_8086&DEV_15B8&SUBSYS_86721043&REV_00"
+    cards = [(REV15, None), (REV15, INSTANCE), (REV15, ASUS), (REV16, None), (intel, None)]
+    assert windows.nic_support(DEVICE, cards) == {
+        (REV15, None): "ready", (REV15, INSTANCE): "ready",
+        (REV15, ASUS): "missing", (REV16, None): "missing", (intel, None): "missing"}
+    mounts = [c for c in runner.calls if c[0] == "ntfs-3g"]
+    assert mounts and all(c[2] == "ro" for c in mounts)
+    assert not any(c[:2] == ["hivexregedit", "--merge"] for c in runner.calls)
+    assert windows.nic_support(DEVICE, [("not an id", None)]).startswith("Invalid network card")
 
-    def export(cmd):
-        return (True, ENUM, "") if cmd[-1].endswith("\\Enum\\PCI") else select
+
+def test_personalize_never_writes_a_network_card(windows, runner):
+    _windows_on(windows, "pc-05")
+    merged = {}
 
     def merge(cmd):
         merged["reg"] = Path(cmd[3]).read_text(encoding="utf-8")
         return True, "", ""
-    runner.responses[("hivexregedit", "--export")] = export
     runner.responses[("hivexregedit", "--merge")] = merge
-    setup = OsSetup("pc-05", {}, boot_nic=REV16)
+    setup = OsSetup("pc-05", {})
     assert windows.personalize(DEVICE, setup) is None
-    assert merged["reg"] == registry_patch(setup, 2, extra=nic_patch(ENUM, REV16)[0])
-    assert f"[\\ControlSet002\\Enum\\PCI\\{REV16}]" in merged["reg"]
-
-
-def test_personalize_reports_a_nic_without_driver_but_sets_the_rest(windows, runner):
-    _windows_on(windows, "pc-05")
-    runner.responses[("hivexregedit", "--merge")] = (True, "", "")
-    setup = OsSetup("pc-05", {}, boot_nic="VEN_8086&DEV_15F3&SUBSYS_00008086&REV_03")
-    problem = windows.personalize(DEVICE, setup)
-    assert "PCI\\VEN_8086&DEV_15F3" in problem
-    assert any(c[:2] == ["hivexregedit", "--merge"] for c in runner.calls)
-
-
-def test_personalize_refuses_a_bad_nic_id(windows, runner):
-    assert "Invalid PCI hardware ID" in windows.personalize(DEVICE, OsSetup("pc-05", {}, boot_nic="x"))
-    assert runner.calls == []
+    assert merged["reg"] == registry_patch(setup, 2)
+    assert "\\Enum\\PCI" not in merged["reg"]
 
 
 # ── Prepared once per OS version: agent, Fast Startup, DHCP, letters ─
@@ -723,3 +704,215 @@ def test_a_spare_is_set_up_under_its_own_label(windows, runner):
     assert ["ntfs-3g", "-o", "rw,noatime", "/dev/zd16p3", mount] in runner.calls
     assert any(c[:2] == ["hivexregedit", "--merge"] and c[3].endswith("vip-05-spare.reg") for c in runner.calls)
     assert '"ComputerName"="VIP-05"' in merged["reg"]
+
+
+# ── Other diskless systems ────────────────────────────────────────────
+
+def _msz(*items: str) -> str:
+    data = ("\0".join(items) + "\0\0").encode("utf-16-le")
+    return "hex(7):" + ",".join(f"{b:02x}" for b in data)
+
+
+def _sz(text: str) -> str:
+    return "hex(1):" + ",".join(f"{b:02x}" for b in (text + "\0").encode("utf-16-le"))
+
+
+CLASS_EXPORT = "\r\n".join([
+    "Windows Registry Editor Version 5.00", "",
+    "[\\ControlSet001\\Control\\Class\\{71a27cdd-812a-11d0-bec7-08002be2092f}]",
+    f'"UpperFilters"={_msz("CCacheX", "volsnap")}',
+    f'"LowerFilters"={_msz("fvevol", "iorate", "rdyboost")}', "",
+    "[\\ControlSet001\\Control\\Class\\{4d36e972-e325-11ce-bfc1-08002be10318}]",
+    f'"UpperFilters"={_msz("CCBootPNPX")}', "",
+    "[\\ControlSet001\\Control\\Class\\{4d36e972-e325-11ce-bfc1-08002be10318}\\0001]",
+    f'"UpperFilters"={_msz("CCBootPNPX")}',            # a device's own key: not a class filter list
+    "",
+])
+
+ENUM_EXPORT = "\r\n".join([
+    "Windows Registry Editor Version 5.00", "",
+    f"[\\ControlSet001\\Enum\\PCI\\{REV15}\\01000000684CE00000]",
+    f'"ClassGUID"={_sz("{4d36e972-e325-11ce-bfc1-08002be10318}")}',
+    f'"Service"={_sz("rt640x64")}', "",
+    "[\\ControlSet001\\Enum\\PCI\\VEN_8086&DEV_A394\\3&11583659&0&E0]",
+    f'"ClassGUID"={_sz("{4d36e97d-e325-11ce-bfc1-08002be10318}")}',
+    f'"Service"={_sz("pci")}', "",
+])
+
+
+def test_foreign_drivers_leave_the_filter_lists_and_cards_are_marked_for_a_network_boot():
+    from app.windows_setup import diskless_boot_lines, nic_services
+
+    assert nic_services(ENUM_EXPORT) == ["rt640x64"]
+    reg = "\n".join(diskless_boot_lines(1, CLASS_EXPORT, ENUM_EXPORT, ["CCacheX", "CCBootPNPX"]))
+    volume = "[\\ControlSet001\\Control\\Class\\{71a27cdd-812a-11d0-bec7-08002be2092f}]"
+    net = "[\\ControlSet001\\Control\\Class\\{4d36e972-e325-11ce-bfc1-08002be10318}]"
+    assert f'{volume}\n"UpperFilters"={_msz("volsnap")}' in reg            # CCacheX gone, volsnap kept
+    assert "LowerFilters" not in reg                                         # untouched list not rewritten
+    assert f'{net}\n"UpperFilters"=-' in reg                                  # emptied list deleted
+    assert "\\0001]" not in reg
+    assert '[\\ControlSet001\\Services\\CCacheX]\n"Start"=dword:00000004' in reg
+    assert '[\\ControlSet001\\Services\\rt640x64]\n"BootFlags"=dword:00000001' in reg
+
+
+def test_a_clean_image_gets_only_the_network_boot_flags():
+    from app.windows_setup import diskless_boot_lines
+
+    reg = "\n".join(diskless_boot_lines(1, CLASS_EXPORT.replace("CCacheX", "Other"), ENUM_EXPORT, []))
+    assert "Class" not in reg and "Start" not in reg and "BootFlags" in reg
+
+
+def test_prepare_image_turns_other_diskless_drivers_off(windows, runner, tmp_path):
+    root = _image(windows)
+    (root / "Program Files").mkdir()
+    select = runner.responses[("hivexregedit", "--export")]
+
+    def export(cmd):
+        key = cmd[-1]
+        if key.endswith("\\Control\\Class"):
+            return True, CLASS_EXPORT.replace("ControlSet001", "ControlSet002"), ""
+        if key.endswith("\\Enum\\PCI"):
+            return True, ENUM_EXPORT.replace("ControlSet001", "ControlSet002"), ""
+        if key.endswith(("\\Services\\CCacheX", "\\Services\\CCBootPNPX", "\\Services\\CCBootClient")):
+            return True, f"Windows Registry Editor Version 5.00\r\n\r\n[{key}]\r\n", ""
+        if "\\Services\\CC" in key:
+            return False, "", "not found"
+        return select
+    runner.responses[("hivexregedit", "--export")] = export
+    merges = []
+
+    def merge(cmd):
+        merges.append(Path(cmd[3]).read_text(encoding="utf-8"))
+        return True, "", ""
+    runner.responses[("hivexregedit", "--merge")] = merge
+    assert windows.prepare_image(DEVICE, _prep(tmp_path), label="win11") is None
+    diskless = next(m for m in merges if "CCacheX" in m)
+    assert '[\\ControlSet002\\Services\\CCBootClient]\n"Start"=dword:00000004' in diskless
+    assert "CCopyFile" not in diskless                                       # not in this image
+    assert '[\\ControlSet002\\Services\\rt640x64]\n"BootFlags"=dword:00000001' in diskless
+
+
+# ── Add new hardware: the toolchain job ──────────────────────────────
+
+I219 = "VEN_8086&DEV_15BC&SUBSYS_86721043&REV_10"
+
+
+def test_pci_ids_as_windows_reads_them_from_a_network_card():
+    from app.windows_setup import pci_ids
+
+    hardware, compatible = pci_ids(I219)
+    assert hardware[0] == "PCI\\VEN_8086&DEV_15BC&SUBSYS_86721043&REV_10"
+    assert "PCI\\VEN_8086&DEV_15BC&CC_020000" in hardware
+    assert compatible[:2] == ["PCI\\VEN_8086&DEV_15BC&REV_10", "PCI\\VEN_8086&DEV_15BC"]
+    with pytest.raises(ValueError):
+        pci_ids("VEN_8086&DEV_15BC")
+
+
+def test_toolchain_job_names_the_card_under_its_instance():
+    from app.windows_setup import NET_CLASS, toolchain_job
+
+    job = toolchain_job([(I219, "3&11583659&0&FE")])
+    device = job["devices"][0]
+    assert device["instance_id"] == f"PCI\\{I219}\\3&11583659&0&FE"
+    assert device["class_guid"] == NET_CLASS
+    for bad in ([(I219, "")], [(I219, "a\\b")], []):
+        with pytest.raises(ValueError):
+            toolchain_job(bad)
+
+
+def _toolchain_image(windows) -> Path:
+    root = _windows_on(windows, "toolchain-win11").parents[3]
+    (root / "Program Files").mkdir()
+    (root / "ProgramData").mkdir()
+    return root
+
+
+def test_start_toolchain_puts_the_agent_and_the_job_in(windows, runner, tmp_path):
+    root = _toolchain_image(windows)
+    folder = root / "ProgramData" / "ggNet" / "toolchain"
+    folder.mkdir(parents=True)
+    (folder / "result.json").write_text("{}")             # from an earlier run
+    merged = _merged(runner)
+
+    assert windows.start_toolchain(DEVICE, [(I219, "3&11583659&0&FE")], _prep(tmp_path), label="win11") is None
+
+    assert (root / "Program Files" / "ggnet-agent" / "ggnet-agent.exe").read_bytes() == b"MZ agent 0.1.13"
+    job = json.loads((folder / "job.json").read_text())
+    assert job["devices"][0]["instance_id"] == f"PCI\\{I219}\\3&11583659&0&FE"
+    assert not (folder / "result.json").exists()
+    assert "[\\ControlSet002\\Services\\ggnet-agent]" in merged["reg"]
+    assert "[\\ControlSet002\\Services\\storahci]" in merged["reg"]
+    assert "[-\\ControlSet002\\Services\\storahci\\StartOverride]" in merged["reg"]
+    assert ["ntfs-3g", "-o", "rw,noatime", "/dev/zd16p3", str(windows.run_dir / "toolchain-win11")] in runner.calls
+
+
+def test_start_toolchain_needs_the_agent_and_a_valid_card(windows, runner, tmp_path):
+    from app.windows_setup import ImagePrep
+
+    assert "agent" in windows.start_toolchain(DEVICE, [(I219, "3&1&0&FE")], ImagePrep(agent=None))
+    assert "instance" in windows.start_toolchain(DEVICE, [(I219, "")], _prep(tmp_path))
+    assert not any(c[0] == "ntfs-3g" for c in runner.calls)
+
+
+def test_toolchain_result_is_read_and_the_job_removed(windows, runner):
+    folder = _toolchain_image(windows) / "ProgramData" / "ggNet" / "toolchain"
+    folder.mkdir(parents=True)
+    (folder / "job.done").write_text("{}")
+    result = {"ok": True, "devices": [{"instance_id": f"PCI\\{I219}\\3&1&0&FE", "ok": True, "driver": "Intel I219-V"}]}
+    (folder / "result.json").write_text("﻿" + json.dumps(result), encoding="utf-8")
+
+    assert windows.toolchain_result(DEVICE, label="win11") == result
+    assert not any(folder.iterdir())
+
+
+def test_toolchain_result_without_a_result(windows, runner):
+    _toolchain_image(windows)
+    assert "no result" in windows.toolchain_result(DEVICE, label="win11")
+
+
+def test_a_card_whose_install_failed_is_not_ready():
+    # Windows left the entry without a driver (ConfigFlags 0x20, reinstall): it cannot start the card.
+    failed = ENUM + (
+        "\n[\\ControlSet001\\Enum\\PCI\\VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_16]\n"
+        "\n[\\ControlSet001\\Enum\\PCI\\VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_16\\01000000684CE00000]\n"
+        '"ConfigFlags"=dword:00000020\n')
+    assert not nic_known(failed, REV16, INSTANCE)
+    assert not nic_known(failed, REV16)
+
+
+# ── Background services off (faster startup) ─────────────────────────
+
+def test_background_services_finds_the_listed_services_and_browser_updaters():
+    from app.windows_setup import background_services
+
+    export = "\n".join(f"[\\ControlSet002\\Services\\{n}]\n\"Start\"=dword:00000002\n" for n in (
+        "DoSvc", "WaaSMedicSvc", "DiagTrack", "TokenBroker", "SENS", "XblAuthManager", "wuauserv",
+        "GoogleUpdaterService149.0.7814.0", "edgeupdatem", "Tcpip"))
+    export += "[\\ControlSet002\\Services\\DoSvc\\Parameters]\n"
+    found = background_services(export, 2)
+    assert found == ["DoSvc", "WaaSMedicSvc", "DiagTrack", "GoogleUpdaterService149.0.7814.0", "edgeupdatem"]
+    # What games, Store and Microsoft/Xbox sign-in need, and Windows Update itself, stay.
+    assert not {"TokenBroker", "SENS", "XblAuthManager", "wuauserv"} & set(found)
+
+
+def test_prepare_image_turns_background_services_off_only_when_asked(windows, runner, tmp_path):
+    from app.windows_setup import ImagePrep, services_off_lines, services_policy_patch
+
+    (_image(windows) / "Program Files").mkdir()
+    select = runner.responses[("hivexregedit", "--export")]
+    services = "[\\ControlSet002\\Services\\DoSvc]\n\"Start\"=dword:00000003\n"
+    runner.responses[("hivexregedit", "--export")] = lambda cmd: (
+        (True, services, "") if cmd[-1] == "\\ControlSet002\\Services" else select)
+    merges = []
+
+    def merge(cmd):
+        merges.append((Path(cmd[2]).name.upper(), Path(cmd[3]).read_text(encoding="utf-8")))
+        return True, "", ""
+    runner.responses[("hivexregedit", "--merge")] = merge
+    assert windows.prepare_image(DEVICE, ImagePrep(agent=_agent(tmp_path), services_off=True), label="win11") is None
+    assert ("SYSTEM", services_off_lines(2, ["DoSvc"])) in merges
+    assert ("SOFTWARE", services_policy_patch()) in merges
+    assert '"NtfsDisableLastAccessUpdate"=dword:80000001' in services_off_lines(2, [])
+    merges.clear()
+    assert windows.prepare_image(DEVICE, _prep(tmp_path), label="win11") is None
+    assert not any("DoSvc" in text for _, text in merges)

@@ -96,9 +96,9 @@ def recover(make_session: sessionmaker[Session], prov: Provisioner) -> None:
     with make_session() as db:
         for disk in db.scalars(select(GameDisk).where(GameDisk.copy_source.is_not(None),
                                                       GameDisk.copy_error.is_(None))):
-            disk.copy_error = "Interrupted: ggNet stopped during the copy. Remove this disk and copy again."
+            disk.copy_error = "Interrupted: ggNet stopped while it ran. Remove this disk and start again."
             disk.copy_percent = None
             if prov.zfs.dataset_exists(disk.zvol_path) and not prov.zfs.destroy(disk.zvol_path, recursive=True):
                 logger.error("Could not remove the partial copy %s", disk.zvol_path)
-            logger.warning("Copy to %s was interrupted", disk.zvol_path)
+            logger.warning("Copy or import into %s was interrupted", disk.zvol_path)
         db.commit()

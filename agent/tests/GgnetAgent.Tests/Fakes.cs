@@ -128,3 +128,16 @@ internal sealed class FakePower : IPowerControl
         return Task.CompletedTask;
     }
 }
+
+internal sealed class FakeIdleTasks : IIdleTasks
+{
+    public int Calls { get; private set; }
+    public Exception? Fail { get; set; }
+
+    public Task<IReadOnlyList<string>> DisableAsync(CancellationToken ct)
+    {
+        Calls++;
+        if (Fail is not null) throw Fail;
+        return Task.FromResult<IReadOnlyList<string>>([@"Application Experience\Microsoft Compatibility Appraiser"]);
+    }
+}

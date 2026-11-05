@@ -2559,3 +2559,176 @@ tr.row-warn td {
   color: #fbbf24;
   vertical-align: -2px;
 }
+
+/* ==========================================================================
+   Import image dialog
+   ========================================================================== */
+.file-list {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.file-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.file-list li:last-child {
+  border-bottom: 0;
+}
+
+.file-list li.chosen {
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.file-list .check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.usb-part {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.usb-part-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.usb-part-head .muted {
+  flex: 1;
+  min-width: 0;
+}
+
+.nic-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.nic-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.nic-list li:last-child {
+  border-bottom: 0;
+}
+
+/* Add new hardware (HardwarePanel) */
+.card-title-action {
+  margin-left: auto;
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.hw-add,
+.hw-job {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.hw-add-head,
+.hw-add-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.hw-add-actions {
+  justify-content: flex-end;
+}
+
+.hw-add label.small {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hw-job button {
+  align-self: flex-start;
+}
+
+/* Add new hardware wizard */
+.wizard-steps {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wizard-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+}
+
+.wizard-step.current {
+  color: inherit;
+  font-weight: 600;
+}
+
+.wizard-step.done {
+  color: inherit;
+}
+
+.wizard-mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  flex: none;
+}
+
+.wizard-step.done .wizard-mark {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: rgba(34, 197, 94, 0.5);
+}
+
+.wizard-step.current .wizard-mark {
+  border-color: var(--accent);
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
