@@ -39,14 +39,16 @@ def test_boot_settings_default_to_config_toml(client):
     r = client.get("/api/v1/settings/boot")
     assert r.status_code == 200
     assert r.json() == {"gateway": "none", "unregistered": "wait", "mok_enroll": False,
-                        "mok_password": "ggnet", "saved": False}
+                        "mok_password": "ggnet", "new_pc_name": "pc-{nn}", "new_pc_game_disk_id": None,
+                        "saved": False}
 
 
 def test_boot_settings_are_saved(client):
     r = client.put("/api/v1/settings/boot", json={"gateway": " 192.168.0.1 ", "unregistered": "local"})
     assert r.status_code == 200, r.text
     assert r.json() == {"gateway": "192.168.0.1", "unregistered": "local", "mok_enroll": False,
-                        "mok_password": "ggnet", "saved": True}
+                        "mok_password": "ggnet", "new_pc_name": "pc-{nn}", "new_pc_game_disk_id": None,
+                        "saved": True}
     assert client.get("/api/v1/settings/boot").json()["saved"] is True
 
 
@@ -72,7 +74,8 @@ def test_effective_config_keeps_config_toml_until_saved(client, db_url):
         client.put("/api/v1/settings/boot", json={"gateway": "none", "unregistered": "local"})
         merged = effective_config(db, cfg)
         assert merged["boot"] == {"gateway": "none", "unregistered": "local", "pxe_service": "x",
-                                  "mok_enroll": False, "mok_password": "ggnet"}
+                                  "mok_enroll": False, "mok_password": "ggnet",
+                                  "new_pc_name": "pc-{nn}", "new_pc_game_disk_id": None}
     engine.dispose()
 
 

@@ -245,3 +245,46 @@ def test_card_name_falls_back_to_the_driver_then_the_id():
     devices = [{"instance_id": f"PCI\\{I219}\\{INSTANCE}", "driver": "Intel driver"}]
     assert card_name(devices, I219, INSTANCE) == "Intel driver"
     assert card_name([], I219, INSTANCE) == I219
+
+
+# ── New PC template ───────────────────────────────────────────────────
+
+NEW_MAC = "aa:bb:cc:00:00:42"
+
+
+def _new_pc_ipxe(client) -> str:
+    r = client.get("/api/v1/boot/ipxe", params={"mac": NEW_MAC, **I219_QUERY})
+    assert r.status_code == 200, r.text
+    return r.text
+
+
+def test_an_unknown_pc_is_registered_from_the_template_while_the_wizard_waits(client, pc):
+    game = client.get(f"/api/v1/machines/{pc['id']}").json()["game_disk_id"]
+    r = client.put("/api/v1/settings/boot", json={"new_pc_name": "komp-{nn}", "new_pc_game_disk_id": game})
+    assert r.status_code == 200, r.text
+    assert "not registered" in _new_pc_ipxe(client)                 # no wizard: it waits in New PCs
+    client.post(f"/api/v1/game-disks/{pc['os_disk_id']}/add-hardware/wizard")
+    script = _new_pc_ipxe(client)
+    assert "wimboot" in script                                       # registered and taken by the wizard
+    [new] = [m for m in client.get("/api/v1/machines").json() if m["mac"] == NEW_MAC]
+    assert (new["name"], new["mode"], new["os_disk_id"], new["game_disk_id"]) == (
+        "komp-01", "boot", pc["os_disk_id"], game)
+    assert _wizard(client, pc)["wizard"]["machine"] == "komp-01"
+
+
+def test_without_a_template_game_disk_an_unknown_pc_waits_in_new_pcs(client, pc):
+    client.post(f"/api/v1/game-disks/{pc['os_disk_id']}/add-hardware/wizard")
+    assert "not registered" in _new_pc_ipxe(client)
+    assert not any(m["mac"] == NEW_MAC for m in client.get("/api/v1/machines").json())
+
+
+def test_new_pc_names_take_the_first_free_number():
+    from app.services.pxe import new_pc_name
+
+    assert new_pc_name("komp-{nn}", {"komp-01", "komp-02"}) == "komp-03"
+    assert new_pc_name("PC{n}", set()) == "pc1"
+
+
+def test_the_template_name_needs_a_number(client):
+    assert client.put("/api/v1/settings/boot", json={"new_pc_name": "komp"}).status_code == 422
+    assert client.put("/api/v1/settings/boot", json={"new_pc_name": "a-very-long-name-{nn}"}).status_code == 422

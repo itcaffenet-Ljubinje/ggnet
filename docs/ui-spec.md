@@ -49,6 +49,7 @@ Status: **done** (backend and UI), **backend** (API exists, UI missing or partia
 | Zones (e.g. Main Arena, VIP) for filtering and bulk actions | todo |
 | Fixed IP per PC (as a DHCP reservation hint, not in Windows) | todo |
 | Add new hardware wizard (Images → ⋮): the first PC that boots the image reads its hardware in Windows PE (signed vendor NIC drivers from `winpe-drivers`), Windows installs the card in a temporary Proxmox VM, the image gets a new version; once per board type. The writeback never gets a card | done |
+| New PC template (Settings → Network boot → New PCs: name with {n}/{nn}, game disk): while Add new hardware is open on one image, an unknown PC that boots is registered on it in Boot Mode and taken by the wizard | done |
 | Prepare image (once per OS version, also on Apply Writebacks of an OS image): the server's agent and its service, Fast Startup off, fixed IPs to DHCP, stale letters forgotten, Windows tuned for diskless (High performance, no sleep/hibernation, display on, PCIe ASPM/USB suspend/NIC EEE off, fixed 4 GB page file, no crash dumps, no automatic Windows Update/Store updates/maintenance, WSearch and SysMain off, iSCSI initiator loaded after the network stack with WaitForNetworkAtBoot 0: about 25 s less per boot); each PC's writeback then only gets its name, variables and NIC (`[boot] inject_agent`) | done |
 
 ## Images

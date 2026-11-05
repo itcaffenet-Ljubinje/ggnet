@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Download, Lock, RefreshCw, RotateCw, Save } from "lucide-react";
 
-import { api, type BootSettings, type BootSettingsOut, type PxeStatus } from "../api";
+import { api, type BootSettings, type BootSettingsOut, type GameDisk, type PxeStatus } from "../api";
 import { useAsyncAction } from "../useAsyncAction";
 import { ErrorBanner } from "./ErrorBanner";
 
@@ -23,6 +23,9 @@ export function NetworkBoot() {
   const [unregistered, setUnregistered] = useState<BootSettings["unregistered"]>("wait");
   const [mokEnroll, setMokEnroll] = useState(false);
   const [mokPassword, setMokPassword] = useState("ggnet");
+  const [newPcName, setNewPcName] = useState("pc-{nn}");
+  const [newPcGame, setNewPcGame] = useState<number | null>(null);
+  const [gameDisks, setGameDisks] = useState<GameDisk[]>([]);
   const [done, setDone] = useState(false);
 
   function show(s: BootSettingsOut) {
@@ -32,12 +35,15 @@ export function NetworkBoot() {
     setUnregistered(s.unregistered);
     setMokEnroll(s.mok_enroll);
     setMokPassword(s.mok_password);
+    setNewPcName(s.new_pc_name ?? "pc-{nn}");
+    setNewPcGame(s.new_pc_game_disk_id ?? null);
   }
 
   useEffect(() => {
     run("load", async () => {
       show(await api.getBootSettings());
       setStatus(await api.getPxe());
+      setGameDisks((await api.listDisks()).filter((d) => d.published && d.kind !== "os"));
     });
   }, [run]);
 
@@ -57,7 +63,14 @@ export function NetworkBoot() {
     e.preventDefault();
     setDone(false);
     const gateway = choice === "ip" ? ip.trim() : choice;
-    const body = { gateway, unregistered, mok_enroll: mokEnroll, mok_password: mokPassword };
+    const body = {
+      gateway,
+      unregistered,
+      mok_enroll: mokEnroll,
+      mok_password: mokPassword,
+      new_pc_name: newPcName.trim(),
+      new_pc_game_disk_id: newPcGame,
+    };
     const ok = await run("save", async () => show(await api.saveBootSettings(body)));
     if (ok) setDone(true);
   }
@@ -174,6 +187,36 @@ export function NetworkBoot() {
                 </span>
               </label>
             )}
+            <h3 className="card-title">New PCs (Add new hardware)</h3>
+            <label>
+              Name
+              <input
+                value={newPcName}
+                onChange={(e) => setNewPcName(e.target.value)}
+                pattern="[A-Za-z0-9-]*\{nn?\}[A-Za-z0-9-]*"
+                title="With {nn} (01, 02 …) or {n} (1, 2 …) for the PC's number, e.g. komp-{nn}"
+                required
+              />
+            </label>
+            <label>
+              Game disk
+              <select
+                value={newPcGame ?? ""}
+                onChange={(e) => setNewPcGame(e.target.value ? Number(e.target.value) : null)}
+              >
+                <option value="">None: register new PCs by hand</option>
+                {gameDisks.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </select>
+              <span className="muted small">
+                While Add new hardware is open on an image, a PC ggNet does not know yet that boots from the network
+                is registered with this name (the first free number) and game disk, in Boot Mode on that image, and
+                goes straight through the wizard.
+              </span>
+            </label>
           </div>
           <div className="actions-row">
             <button type="submit" disabled={busy !== null}>

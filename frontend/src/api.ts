@@ -204,6 +204,10 @@ export interface BootSettings {
   mok_enroll: boolean;
   /** Typed in MokManager to confirm: a-z and 0-9, 4 to 16 characters. */
   mok_password: string;
+  /** New PC template: name with {n} or {nn} (the first free number), e.g. komp-{nn}. */
+  new_pc_name: string;
+  /** Game disk of a new PC; null: unknown PCs are not registered by Add new hardware. */
+  new_pc_game_disk_id: number | null;
 }
 
 export interface BootSettingsOut extends BootSettings {
