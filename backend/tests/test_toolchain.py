@@ -152,5 +152,5 @@ def test_add_hardware_refuses_bad_cards_and_game_disks(client, host, adder):
                     json={"cards": [{"nic": I219, "instance": "3&1&0&FE"}]})
     assert r.status_code == 409
     assert client.get(f"/api/v1/game-disks/{disk['id']}/add-hardware").json() == {
-        "wizard": None, "job": None, "waiting": []}
+        "wizard": None, "job": None, "waiting": [], "winpe_ready": False}     # no Windows PE in tests
     assert client.post(f"/api/v1/game-disks/{disk['id']}/add-hardware/cancel").status_code == 409

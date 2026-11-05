@@ -134,6 +134,12 @@ export function AddHardwareWizard({ disk, onClose, onChanged }: Props) {
           ) : current === 0 ? (
             <>
               <p>Once for each new board type; the other PCs with the same board boot right away after it.</p>
+              {status && !status.winpe_ready && (
+                <p className="error-text small">
+                  The hardware scan is not set up: Settings → Hardware scan needs Windows PE (from a Windows ISO) and
+                  the network drivers. Without it only a PC whose agent already reported its card can be added.
+                </p>
+              )}
               <p className="warn-text small">
                 After Start, the first PC that boots this image goes through Add new hardware, even if the image
                 knows its card. Power on only the new PC until it is done.

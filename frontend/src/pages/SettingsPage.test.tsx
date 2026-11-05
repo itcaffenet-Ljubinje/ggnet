@@ -160,6 +160,7 @@ describe("SettingsPage", () => {
     expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([
       "Storage",
       "Network boot",
+      "Hardware scan",
       "Client app",
       "Users",
     ]);

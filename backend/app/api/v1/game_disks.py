@@ -264,12 +264,21 @@ def _job_out(job) -> AddHardwareJobOut | None:
     return None if job is None else AddHardwareJobOut.model_validate(job.out())
 
 
+def _winpe_ready() -> bool:
+    from app.api.v1.boot import _scanner
+    from app.config import get_config
+    from app.services import scan
+
+    return scan.winpe_ready(scan.winpe_dir(get_config())) and _scanner().is_file()
+
+
 def _status_out(adder, master: str) -> AddHardwareStatusOut:
     wizard = adder.wizard(master)
     return AddHardwareStatusOut(
         wizard=AddHardwareWizardOut.model_validate(wizard.out()) if wizard else None,
         job=_job_out(adder.job(master)),
         waiting=adder.waiting_machines(master),
+        winpe_ready=_winpe_ready(),
     )
 
 

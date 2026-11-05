@@ -193,6 +193,60 @@ class AddHardwareStatusOut(BaseModel):
     wizard: AddHardwareWizardOut | None
     job: AddHardwareJobOut | None
     waiting: list[str]           # PCs on screen waiting for Add new hardware for this image
+    winpe_ready: bool = True     # the hardware scan's Windows PE is set up (Settings -> Hardware scan)
+
+
+# ── Hardware scan: Windows PE and its network drivers ─────────────────
+
+class WinPeFileOut(BaseModel):
+    name: str                    # wimboot, BCD, boot.sdi, boot.wim
+    present: bool
+    size: int | None = None
+
+
+class IsoOut(BaseModel):
+    path: str
+    name: str
+    size: int
+
+
+class WinPeDeviceOut(BaseModel):
+    chip: str                    # 8086-15bc
+    vendor: str
+    name: str
+
+
+class WinPePackageOut(BaseModel):
+    name: str
+    files: int
+    size: int
+    devices: list[WinPeDeviceOut]
+
+
+class WinPeChipOut(BaseModel):
+    """A network chip of the registered PCs and whether the library has its driver."""
+
+    chip: str
+    vendor: str
+    name: str | None             # from the driver that covers it
+    package: str | None
+    pcs: int
+
+
+class WinPeOut(BaseModel):
+    folder: str
+    ready: bool                  # all files and the scanner are there
+    files: list[WinPeFileOut]
+    scanner: bool
+    isos: list[IsoOut]
+    iso_folders: list[str]
+    drivers_folder: str
+    packages: list[WinPePackageOut]
+    pc_chips: list[WinPeChipOut]
+
+
+class WinPeFromIsoIn(BaseModel):
+    path: str
 
 
 class GameDiskCopy(BaseModel):
