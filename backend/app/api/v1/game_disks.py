@@ -373,8 +373,10 @@ def check_hardware(disk_id: int, db: Session = Depends(get_db), prov: Provisione
     found = prov.list_nics(disk.zvol_path, disk.snapshot)
     if isinstance(found, str):
         host_failed(f"Reading the network cards of {disk.name}@{disk.snapshot} failed: {found}")
-    disk.hardware = [ImageHardware(nic=nic, instance=instance, name=name[:255], snapshot=disk.snapshot)
-                     for nic, instance, name in found]
+    disk.hardware.clear()
+    db.flush()                          # the old rows go first: a card found again has the same key
+    disk.hardware.extend(ImageHardware(nic=nic, instance=instance, name=name[:255], snapshot=disk.snapshot)
+                         for nic, instance, name in found)
     db.commit()
     db.refresh(disk)
     logger.info("'%s'@%s network cards: %s", disk.name, disk.snapshot, ", ".join(disk.nic_models) or "none")

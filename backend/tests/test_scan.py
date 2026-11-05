@@ -344,4 +344,6 @@ def test_check_network_cards_reads_them_from_the_image(client, prov, pc):
     prov.windows.installed = True                             # e.g. an image made on that PC
     assert client.post(f"/api/v1/game-disks/{disk}/check-hardware").json()["nic_models"] == [
         "Intel(R) Ethernet Connection (2) I219-V"]
+    r = client.post(f"/api/v1/game-disks/{disk}/check-hardware")          # again: the same card, no clash
+    assert r.status_code == 200, r.text
     assert "tank/ggnet/writebacks/win11_ggnet_hw" not in prov.zfs.runner.datasets   # the clone is gone
