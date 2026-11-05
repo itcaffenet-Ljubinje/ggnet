@@ -16,6 +16,8 @@ root, and shim loads iPXE signed with the ggNet key, which each PC accepts
 once (MOK). The installer makes the key in `[boot] secureboot_dir` (default:
 `secureboot/` next to config.toml); the web UI offers its certificate
 (ggnet-sb.cer) for that, and shows whether the iPXE in `sb/` is signed with it.
+iPXE then starts wimboot (the hardware scan's Windows PE) through shim's
+check as well, so wimboot is served signed with the same key (signed_copy).
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -45,6 +48,7 @@ TFTP_FILES = ("snponly.efi", "ipxe.efi", "autoexec.ipxe",
               "sb/shimx64.efi", "sb/mmx64.efi", "sb/grubx64.efi")
 SB_CERT = "ggnet-sb.cer"      # DER, what a PC enrolls
 SB_CERT_PEM = "ggnet-sb.crt"  # the same certificate, for checking signatures
+SB_KEY = "ggnet-sb.key"       # its private key: signs what shim may start (iPXE, wimboot)
 
 
 @dataclass
@@ -138,6 +142,9 @@ class SecureBootKey:
     ipxe_signed: bool | None
 
 
+_SIGN_LOCK = threading.Lock()
+
+
 class PxeService:
     def __init__(self, unit: str, tftp_root: Path, runner: CommandRunner | None = None,
                  secureboot_dir: Path | None = None):
@@ -206,6 +213,40 @@ class PxeService:
             expires=_openssl_time(props.get("notAfter", "")),
             ipxe_signed=signed,
         )
+
+    def signed_copy(self, src: Path, dest: Path) -> Path:
+        """
+        An EFI file signed with the ggNet key, for a PC with Secure Boot on,
+        where shim lets iPXE start only what is signed with a key the PC
+        enrolled. Kept in `dest` and made again when `src` changes. Without
+        the key, or when signing fails, `src` itself (it still boots with
+        Secure Boot off).
+        """
+        if self.secureboot_dir is None:
+            return src
+        key, pem = self.secureboot_dir / SB_KEY, self.secureboot_dir / SB_CERT_PEM
+        if not (key.is_file() and pem.is_file()):
+            return src
+        with _SIGN_LOCK:
+            try:
+                if dest.is_file() and dest.stat().st_mtime >= max(src.stat().st_mtime, pem.stat().st_mtime):
+                    return dest
+                dest.parent.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                logger.warning("Cannot sign %s: %s", src, e)
+                return src
+            tmp = dest.with_name(dest.name + ".new")
+            ok, _, err = self.runner.run(["sbsign", "--key", str(key), "--cert", str(pem),
+                                          "--output", str(tmp), str(src)])
+            if ok:
+                ok, _, err = self.runner.run(["sbverify", "--cert", str(pem), str(tmp)], quiet=True)
+            if not ok:
+                logger.warning("Signing %s with the ggNet key failed: %s", src, err.strip())
+                tmp.unlink(missing_ok=True)
+                return src
+            os.replace(tmp, dest)
+            logger.info("%s signed with the ggNet Secure Boot key", src.name)
+            return dest
 
     def restart(self) -> bool:
         ok, _, err = self.runner.run(["systemctl", "restart", self.unit])

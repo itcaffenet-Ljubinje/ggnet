@@ -410,11 +410,20 @@ def _scanner():
 
 
 @router.get("/winpe/{name}")
-def winpe_file(name: str):
-    """wimboot and the Windows PE files of the hardware scan ([paths] winpe_dir)."""
-    path = scan.winpe_file(scan.winpe_dir(get_config()), name)
+def winpe_file(name: str, service: PxeService = Depends(get_pxe_service)):
+    """
+    wimboot and the Windows PE files of the hardware scan ([paths] winpe_dir).
+    wimboot is served signed with the ggNet key (PxeService.signed_copy): a PC
+    with Secure Boot on starts only what shim accepts.
+    """
+    cfg = get_config()
+    path = scan.winpe_file(scan.winpe_dir(cfg), name)
     if path is None:
         not_found("Windows PE file", name)
+    if name == "wimboot":
+        from pathlib import Path
+
+        path = service.signed_copy(path, Path(cfg["paths"]["data_dir"]) / "winpe-signed" / "wimboot")
     return FileResponse(path, media_type="application/octet-stream")
 
 

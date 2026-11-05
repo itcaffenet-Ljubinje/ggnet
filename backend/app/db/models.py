@@ -72,6 +72,13 @@ class DiskKind(str, enum.Enum):
     OS = "os"        # Windows system disk of Boot Mode machines (LUN 0)
 
 
+def version_number(snapshot: str | None) -> int:
+    """An image version's order: base → 1, vN → N; unknown counts as 1."""
+    if snapshot and snapshot.startswith("v") and snapshot[1:].isdigit():
+        return int(snapshot[1:])
+    return 1
+
+
 class GameDisk(Base):
     """
     Master image (shared disk). `kind` says whether it holds games or a
@@ -114,8 +121,13 @@ class GameDisk(Base):
 
     @property
     def nic_models(self) -> list[str]:
-        """The network card models the image supports, each once (an OS image without any needs hardware)."""
-        return sorted({h.name for h in self.hardware})
+        """
+        The network card models the image's active version supports, each once
+        (an OS image without any needs hardware): a card added at a newer
+        version than the active one is not in it.
+        """
+        active = version_number(self.snapshot)
+        return sorted({h.name for h in self.hardware if version_number(h.snapshot) <= active})
 
     @property
     def editor_id(self) -> int | None:
