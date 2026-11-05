@@ -334,6 +334,13 @@ class Provisioner:
         windows = self.windows
         return self._on_version(master, snapshot, "hardware check", lambda device: windows.nic_support(device, nics))
 
+    def list_nics(self, master: str, snapshot: str) -> list[tuple[str, str, str]] | str:
+        """WindowsSetup.list_nics() on one version of an OS image."""
+        if self.windows is None:
+            return "Windows setup is not available on this server"
+        windows = self.windows
+        return self._on_version(master, snapshot, "network card check", windows.list_nics)
+
     def import_disk(self, source: str, fmt: str, target: str, progress=None, cancel=None) -> bool:
         """
         Fill the new, empty master `target` from an image file and publish it

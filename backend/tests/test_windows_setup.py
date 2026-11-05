@@ -916,3 +916,23 @@ def test_prepare_image_turns_background_services_off_only_when_asked(windows, ru
     merges.clear()
     assert windows.prepare_image(DEVICE, _prep(tmp_path), label="win11") is None
     assert not any("DoSvc" in text for _, text in merges)
+
+
+def test_installed_nics_lists_the_net_cards_with_a_driver_and_their_model():
+    from app.windows_setup import installed_nics
+
+    desc = "@net1ic64.inf,%e15bcnc.devicedesc%;Intel(R) Ethernet Connection (7) I219-V"
+    utf16 = ",".join(f"{b:02x}" for b in (desc + "\0").encode("utf-16-le"))
+    export = ENUM + (
+        "\r\n[\\ControlSet002\\Enum\\PCI\\VEN_8086&DEV_15BC&SUBSYS_86721043&REV_10]\r\n\r\n"
+        "[\\ControlSet002\\Enum\\PCI\\VEN_8086&DEV_15BC&SUBSYS_86721043&REV_10\\3&11583659&0&FE]\r\n"
+        f'"ClassGUID"="{{4d36e972-e325-11ce-bfc1-08002be10318}}"\r\n"Service"="e1i68x64"\r\n'
+        f'"DeviceDesc"=hex(1):{utf16}\r\n'
+        "\r\n[\\ControlSet002\\Enum\\PCI\\VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_16]\r\n\r\n"
+        "[\\ControlSet002\\Enum\\PCI\\VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_16\\01000000684CE00000]\r\n"
+        '"ClassGUID"="{4d36e972-e325-11ce-bfc1-08002be10318}"\r\n"Service"="rt640x64"\r\n'
+        '"FriendlyName"="Realtek Gaming GbE Family Controller #2"\r\n')
+    assert installed_nics(export) == [
+        ("VEN_8086&DEV_15BC&SUBSYS_86721043&REV_10", "3&11583659&0&FE", "Intel(R) Ethernet Connection (7) I219-V"),
+        ("VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_16", "01000000684CE00000", "Realtek Gaming GbE Family Controller"),
+    ]   # the REV_15 card in ENUM has no ClassGUID: not a Net class device here; the chipset device is not a card
