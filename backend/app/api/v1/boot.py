@@ -34,7 +34,7 @@ import ipaddress
 import logging
 import time
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import sessionmaker
@@ -220,6 +220,8 @@ def ipxe_script(
         logger.info("iPXE request from unregistered MAC %s", mac)
         discovery.record(db, mac, DiscoverySource.PXE,
                          ip_address=request.client.host if request.client else None, boot_nic=nic)
+        m = _register_new_pc(db, prov, adder, mac)
+    if m is None:
         if unregistered_mode(cfg) == "local":
             return exit_script(f"This PC is not registered in ggNet ({mac}). Booting from local disk.")
         # ${net0/mac} is iPXE's, so the PC asks with its own MAC like the first time.
@@ -343,6 +345,40 @@ def _wizard_step(request: Request, db: Session, prov: Provisioner, adder, driver
         wizard.step, wizard.finished = "done", time.time()
         logger.info("Add new hardware wizard on %s: %s boots the new version", disk.name, m.name)
     return None
+
+
+def _register_new_pc(db: Session, prov: Provisioner, adder, mac: str) -> Machine | None:
+    """
+    The New PC template: while Add new hardware is open (and waiting) on one
+    OS image, an unknown PC that boots is registered on that image in Boot
+    Mode, with the template's name and game disk, so the wizard takes it.
+    None when no wizard waits, more than one does, or the template has no game disk.
+    """
+    from app.api.v1.machines import create_machine
+    from app.api.v1.schemas import MachineCreate
+
+    waiting = [w for w in adder.wizards.values() if w.active and w.machine is None and w.step == "waiting"]
+    settings, _ = pxe.load_settings(db)
+    if len(waiting) != 1 or settings.new_pc_game_disk_id is None:
+        if waiting:
+            logger.info("Unknown PC %s not registered: %s", mac, "the New PC template has no game disk"
+                        if settings.new_pc_game_disk_id is None else "Add new hardware is open on several images")
+        return None
+    taken = set(db.scalars(select(Machine.name)))
+    name = pxe.new_pc_name(settings.new_pc_name, taken)
+    if name is None:
+        logger.warning("Unknown PC %s not registered: no free name for %s", mac, settings.new_pc_name)
+        return None
+    try:
+        m = create_machine(MachineCreate(name=name, mode=MachineMode.BOOT, mac=mac,
+                                         game_disk_id=settings.new_pc_game_disk_id,
+                                         os_disk_id=waiting[0].disk_id), db, prov)
+    except HTTPException as e:
+        logger.warning("Unknown PC %s not registered as %s: %s", mac, name, e.detail)
+        db.rollback()
+        return None
+    logger.info("New PC %s registered as %s for Add new hardware", mac, name)
+    return m
 
 
 def _hardware_wait(mac: str, again: str, image: str) -> PlainTextResponse:

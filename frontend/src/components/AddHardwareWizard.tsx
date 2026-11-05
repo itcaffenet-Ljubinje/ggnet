@@ -139,7 +139,10 @@ export function AddHardwareWizard({ disk, onClose, onChanged }: Props) {
                 knows its card. Power on only the new PC until it is done.
               </p>
               <ul className="small">
-                <li>The new PC is registered in Machines with {disk.name} as its OS image, and is powered off.</li>
+                <li>
+                  The new PC is powered off. It is registered in Machines with {disk.name} as its OS image, or
+                  ggNet registers it when it boots, if Settings → Network boot → New PCs has a game disk.
+                </li>
                 <li>In its BIOS: UEFI network boot (PXE) first, Secure Boot off for this run.</li>
                 <li>
                   The image&apos;s newest version is active. PCs keep using it while the card is added; they get the

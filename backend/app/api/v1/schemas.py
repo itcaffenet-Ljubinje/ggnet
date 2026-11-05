@@ -748,6 +748,18 @@ class BootSettingsIn(BaseModel):
     mok_enroll: bool = False
     # MokManager's keyboard is US: lower-case letters and digits only.
     mok_password: str = Field("ggnet", pattern=r"^[a-z0-9]{4,16}$")
+    # New PC template (Add new hardware): a name with {n} or {nn}, and the game disk.
+    new_pc_name: str = "pc-{nn}"
+    new_pc_game_disk_id: int | None = None
+
+    @field_validator("new_pc_name")
+    @classmethod
+    def _new_pc_name(cls, v: str) -> str:
+        v = v.strip().lower()
+        if "{n}" not in v and "{nn}" not in v:
+            raise ValueError("the name needs {n} or {nn} for the PC's number, e.g. komp-{nn}")
+        _machine_name(v.replace("{nn}", "99").replace("{n}", "999"))   # a valid name at its longest
+        return v
 
     @field_validator("gateway")
     @classmethod

@@ -56,6 +56,20 @@ class BootSettings:
     # Agents ask shim to enroll the ggNet Secure Boot key (MokManager password).
     mok_enroll: bool = False
     mok_password: str = "ggnet"
+    # New PC template: an unknown PC that boots while Add new hardware is open
+    # is registered with this name ({n} or {nn}: the first free number) and this
+    # game disk, in Boot Mode on the wizard's image. No game disk: it is not.
+    new_pc_name: str = "pc-{nn}"
+    new_pc_game_disk_id: int | None = None
+
+
+def new_pc_name(pattern: str, taken: set[str]) -> str | None:
+    """The first free name from a pattern like komp-{nn} (komp-01, komp-02 …) or pc{n}."""
+    for n in range(1, 1000):
+        name = pattern.replace("{nn}", f"{n:02d}").replace("{n}", str(n)).lower()
+        if name not in taken:
+            return name
+    return None
 
 
 def _defaults(cfg: dict[str, Any]) -> BootSettings:
@@ -65,6 +79,8 @@ def _defaults(cfg: dict[str, Any]) -> BootSettings:
         unregistered=str(boot.get("unregistered") or "wait"),
         mok_enroll=bool(boot.get("mok_enroll", False)),
         mok_password=str(boot.get("mok_password") or "ggnet"),
+        new_pc_name=str(boot.get("new_pc_name") or "pc-{nn}"),
+        new_pc_game_disk_id=boot.get("new_pc_game_disk_id"),
     )
 
 
