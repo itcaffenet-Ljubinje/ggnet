@@ -288,3 +288,46 @@ def test_new_pc_names_take_the_first_free_number():
 def test_the_template_name_needs_a_number(client):
     assert client.put("/api/v1/settings/boot", json={"new_pc_name": "komp"}).status_code == 422
     assert client.put("/api/v1/settings/boot", json={"new_pc_name": "a-very-long-name-{nn}"}).status_code == 422
+
+
+# ── The card list follows the image's versions ───────────────────────
+
+def _add_i219(client, pc) -> None:
+    disk = pc["os_disk_id"]
+    client.post(f"/api/v1/game-disks/{disk}/add-hardware/wizard")
+    _ipxe(client)
+    client.post("/api/v1/boot/scan", json={"mac": MAC, "devices": [_device(I219, INSTANCE)]})
+    _ipxe(client)                                          # the card is added: @v2, active
+    _ipxe(client)                                          # the PC boots it: the wizard is done
+    client.delete(f"/api/v1/game-disks/{disk}/add-hardware/wizard")
+
+
+def test_the_card_list_shows_only_what_the_active_version_has(client, pc):
+    disk = pc["os_disk_id"]
+    _add_i219(client, pc)
+    i219 = ["Intel(R) Ethernet Connection (2) I219-V"]
+    assert client.get(f"/api/v1/game-disks/{disk}").json()["nic_models"] == i219
+    client.put(f"/api/v1/game-disks/{disk}/active-snapshot", json={"snapshot": "base"})
+    assert client.get(f"/api/v1/game-disks/{disk}").json()["nic_models"] == []      # @base never had it
+
+
+def test_deleting_the_version_a_card_came_with_removes_it_from_the_list(client, prov, pc):
+    disk = pc["os_disk_id"]
+    _add_i219(client, pc)
+    client.put(f"/api/v1/game-disks/{disk}/active-snapshot", json={"snapshot": "base"})
+    _ipxe(client)                                          # the PC moves off @v2
+    r = client.delete(f"/api/v1/game-disks/{disk}/snapshots/v2")
+    assert r.status_code == 204, r.text
+    _add_i219(client, pc)                                  # the next version is called v2 again
+    assert client.get(f"/api/v1/game-disks/{disk}").json()["nic_models"] == [
+        "Intel(R) Ethernet Connection (2) I219-V"]
+
+
+def test_merge_into_base_keeps_the_cards(client, pc):
+    disk = pc["os_disk_id"]
+    _add_i219(client, pc)
+    assert client.post(f"/api/v1/machines/{pc['id']}/reset").status_code == 200    # off @base
+    r = client.post(f"/api/v1/game-disks/{disk}/snapshots/v2/merge-into-base")
+    assert r.status_code == 200, r.text
+    assert r.json()["snapshot"] == "base"
+    assert r.json()["nic_models"] == ["Intel(R) Ethernet Connection (2) I219-V"]

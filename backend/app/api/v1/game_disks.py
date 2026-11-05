@@ -42,7 +42,15 @@ from app.api.v1.schemas import (
     SnapshotOut,
     WritebackOut,
 )
-from app.db.models import DiskKind, GameDisk, ImageHardware, Machine, MachineMode, MachineStatus
+from app.db.models import (
+    DiskKind,
+    GameDisk,
+    ImageHardware,
+    Machine,
+    MachineMode,
+    MachineStatus,
+    version_number,
+)
 from app.db.session import get_db
 from app.services.agent_package import default_package
 from app.services.os_setup import image_prep
@@ -154,8 +162,9 @@ def copy_disk(
     disk = GameDisk(name=body.name, zvol_path=path, size_gb=src.size_gb, kind=src.kind,
                     copy_source=f"{src.zvol_path}@{snap}", copy_percent=0)
     # The copy knows the cards the copied version has.
-    disk.hardware = [ImageHardware(nic=h.nic, instance=h.instance, name=h.name, snapshot=h.snapshot)
-                     for h in src.hardware if _version_number(h.snapshot) <= _version_number(snap)]
+    # A copy's only version is @base, with the cards of the version it copies.
+    disk.hardware = [ImageHardware(nic=h.nic, instance=h.instance, name=h.name, snapshot="base")
+                     for h in src.hardware if version_number(h.snapshot) <= version_number(snap)]
     db.add(disk)
     try:
         db.commit()
@@ -348,11 +357,22 @@ def cancel_add_hardware(disk_id: int, db: Session = Depends(get_db), adder=Depen
     return _job_out(adder.job(disk.zvol_path))
 
 
-def _version_number(snapshot: str | None) -> int:
-    """base → 1, vN → N (a copy made later from @v3 has no card added at @v5); unknown counts as 1."""
-    if snapshot and snapshot.startswith("v") and snapshot[1:].isdigit():
-        return int(snapshot[1:])
-    return 1
+def _keep_hardware(db: Session, disk: GameDisk, snapshots: list[str]) -> None:
+    """
+    The image's network cards after versions are gone: a card added at a
+    version that no longer exists still lives in the next newer version (its
+    data is there), else it is gone with it.
+    """
+    left = sorted(snapshots, key=version_number)
+    for h in list(disk.hardware):
+        if h.snapshot in left:
+            continue
+        newer = next((s for s in left if version_number(s) > version_number(h.snapshot)), None)
+        if newer is None:
+            disk.hardware.remove(h)
+        else:
+            h.snapshot = newer
+    db.commit()
 
 
 def _not_copying(disk: GameDisk) -> None:
@@ -580,7 +600,8 @@ def delete_snapshot(
     """Delete a version that is not active and that no PC's writeback was cloned from."""
     disk = _get(db, disk_id)
     _published(disk)
-    version = next((v for v in _versions(prov, disk) if v["name"] == name), None)
+    versions = _versions(prov, disk)
+    version = next((v for v in versions if v["name"] == name), None)
     if version is None:
         not_found("Snapshot", f"{disk.name}@{name}")
     if version.get("locked"):
@@ -599,6 +620,7 @@ def delete_snapshot(
         prov.delete_snapshot(disk.zvol_path, name)
     except ProvisioningError as e:
         host_failed(str(e))
+    _keep_hardware(db, disk, [v["name"] for v in versions if v["name"] != name])
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -697,6 +719,10 @@ def merge_into_base(
         for m in disk.machines:
             if m.pinned_snapshot == name:
                 m.pinned_snapshot = "base"
+        # @base now holds every card added up to the merged version.
+        for h in disk.hardware:
+            if version_number(h.snapshot) <= version_number(name):
+                h.snapshot = "base"
     db.commit()
     logger.info("%s: @%s merged into @base", disk.name, name)
     return disk
