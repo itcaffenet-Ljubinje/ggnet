@@ -762,7 +762,7 @@ def test_a_clean_image_gets_only_the_network_boot_flags():
     assert "Class" not in reg and "Start" not in reg and "BootFlags" in reg
 
 
-def test_prepare_image_turns_ccboot_off(windows, runner, tmp_path):
+def test_prepare_image_turns_other_diskless_drivers_off(windows, runner, tmp_path):
     root = _image(windows)
     (root / "Program Files").mkdir()
     select = runner.responses[("hivexregedit", "--export")]

@@ -358,12 +358,12 @@ def group_order_lines(cs: str, export: str) -> list[str]:
 
 
 # Drivers and services of other diskless systems. In an image made for one of
-# them they sit in the way of the disk and the network card (a CCBoot image
-# has its cache driver above every volume and its own filter on every network
+# them they sit in the way of the disk and the network card (one such system
+# puts its cache driver above every volume and its own filter on every network
 # card) and stop Windows booting over plain iSCSI (0x7B). Prepare image turns
 # them off and takes them out of the device classes' filter lists.
 FOREIGN_DISKLESS = (
-    "CCacheX", "CCBootPNPX", "CCBootPNP", "CCopyFile", "CCBootClient",     # CCBoot
+    "CCacheX", "CCBootPNPX", "CCBootPNP", "CCopyFile", "CCBootClient",
 )
 _CLASS_KEY = re.compile(r"\\Control\\Class\\(\{[0-9A-Fa-f-]{36}\})$")
 
