@@ -207,3 +207,56 @@ def test_the_agent_reports_the_key_state(client):
     assert client.get(f"/api/v1/machines/{m['id']}").json()["mok_state"] == "enrolled"
     r = client.post("/api/v1/agent/heartbeat", json={"name": "pc01", "agent_version": "0.1.13", "mok": "x"})
     assert r.status_code == 422
+
+
+# ── Signing wimboot for Secure Boot ───────────────────────────────────
+
+def _signer(tmp_path, with_key: bool = True):
+    from app.services.pxe import PxeService
+
+    from .conftest import FakeRunner
+
+    sb = tmp_path / "secureboot"
+    sb.mkdir()
+    if with_key:
+        (sb / "ggnet-sb.key").write_text("key")
+        (sb / "ggnet-sb.crt").write_text("cert")
+    runner = FakeRunner()
+
+    def sign(cmd):
+        out = Path(cmd[cmd.index("--output") + 1])
+        out.write_bytes(Path(cmd[-1]).read_bytes() + b"+signed")
+        return True, "", ""
+    runner.on("sbsign", result=sign)
+    src = tmp_path / "winpe" / "wimboot"
+    src.parent.mkdir()
+    src.write_bytes(b"MZwimboot")
+    return PxeService("ggnet-pxe", tmp_path / "tftp", runner=runner, secureboot_dir=sb), runner, src
+
+
+def test_wimboot_is_signed_once_and_again_when_it_changes(tmp_path):
+    import os
+
+    service, runner, src = _signer(tmp_path)
+    dest = tmp_path / "data" / "winpe-signed" / "wimboot"
+    assert service.signed_copy(src, dest) == dest
+    assert dest.read_bytes() == b"MZwimboot+signed"
+    assert any(c[0] == "sbverify" for c in runner.calls)
+    runner.calls.clear()
+    assert service.signed_copy(src, dest) == dest
+    assert runner.calls == []                                        # kept
+    os.utime(src, (dest.stat().st_mtime + 10, dest.stat().st_mtime + 10))
+    assert service.signed_copy(src, dest) == dest
+    assert any(c[0] == "sbsign" for c in runner.calls)               # a new wimboot: signed again
+
+
+def test_without_the_key_or_when_signing_fails_wimboot_is_served_as_it_is(tmp_path):
+    service, runner, src = _signer(tmp_path, with_key=False)
+    dest = tmp_path / "out" / "wimboot"
+    assert service.signed_copy(src, dest) == src and runner.calls == []
+    other = tmp_path / "b"
+    other.mkdir()
+    service, runner, src = _signer(other)
+    runner.on("sbverify", result=(False, "", "Signature verification failed"))
+    assert service.signed_copy(src, other / "out" / "wimboot") == src
+    assert not (other / "out" / "wimboot.new").exists()
