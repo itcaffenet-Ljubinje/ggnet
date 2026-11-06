@@ -107,7 +107,7 @@ class ZfsStream:
                 yield chunk
             err = proc.stderr.read().decode(errors="replace").strip()
             if proc.wait() != 0:
-                raise BackupError(f"zfs send failed: {err or proc.returncode}")
+                raise BackupError(f"zfs send failed: {err or _ended(proc.returncode)}")
         finally:
             if proc.poll() is None:
                 proc.kill()
@@ -124,7 +124,7 @@ class ZfsStream:
             proc.stdin.close()
             err = proc.stderr.read().decode(errors="replace").strip()
             if proc.wait() != 0:
-                raise BackupError(f"zfs recv failed: {err or proc.returncode}")
+                raise BackupError(f"zfs recv failed: {err or _ended(proc.returncode)}")
         except BrokenPipeError:
             err = proc.stderr.read().decode(errors="replace").strip()
             proc.wait()
@@ -133,6 +133,11 @@ class ZfsStream:
             if proc.poll() is None:
                 proc.kill()
                 proc.wait()
+
+
+def _ended(code: int) -> str:
+    """How a process ended, in words: -15 is "it was stopped (signal 15)"."""
+    return f"it was stopped (signal {-code})" if code < 0 else f"exit code {code}"
 
 
 # ── Backup folders ────────────────────────────────────────────────────
