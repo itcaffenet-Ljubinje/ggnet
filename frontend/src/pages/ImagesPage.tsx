@@ -24,8 +24,8 @@ import {
   api,
   isImport,
   needsHardware,
-  type DiskKind,
-  type GameDisk,
+  type ImageKind,
+  type Image,
   type ImageUsage,
   type Machine,
   type PrepareOptions,
@@ -42,21 +42,21 @@ import { useAsyncAction } from "../useAsyncAction";
 import { ImageDetailsPage } from "./ImageDetailsPage";
 
 /** A copy that is still running (a failed one keeps its error instead). */
-const copying = (d: GameDisk) => !!d.copy_source && !d.copy_error;
+const copying = (d: Image) => !!d.copy_source && !d.copy_error;
 
 interface Props {
-  disks: GameDisk[];
+  disks: Image[];
   machines: Machine[];
   reload: () => Promise<void>;
 }
 
-export function GameDisksPage({ disks, machines, reload }: Props) {
+export function ImagesPage({ disks, machines, reload }: Props) {
   const { busy, error, setError, run } = useAsyncAction();
   const updates = useImageUpdates(disks);
   const usage = useImageUsage(disks);
   const [name, setName] = useState("");
   const [sizeGb, setSizeGb] = useState("100");
-  const [kind, setKind] = useState<DiskKind>("game");
+  const [kind, setKind] = useState<ImageKind>("game");
   // Per draft disk: the machine picked to fill it on.
   const [editOn, setEditOn] = useState<Record<number, string>>({});
   // The image shown on its own details page.
@@ -71,11 +71,11 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
   const [importing, setImporting] = useState(false);
 
   const assigned = (id: number) =>
-    machines.filter((m) => m.game_disk_id === id || m.os_disk_id === id).length;
+    machines.filter((m) => m.game_image_id === id || m.os_image_id === id).length;
   const machine = (id: number | null) => machines.find((m) => m.id === id);
-  // A draft can be filled only on a disk-mode PC that has no game disk.
+  // A draft can be filled only on a disk-mode PC that has no game image.
   const free = machines.filter(
-    (m) => m.mode === "disk" && m.status === "idle" && m.game_disk_id === null,
+    (m) => m.mode === "disk" && m.status === "idle" && m.game_image_id === null,
   );
 
   async function create(e: FormEvent) {
@@ -85,7 +85,7 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
     await reload();
   }
 
-  async function publish(disk: GameDisk) {
+  async function publish(disk: Image) {
     const msg =
       `Publish "${disk.name}"?\n\n` +
       "This takes the @base snapshot and makes the master read-only. " +
@@ -95,32 +95,32 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
     await reload();
   }
 
-  async function startEdit(disk: GameDisk) {
+  async function startEdit(disk: Image) {
     const m = machine(Number(editOn[disk.id]));
     if (!m) return;
     const msg =
       `Edit "${disk.name}" on ${m.name}?\n\n` +
-      "The master becomes that PC's game disk (through ggnet-agent). Initialize and format it " +
+      "The master becomes that PC's game image (through ggnet-agent). Initialize and format it " +
       "in Disk Management, install the games, then shut the PC down and click Finish editing.";
     if (!window.confirm(msg)) return;
     await run(`edit-${disk.id}`, () => api.startEdit(disk.id, m.id));
     await reload();
   }
 
-  async function finishEdit(disk: GameDisk) {
+  async function finishEdit(disk: Image) {
     const name = machine(disk.editor_id)?.name ?? "the PC";
     if (!window.confirm(`Finish editing "${disk.name}"?\n\nThe master is removed from ${name}.`)) return;
     await run(`finish-${disk.id}`, () => api.finishEdit(disk.id));
     await reload();
   }
 
-  async function prepare(disk: GameDisk, options: PrepareOptions) {
+  async function prepare(disk: Image, options: PrepareOptions) {
     const ok = await run(`prepare-${disk.id}`, () => api.prepareImage(disk.id, options));
     if (ok) setPreparing(null);
     await reload();
   }
 
-  async function checkHardware(disk: GameDisk) {
+  async function checkHardware(disk: Image) {
     await run(`check-${disk.id}`, async () => {
       const checked = await api.checkHardware(disk.id);
       const models = checked.nic_models ?? [];
@@ -133,14 +133,14 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
     await reload();
   }
 
-  async function cancelImport(disk: GameDisk) {
+  async function cancelImport(disk: Image) {
     if (!window.confirm(`Stop importing "${disk.name}"? What was imported so far is removed.`)) return;
     await run(`cancel-${disk.id}`, () => api.cancelImport(disk.id));
     await reload();
   }
 
-  async function copy(disk: GameDisk) {
-    const what = disk.kind === "os" ? "OS image" : "game disk";
+  async function copy(disk: Image) {
+    const what = disk.kind === "os" ? "OS image" : "game image";
     const next = window.prompt(
       `Copy version @${disk.snapshot} of ${what} "${disk.name}" into a new ${what}.\n\n` +
         "The copy is independent: it has its own data and either can be deleted later. It takes " +
@@ -153,19 +153,19 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
     await reload();
   }
 
-  async function remove(disk: GameDisk) {
-    const what = disk.kind === "os" ? "OS image" : "game disk";
+  async function remove(disk: Image) {
+    const what = disk.kind === "os" ? "OS image" : "game image";
     if (!window.confirm(`Delete ${what} "${disk.name}" and its zvol on the host?`)) return;
     await run(`delete-${disk.id}`, () => api.deleteDisk(disk.id));
     await reload();
   }
 
-  async function makeDefault(d: GameDisk, isDefault: boolean) {
+  async function makeDefault(d: Image, isDefault: boolean) {
     await run(`default-${d.id}`, () => api.setDefaultDisk(d.id, isDefault));
     await reload();
   }
 
-  function menuFor(d: GameDisk): MenuAction[] {
+  function menuFor(d: Image): MenuAction[] {
     const users = assigned(d.id);
     return [
       { label: "Details", icon: Info, onSelect: () => setOpen(d.id) },
@@ -196,7 +196,7 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
               disabled: busy !== null,
               title: d.is_default
                 ? `New PCs no longer get ${d.name}`
-                : `New PCs get this ${d.kind === "os" ? "OS image" : "game disk"}`,
+                : `New PCs get this ${d.kind === "os" ? "OS image" : "game image"}`,
             },
           ]
         : []),
@@ -308,7 +308,7 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
     );
   }
 
-  function section(title: string, Icon: LucideIcon, list: GameDisk[], empty: string) {
+  function section(title: string, Icon: LucideIcon, list: Image[], empty: string) {
     return (
       <>
         <h2 className="section-title title-with-icon">
@@ -356,7 +356,7 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
                           {d.name}
                         </button>
                       </td>
-                      <td>{d.kind === "os" ? "OS image" : "Game disk"}</td>
+                      <td>{d.kind === "os" ? "OS image" : "Game image"}</td>
                       <td>
                         {d.is_default && (
                           <span className="default-mark" title="New PCs get this one">
@@ -478,8 +478,8 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
         </label>
         <label>
           Kind
-          <select value={kind} onChange={(e) => setKind(e.target.value as DiskKind)}>
-            <option value="game">Game disk</option>
+          <select value={kind} onChange={(e) => setKind(e.target.value as ImageKind)}>
+            <option value="game">Game image</option>
             <option value="os">OS image (Boot Mode)</option>
           </select>
         </label>
@@ -519,22 +519,22 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
         />
       )}
 
-      {section("OS images", Monitor, disks.filter((d) => d.kind === "os"), "No OS images yet.")}
-      {section("Game disks", Gamepad2, disks.filter((d) => d.kind !== "os"), "No game disks yet.")}
+      {section("OS Images", Monitor, disks.filter((d) => d.kind === "os"), "No OS images yet.")}
+      {section("Game Images", Gamepad2, disks.filter((d) => d.kind !== "os"), "No game images yet.")}
     </section>
   );
 }
 
-function ImageKpis({ disks, machines }: { disks: GameDisk[]; machines: Machine[] }) {
+function ImageKpis({ disks, machines }: { disks: Image[]; machines: Machine[] }) {
   const os = disks.filter((d) => d.kind === "os");
   const games = disks.filter((d) => d.kind !== "os");
   const drafts = disks.filter((d) => !d.published).length;
-  const using = machines.filter((m) => m.game_disk_id !== null || m.os_disk_id !== null).length;
+  const using = machines.filter((m) => m.game_image_id !== null || m.os_image_id !== null).length;
   const totalGb = disks.reduce((sum, d) => sum + d.size_gb, 0);
   const cards = [
     { title: "Images", value: disks.length, sub: `${totalGb} GB in all${drafts ? ` · ${drafts} draft` : ""}`, icon: Layers, tone: "blue" },
-    { title: "OS images", value: os.length, sub: "Windows for Boot Mode PCs", icon: Monitor, tone: "purple" },
-    { title: "Game disks", value: games.length, sub: "shared D: for every PC", icon: Gamepad2, tone: "green" },
+    { title: "OS Images", value: os.length, sub: "Windows for Boot Mode PCs", icon: Monitor, tone: "purple" },
+    { title: "Game Images", value: games.length, sub: "shared D: for every PC", icon: Gamepad2, tone: "green" },
     { title: "In use", value: using, sub: `of ${machines.length} PCs have an image`, icon: HardDrive, tone: "amber" },
   ];
   return (
@@ -556,7 +556,7 @@ function ImageKpis({ disks, machines }: { disks: GameDisk[]; machines: Machine[]
 }
 
 /** Each image's space, compression and versions from ZFS, by disk id; read again when the images change. */
-function useImageUsage(disks: GameDisk[]): Record<number, ImageUsage> {
+function useImageUsage(disks: Image[]): Record<number, ImageUsage> {
   const [usage, setUsage] = useState<Record<number, ImageUsage>>({});
   const key = disks.map((d) => `${d.id}@${d.snapshot}:${d.copy_percent ?? ""}`).join(",");
   useEffect(() => {
@@ -565,7 +565,7 @@ function useImageUsage(disks: GameDisk[]): Record<number, ImageUsage> {
     api
       .getImageUsage()
       .then((list) => {
-        if (!stopped) setUsage(Object.fromEntries(list.map((u) => [u.disk_id, u])));
+        if (!stopped) setUsage(Object.fromEntries(list.map((u) => [u.image_id, u])));
       })
       .catch(() => {
         // Only numbers: the list works without them.

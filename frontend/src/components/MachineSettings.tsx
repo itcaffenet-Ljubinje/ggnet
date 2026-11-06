@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Cpu, HardDrive, Monitor, Network, Save, Settings, X } from "lucide-react";
 
-import { api, type GameDisk, type Machine, type MachineMode } from "../api";
+import { api, type Image, type Machine, type MachineMode } from "../api";
 import { formatBytes, formatLink, formatNic } from "../format";
 import { useAsyncAction } from "../useAsyncAction";
 import { isOnline } from "./AgentState";
@@ -9,14 +9,14 @@ import { ErrorBanner } from "./ErrorBanner";
 
 interface Props {
   machine: Machine;
-  disks: GameDisk[];
+  disks: Image[];
   onClose: () => void;
   reload: () => Promise<void>;
 }
 
 type Tab = "general" | "disks" | "network" | "hardware";
 
-// Game disk letters; A-C are floppy and system drives.
+// Game image letters; A-C are floppy and system drives.
 const LETTERS = "DEFGHIJKLMNOPQRSTUVWXYZ".split("");
 
 /**
@@ -32,8 +32,8 @@ export function MachineSettings({ machine: m, disks, onClose, reload }: Props) {
   const [tab, setTab] = useState<Tab>("general");
   const [name, setName] = useState(m.name);
   const [mode, setMode] = useState<MachineMode>(m.mode);
-  const [osDiskId, setOsDiskId] = useState(m.os_disk_id ? String(m.os_disk_id) : "");
-  const [diskId, setDiskId] = useState(m.game_disk_id ? String(m.game_disk_id) : "");
+  const [osImageId, setOsImageId] = useState(m.os_image_id ? String(m.os_image_id) : "");
+  const [imageId, setImageId] = useState(m.game_image_id ? String(m.game_image_id) : "");
   const [letter, setLetter] = useState(m.drive_letter);
   const [keep, setKeep] = useState(m.keep_writeback);
   const [pin, setPin] = useState(m.pinned_snapshot ?? "");
@@ -41,21 +41,21 @@ export function MachineSettings({ machine: m, disks, onClose, reload }: Props) {
   const [saved, setSaved] = useState(false);
 
   const osImages = disks.filter((d) => d.published && d.kind === "os");
-  const gameDisks = disks.filter((d) => d.published && d.kind !== "os");
-  const hasDisk = m.game_disk_id !== null || m.status !== "idle";
+  const gameImages = disks.filter((d) => d.published && d.kind !== "os");
+  const hasDisk = m.game_image_id !== null || m.status !== "idle";
   const online = isOnline(m);
 
   useEffect(() => {
-    if (!m.game_disk_id) return;
+    if (!m.game_image_id) return;
     api
-      .listSnapshots(m.game_disk_id)
+      .listSnapshots(m.game_image_id)
       .then((s) => setVersions(s.map((v) => v.name)))
       .catch(() => setVersions([]));
-  }, [m.game_disk_id]);
+  }, [m.game_image_id]);
 
   const disksChanged =
-    diskId !== (m.game_disk_id ? String(m.game_disk_id) : "") ||
-    (mode === "boot" && osDiskId !== (m.os_disk_id ? String(m.os_disk_id) : ""));
+    imageId !== (m.game_image_id ? String(m.game_image_id) : "") ||
+    (mode === "boot" && osImageId !== (m.os_image_id ? String(m.os_image_id) : ""));
 
   async function save(e: FormEvent) {
     e.preventDefault();
@@ -72,8 +72,8 @@ export function MachineSettings({ machine: m, disks, onClose, reload }: Props) {
       if (!window.confirm(msg)) return;
     }
     if (modeChanged && hasDisk) {
-      if (mode === "boot" && (!osDiskId || !diskId)) {
-        setError("A Boot Mode PC needs an OS image and a game disk: pick both on the Disks tab.");
+      if (mode === "boot" && (!osImageId || !imageId)) {
+        setError("A Boot Mode PC needs an OS image and a game image: pick both on the Disks tab.");
         return;
       }
       const msg =
@@ -81,7 +81,7 @@ export function MachineSettings({ machine: m, disks, onClose, reload }: Props) {
         "Its writebacks are removed and made again for the new mode, so everything the PC wrote is lost." +
         "\n\nThe PC must be powered off.";
       if (!window.confirm(msg)) return;
-    } else if (disksChanged && m.game_disk_id !== null) {
+    } else if (disksChanged && m.game_image_id !== null) {
       const msg =
         `Change the disks of ${m.name}? Its writebacks are cloned again from the new disks, ` +
         "so everything the PC wrote is lost.\n\nThe PC must be powered off or disconnected.";
@@ -93,18 +93,18 @@ export function MachineSettings({ machine: m, disks, onClose, reload }: Props) {
         // The mode can only change without disks: take them away, switch, give the new ones.
         await api.assignDisk(m.id, null);
         await api.updateMachine(m.id, { mode });
-        if (diskId) {
+        if (imageId) {
           await api.assignDisk(
             m.id,
-            Number(diskId),
-            mode === "boot" ? Number(osDiskId) : undefined,
+            Number(imageId),
+            mode === "boot" ? Number(osImageId) : undefined,
           );
         }
       } else if (disksChanged) {
         await api.assignDisk(
           m.id,
-          diskId ? Number(diskId) : null,
-          mode === "boot" ? (osDiskId ? Number(osDiskId) : null) : undefined,
+          imageId ? Number(imageId) : null,
+          mode === "boot" ? (osImageId ? Number(osImageId) : null) : undefined,
         );
       }
       if (keep !== m.keep_writeback) await api.setKeepWriteback(m.id, keep);
@@ -212,7 +212,7 @@ export function MachineSettings({ machine: m, disks, onClose, reload }: Props) {
                 {mode === "boot" && (
                   <label>
                     OS image
-                    <select value={osDiskId} onChange={(e) => setOsDiskId(e.target.value)}>
+                    <select value={osImageId} onChange={(e) => setOsImageId(e.target.value)}>
                       <option value="">None</option>
                       {osImages.map((d) => (
                         <option key={d.id} value={d.id}>
@@ -223,10 +223,10 @@ export function MachineSettings({ machine: m, disks, onClose, reload }: Props) {
                   </label>
                 )}
                 <label>
-                  Game disk
-                  <select value={diskId} onChange={(e) => setDiskId(e.target.value)}>
+                  Game image
+                  <select value={imageId} onChange={(e) => setImageId(e.target.value)}>
                     <option value="">None</option>
-                    {gameDisks.map((d) => (
+                    {gameImages.map((d) => (
                       <option key={d.id} value={d.id}>
                         {d.name}
                       </option>
@@ -235,7 +235,7 @@ export function MachineSettings({ machine: m, disks, onClose, reload }: Props) {
                 </label>
                 {mode === "disk" && (
                   <label>
-                    Game disk letter
+                    Game image letter
                     <select value={letter} onChange={(e) => setLetter(e.target.value)}>
                       {LETTERS.map((l) => (
                         <option key={l} value={l}>
@@ -245,9 +245,9 @@ export function MachineSettings({ machine: m, disks, onClose, reload }: Props) {
                     </select>
                   </label>
                 )}
-                {m.game_disk_id !== null && !disksChanged && mode === m.mode && (
+                {m.game_image_id !== null && !disksChanged && mode === m.mode && (
                   <label>
-                    Game disk version
+                    Game image version
                     <select value={pin} onChange={(e) => setPin(e.target.value)}>
                       <option value="">Follow the active version</option>
                       {versions.map((v) => (

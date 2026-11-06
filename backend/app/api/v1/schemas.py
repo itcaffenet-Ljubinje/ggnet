@@ -9,7 +9,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.db.models import DiscoverySource, DiskKind, MachineMode, MachineStatus, UserRole
+from app.db.models import DiscoverySource, ImageKind, MachineMode, MachineStatus, UserRole
 from app.services.auth import PASSWORD_MIN, USERNAME_RE
 from app.zfs_manager import COMMENT_MAX, valid_comment
 
@@ -23,10 +23,10 @@ _MAC_RE = re.compile(r"^[0-9a-f]{2}([:-]?[0-9a-f]{2}){5}$")
 
 WINDOWS_IQN_PREFIX = "iqn.1991-05.com.microsoft:"
 
-# Game disk drive letter on the client; A-C are floppy and system drives.
+# Game image drive letter on the client; A-C are floppy and system drives.
 _DRIVE_LETTER_RE = re.compile(r"^[D-Z]$")
-# Boot Mode: Windows itself is C:, the game disk is always D:.
-BOOT_MODE_LETTER = "Boot Mode machines always get the game disk as D:"
+# Boot Mode: Windows itself is C:, the game image is always D:.
+BOOT_MODE_LETTER = "Boot Mode machines always get the game image as D:"
 
 
 def _machine_name(v: str) -> str:
@@ -63,7 +63,7 @@ def _mac(v: str | None) -> str | None:
     return ":".join(digits[i:i + 2] for i in range(0, 12, 2))
 
 
-# ── Game disk ─────────────────────────────────────────────────────────
+# ── Game image ─────────────────────────────────────────────────────────
 
 def _disk_name(v: str) -> str:
     v = v.strip().lower()
@@ -72,10 +72,10 @@ def _disk_name(v: str) -> str:
     return v
 
 
-class GameDiskCreate(BaseModel):
+class ImageCreate(BaseModel):
     name: str
     size_gb: int = Field(gt=0, le=16384)
-    kind: DiskKind = DiskKind.GAME     # `os`: a Boot Mode Windows image
+    kind: ImageKind = ImageKind.GAME     # `os`: a Boot Mode Windows image
 
     check_name = field_validator("name")(_disk_name)
 
@@ -113,7 +113,7 @@ class ImportIn(BaseModel):
     """A new disk from an image file in the imports folder or on an opened USB disk."""
 
     name: str
-    kind: DiskKind = DiskKind.OS
+    kind: ImageKind = ImageKind.OS
     path: str
     prepare: bool = True          # an OS image: Prepare image right after the import
     defender_off: bool = False    # ... with Microsoft Defender turned off
@@ -249,7 +249,7 @@ class WinPeFromIsoIn(BaseModel):
     path: str
 
 
-class GameDiskCopy(BaseModel):
+class ImageCopy(BaseModel):
     """A new image from one version of this one (default: the active version)."""
 
     name: str
@@ -265,21 +265,21 @@ class PrepareImage(BaseModel):
     services_off: bool = False     # background services a cafe PC does not need disabled (faster startup)
 
 
-class GameDiskGrow(BaseModel):
+class ImageGrow(BaseModel):
     """A bigger size for a disk; `extend` also grows its last data partition."""
 
     size_gb: int = Field(gt=0, le=16384)
     extend: bool = True
 
 
-class GameDiskGrown(BaseModel):
-    disk: GameDiskOut
+class ImageGrown(BaseModel):
+    disk: ImageOut
     version: str | None        # the new version (None for a draft, grown in place)
     extended: bool             # the data partition was grown on the server too
     note: str                  # what to do in Windows, if anything
 
 
-class GameDiskRename(BaseModel):
+class ImageRename(BaseModel):
     """A new name for the console; the zvol on the host keeps its path."""
 
     name: str
@@ -287,14 +287,14 @@ class GameDiskRename(BaseModel):
     check_name = field_validator("name")(_disk_name)
 
 
-class GameDiskOut(BaseModel):
+class ImageOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     name: str
     zvol_path: str
     size_gb: int
-    kind: DiskKind
+    kind: ImageKind
     snapshot: str | None
     published: bool
     editor_id: int | None
@@ -304,29 +304,29 @@ class GameDiskOut(BaseModel):
     copy_error: str | None = None
     # OS image: the network card models Add new hardware installed; none: it needs hardware.
     nic_models: list[str] = []
-    is_default: bool = False          # new PCs get the default OS image and game disk
+    is_default: bool = False          # new PCs get the default OS image and game image
 
 
-class GameDiskDefault(BaseModel):
+class ImageDefault(BaseModel):
     default: bool
 
 
 class ImageUsageOut(BaseModel):
     """An image's space on the pool, read live from ZFS."""
 
-    disk_id: int
+    image_id: int
     used_bytes: int                   # on the pool, with its versions
     volume_bytes: int                 # the disk's size as the PCs see it
     compress_ratio: float | None      # e.g. 1.65
     versions: int
 
 
-class GameDiskEdit(BaseModel):
+class ImageEdit(BaseModel):
     machine_id: int   # the PC the draft is filled on
 
 
 class SnapshotOut(BaseModel):
-    """One version of a game disk (a ZFS snapshot of its master)."""
+    """One version of a game image (a ZFS snapshot of its master)."""
 
     name: str                 # base, v2, ...
     created_at: datetime
@@ -344,7 +344,7 @@ class SnapshotOut(BaseModel):
 class ImageUpdateOut(BaseModel):
     """Whether an OS image's active version has an unfinished Windows update."""
 
-    disk_id: int
+    image_id: int
     snapshot: str
     state: str                   # none, pending, checking, unknown
     signs: list[str] = []
@@ -378,7 +378,7 @@ class ActiveSnapshot(BaseModel):
 
 
 class WritebackOut(BaseModel):
-    """A PC's writeback (clone) of a game disk."""
+    """A PC's writeback (clone) of a game image."""
 
     machine_id: int | None    # None: a clone on the host with no machine record
     machine_name: str
@@ -400,9 +400,9 @@ class MachineCreate(BaseModel):
     # the Windows default iqn.1991-05.com.microsoft:<name>.
     initiator_iqn: str | None = None
     mac: str | None = None
-    game_disk_id: int | None = None    # set → provision right away
-    os_disk_id: int | None = None      # Boot Mode: OS image, needed with game_disk_id
-    drive_letter: str = "D"            # game disk letter on the PC (Disk Mode)
+    game_image_id: int | None = None    # set → provision right away
+    os_image_id: int | None = None      # Boot Mode: OS image, needed with game_image_id
+    drive_letter: str = "D"            # game image letter on the PC (Disk Mode)
 
     @field_validator("name")
     @classmethod
@@ -498,11 +498,11 @@ class ApplyWritebacks(BaseModel):
 
 
 class MachinePin(BaseModel):
-    snapshot: str | None   # a version of the machine's game disk; None follows the active one
+    snapshot: str | None   # a version of the machine's game image; None follows the active one
 
 
 class DriveLetterAll(BaseModel):
-    """Set the game disk letter of every Disk Mode machine at once."""
+    """Set the game image letter of every Disk Mode machine at once."""
 
     drive_letter: str
 
@@ -513,9 +513,9 @@ class DriveLetterAll(BaseModel):
 
 
 class MachineAssign(BaseModel):
-    game_disk_id: int | None   # None → remove the disks (deprovision)
+    game_image_id: int | None   # None → remove the disks (deprovision)
     # Boot Mode: the OS image. Not sent → the machine keeps its current one.
-    os_disk_id: int | None = None
+    os_image_id: int | None = None
 
 
 class MachineOut(BaseModel):
@@ -526,9 +526,9 @@ class MachineOut(BaseModel):
     mode: MachineMode
     initiator_iqn: str
     mac: str | None
-    game_disk_id: int | None
-    os_disk_id: int | None
-    editing_disk_id: int | None
+    game_image_id: int | None
+    os_image_id: int | None
+    editing_image_id: int | None
     drive_letter: str
     reported_drive_letter: str | None
     pinned_snapshot: str | None
@@ -575,7 +575,7 @@ class AgentHeartbeat(BaseModel):
     initiator_iqn: str | None = None    # the client's actual initiator IQN
     iscsi_connected: bool = False
     booted_at: datetime | None = None   # Windows boot time (UTC); newer = the PC restarted
-    drive_letter: str | None = None     # the letter the game disk actually got
+    drive_letter: str | None = None     # the letter the game image actually got
     # Network and hardware (AgentInventory); parsed leniently by the endpoint so
     # a bad inventory never fails the heartbeat itself.
     inventory: dict[str, Any] | None = None
@@ -659,8 +659,8 @@ class AgentConfig(BaseModel):
     iscsi_target_iqn: str | None
     portal_ip: str
     portal_port: int
-    game_disk: str | None
-    drive_letter: str                   # the letter the game disk should get
+    game_image: str | None
+    drive_letter: str                   # the letter the game image should get
     command: str | None = None          # "shutdown" | "reboot", handed out once
     # Boot Mode, while Settings -> Network boot asks the PCs to enroll the key.
     secure_boot: "AgentSecureBoot | None" = None
@@ -723,7 +723,7 @@ class MachineTrafficOut(BaseModel):
     """iSCSI traffic of a mapped machine since its writeback was last cloned."""
 
     machine_id: int
-    sent_bytes: int                 # read by the PC from its game disk
+    sent_bytes: int                 # read by the PC from its game image
     received_bytes: int             # written by the PC (its writeback)
     sent_bps: float | None          # bytes/s since the previous read; None on the first
     received_bps: float | None
@@ -758,7 +758,7 @@ class BulkAction(BaseModel):
 
     machine_ids: list[int] = Field(min_length=1, max_length=500)
     action: BulkKind
-    game_disk_id: int | None = None   # assign: the disk, or None to remove it
+    game_image_id: int | None = None   # assign: the disk, or None to remove it
     snapshot: str | None = None       # pin: a version, or None to follow the active one
     drive_letter: str | None = None   # drive_letter: D-Z
 
@@ -806,8 +806,8 @@ class DiscoveryClaim(BaseModel):
 
     name: str
     mode: MachineMode = MachineMode.DISK
-    game_disk_id: int | None = None
-    os_disk_id: int | None = None
+    game_image_id: int | None = None
+    os_image_id: int | None = None
     drive_letter: str = "D"
 
     @field_validator("name")
@@ -831,7 +831,7 @@ class BootSettingsIn(BaseModel):
     mok_enroll: bool = False
     # MokManager's keyboard is US: lower-case letters and digits only.
     mok_password: str = Field("ggnet", pattern=r"^[a-z0-9]{4,16}$")
-    # New PC template (Add new hardware): a name with {n} or {nn}, and the game disk.
+    # New PC template (Add new hardware): a name with {n} or {nn}, and the game image.
     new_pc_name: str = "pc-{nn}"
 
     @field_validator("new_pc_name")

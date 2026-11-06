@@ -146,17 +146,17 @@ def card_name(devices: list[dict], nic: str, instance: str) -> str:
     return nic
 
 
-def activate_when_done(make_session, disk_id: int, base: str) -> Callable[[str, "HardwareJob"], None]:
+def activate_when_done(make_session, image_id: int, base: str) -> Callable[[str, "HardwareJob"], None]:
     """
     A HardwareAdder `done` callback: the image records the cards it now has
     (app.db.models.ImageHardware), and the new version becomes its active
     one, unless someone chose another version meanwhile.
     """
-    from app.db.models import GameDisk, ImageHardware
+    from app.db.models import Image, ImageHardware
 
     def done(snapshot: str, job: "HardwareJob") -> None:
         with make_session() as s:
-            d = s.get(GameDisk, disk_id)
+            d = s.get(Image, image_id)
             if d is None:
                 return
             have = {(h.nic, h.instance) for h in d.hardware}
@@ -189,7 +189,7 @@ class HardwareWizard:
     → done; or failed.
     """
 
-    disk_id: int
+    image_id: int
     base: str
     step: str = "waiting"
     machine: str | None = None
@@ -244,7 +244,7 @@ class HardwareAdder:
             wizard.fail(f"no PC booted within {WIZARD_TIMEOUT // 60} minutes")
         return wizard
 
-    def start_wizard(self, master: str, disk_id: int, base: str) -> HardwareWizard:
+    def start_wizard(self, master: str, image_id: int, base: str) -> HardwareWizard:
         """ValueError when a wizard or job already runs for the image."""
         with self._guard:
             current = self.wizard(master)
@@ -253,7 +253,7 @@ class HardwareAdder:
             job = self.jobs.get(master)
             if job is not None and job.running:
                 raise ValueError("Add new hardware is already running for this image")
-            wizard = self.wizards[master] = HardwareWizard(disk_id=disk_id, base=base)
+            wizard = self.wizards[master] = HardwareWizard(image_id=image_id, base=base)
         logger.info("Add new hardware wizard opened for %s", master)
         return wizard
 

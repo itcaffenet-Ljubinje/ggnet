@@ -9,14 +9,14 @@ async function menu(name: string, item: string) {
   await userEvent.click(screen.getByRole("button", { name: `Actions for ${name}` }));
   await userEvent.click(screen.getByRole("menuitem", { name: item }));
 }
-import { GameDisksPage } from "./GameDisksPage";
+import { ImagesPage } from "./ImagesPage";
 
-describe("GameDisksPage", () => {
+describe("ImagesPage", () => {
   it("lists disks with their state and assigned machines", () => {
     render(
-      <GameDisksPage
+      <ImagesPage
         disks={[disk(), disk({ id: 2, name: "valorant", published: false, snapshot: null })]}
-        machines={[machine({ game_disk_id: 1 }), machine({ id: 2, name: "pc02", game_disk_id: 1 })]}
+        machines={[machine({ game_image_id: 1 }), machine({ id: 2, name: "pc02", game_image_id: 1 })]}
         reload={vi.fn()}
       />,
     );
@@ -31,23 +31,23 @@ describe("GameDisksPage", () => {
 
   it("sums up images, kinds and PCs that use them", () => {
     render(
-      <GameDisksPage
+      <ImagesPage
         disks={[disk(), disk({ id: 3, name: "win11", kind: "os", size_gb: 100, published: false, snapshot: null })]}
-        machines={[machine({ game_disk_id: 1 }), machine({ id: 2, name: "pc02", game_disk_id: null })]}
+        machines={[machine({ game_image_id: 1 }), machine({ id: 2, name: "pc02", game_image_id: null })]}
         reload={vi.fn()}
       />,
     );
     const card = (title: string) => screen.getByText(title, { selector: ".kpi-title" }).closest(".kpi-card")!;
     expect(card("Images")).toHaveTextContent("2");
     expect(card("Images")).toHaveTextContent("1 draft");
-    expect(card("OS images")).toHaveTextContent("1");
+    expect(card("OS Images")).toHaveTextContent("1");
     expect(card("In use")).toHaveTextContent("of 2 PCs");
   });
 
   it("creates a disk and reloads", async () => {
     const fetchMock = stubFetch(201, disk());
     const reload = vi.fn().mockResolvedValue(undefined);
-    render(<GameDisksPage disks={[]} machines={[]} reload={reload} />);
+    render(<ImagesPage disks={[]} machines={[]} reload={reload} />);
 
     await userEvent.type(screen.getByLabelText("Name"), "cs2");
     await userEvent.clear(screen.getByLabelText("Size (GB)"));
@@ -55,7 +55,7 @@ describe("GameDisksPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "Create" }));
 
     expect(calls(fetchMock).filter((c) => c.method !== "GET")).toEqual([
-      { url: "/api/v1/game-disks", method: "POST", body: { name: "cs2", size_gb: 50, kind: "game" } },
+      { url: "/api/v1/images", method: "POST", body: { name: "cs2", size_gb: 50, kind: "game" } },
     ]);
     expect(reload).toHaveBeenCalled();
     expect(screen.getByLabelText("Name")).toHaveValue("");
@@ -65,7 +65,7 @@ describe("GameDisksPage", () => {
     const fetchMock = stubFetch();
     vi.spyOn(window, "confirm").mockReturnValue(false);
     render(
-      <GameDisksPage
+      <ImagesPage
         disks={[disk({ published: false, snapshot: null })]}
         machines={[]}
         reload={vi.fn()}
@@ -78,14 +78,14 @@ describe("GameDisksPage", () => {
   it("renames a disk in the Edit dialog", async () => {
     const fetchMock = stubFetch(200, disk({ name: "steam-main" }));
     const reload = vi.fn().mockResolvedValue(undefined);
-    render(<GameDisksPage disks={[disk()]} machines={[]} reload={reload} />);
+    render(<ImagesPage disks={[disk()]} machines={[]} reload={reload} />);
     await menu("cs2", "Edit");
     const dialog = screen.getByRole("dialog", { name: "Edit cs2" });
     await userEvent.clear(within(dialog).getByLabelText(/^Name/));
     await userEvent.type(within(dialog).getByLabelText(/^Name/), " Steam-Main ");
     await userEvent.click(within(dialog).getByRole("button", { name: /Save/ }));
     expect(calls(fetchMock).filter((c) => c.method !== "GET")).toEqual([
-      { url: "/api/v1/game-disks/1", method: "PATCH", body: { name: "steam-main" } },
+      { url: "/api/v1/images/1", method: "PATCH", body: { name: "steam-main" } },
     ]);
     expect(reload).toHaveBeenCalled();
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -99,7 +99,7 @@ describe("GameDisksPage", () => {
       note: "The data partition was extended too.",
     });
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
-    render(<GameDisksPage disks={[disk()]} machines={[]} reload={vi.fn().mockResolvedValue(undefined)} />);
+    render(<ImagesPage disks={[disk()]} machines={[]} reload={vi.fn().mockResolvedValue(undefined)} />);
     await menu("cs2", "Edit");
     const dialog = screen.getByRole("dialog", { name: "Edit cs2" });
     await userEvent.click(within(dialog).getByRole("button", { name: "+50 GB" }));
@@ -109,7 +109,7 @@ describe("GameDisksPage", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: /Save/ }));
     expect(confirm.mock.calls[0][0]).toContain("from 100 GB to 250 GB");
     expect(calls(fetchMock).filter((c) => c.method !== "GET")).toEqual([
-      { url: "/api/v1/game-disks/1/grow", method: "POST", body: { size_gb: 250, extend: false } },
+      { url: "/api/v1/images/1/grow", method: "POST", body: { size_gb: 250, extend: false } },
     ]);
     expect(await screen.findByRole("status")).toHaveTextContent("The data partition was extended too.");
   });
@@ -117,7 +117,7 @@ describe("GameDisksPage", () => {
   it("does nothing when the size or the name did not change, or growing is not confirmed", async () => {
     const fetchMock = stubFetch();
     vi.spyOn(window, "confirm").mockReturnValue(false);
-    render(<GameDisksPage disks={[disk()]} machines={[]} reload={vi.fn()} />);
+    render(<ImagesPage disks={[disk()]} machines={[]} reload={vi.fn()} />);
     await menu("cs2", "Edit");
     await userEvent.click(screen.getByRole("button", { name: /Save/ }));
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -128,9 +128,9 @@ describe("GameDisksPage", () => {
   });
 
   it("shows the backend error when delete fails", async () => {
-    stubFetch(409, { detail: { error: "Game disk 'cs2' is assigned to 1 machine(s); move them first" } });
+    stubFetch(409, { detail: { error: "Image 'cs2' is assigned to 1 machine(s); move them first" } });
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    render(<GameDisksPage disks={[disk()]} machines={[]} reload={vi.fn()} />);
+    render(<ImagesPage disks={[disk()]} machines={[]} reload={vi.fn()} />);
 
     await menu("cs2", "Remove");
     expect(await screen.findByRole("alert")).toHaveTextContent("assigned to 1 machine(s)");
@@ -141,12 +141,12 @@ describe("GameDisksPage", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const reload = vi.fn().mockResolvedValue(undefined);
     render(
-      <GameDisksPage
+      <ImagesPage
         disks={[disk({ published: false, snapshot: null })]}
         machines={[
           machine(),
-          // Not offered: it already has a game disk.
-          machine({ id: 2, name: "pc02", game_disk_id: 9, status: "provisioned" }),
+          // Not offered: it already has a game image.
+          machine({ id: 2, name: "pc02", game_image_id: 9, status: "provisioned" }),
         ]}
         reload={reload}
       />,
@@ -158,15 +158,15 @@ describe("GameDisksPage", () => {
     await userEvent.selectOptions(select, "1");
     await userEvent.click(screen.getByRole("button", { name: "Edit on PC" }));
     expect(calls(fetchMock).filter((c) => c.method !== "GET")).toEqual([
-      { url: "/api/v1/game-disks/1/edit", method: "POST", body: { machine_id: 1 } },
+      { url: "/api/v1/images/1/edit", method: "POST", body: { machine_id: 1 } },
     ]);
     expect(reload).toHaveBeenCalled();
   });
 
   it("shows the editor and finishes editing only when the PC is off", async () => {
     const draft = disk({ published: false, snapshot: null, editor_id: 1 });
-    const editor = machine({ status: "editing", editing_disk_id: 1, session_active: true });
-    const { rerender } = render(<GameDisksPage disks={[draft]} machines={[editor]} reload={vi.fn()} />);
+    const editor = machine({ status: "editing", editing_image_id: 1, session_active: true });
+    const { rerender } = render(<ImagesPage disks={[draft]} machines={[editor]} reload={vi.fn()} />);
 
     expect(screen.getByText("Editing on pc01")).toBeInTheDocument();
     // No publish or new edit while the master is mapped to a PC.
@@ -177,7 +177,7 @@ describe("GameDisksPage", () => {
     const fetchMock = stubFetch(200, disk({ published: false, snapshot: null }));
     vi.spyOn(window, "confirm").mockReturnValue(true);
     rerender(
-      <GameDisksPage
+      <ImagesPage
         disks={[draft]}
         machines={[{ ...editor, session_active: false }]}
         reload={vi.fn().mockResolvedValue(undefined)}
@@ -185,14 +185,14 @@ describe("GameDisksPage", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: "Finish editing" }));
     expect(calls(fetchMock).filter((c) => c.method !== "GET")).toEqual([
-      { url: "/api/v1/game-disks/1/finish-edit", method: "POST", body: undefined },
+      { url: "/api/v1/images/1/finish-edit", method: "POST", body: undefined },
     ]);
   });
 
   it("opens an image's details page from its name or the menu, and goes back", async () => {
     stubFetch(200, []);
     render(
-      <GameDisksPage
+      <ImagesPage
         disks={[disk(), disk({ id: 2, name: "draft", published: false, snapshot: null })]}
         machines={[]}
         reload={vi.fn()}
@@ -211,10 +211,10 @@ describe("GameDisksPage", () => {
     const fetchMock = stubFetch(201, disk({ id: 5, name: "cs2-b", copy_source: "tank/ggnet/images/cs2@base" }));
     const prompt = vi.spyOn(window, "prompt").mockReturnValue(" CS2-B ");
     const reload = vi.fn().mockResolvedValue(undefined);
-    render(<GameDisksPage disks={[disk()]} machines={[]} reload={reload} />);
+    render(<ImagesPage disks={[disk()]} machines={[]} reload={reload} />);
     await menu("cs2", "Copy");
     expect(prompt.mock.calls[0][1]).toBe("cs2-copy");
-    expect(calls(fetchMock).filter((c) => c.method !== "GET")).toEqual([{ url: "/api/v1/game-disks/1/copy", method: "POST", body: { name: "cs2-b" } }]);
+    expect(calls(fetchMock).filter((c) => c.method !== "GET")).toEqual([{ url: "/api/v1/images/1/copy", method: "POST", body: { name: "cs2-b" } }]);
     expect(reload).toHaveBeenCalled();
   });
 
@@ -222,7 +222,7 @@ describe("GameDisksPage", () => {
     const fetchMock = stubFetch(204);
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(
-      <GameDisksPage
+      <ImagesPage
         disks={[disk({ id: 4, name: "win", published: false, snapshot: null, copy_source: "/imports/a.vhdx", copy_percent: 7 })]}
         machines={[]}
         reload={vi.fn().mockResolvedValue(undefined)}
@@ -235,7 +235,7 @@ describe("GameDisksPage", () => {
 
   it("shows a running and a failed copy with their limits", async () => {
     render(
-      <GameDisksPage
+      <ImagesPage
         disks={[
           disk({ id: 2, name: "busy", published: false, snapshot: null, copy_source: "x@base", copy_percent: 42 }),
           disk({ id: 3, name: "broken", published: false, snapshot: null, copy_source: "x@base", copy_error: "out of space" }),
@@ -254,22 +254,22 @@ describe("GameDisksPage", () => {
   });
 
   it("offers Remove only for an image no PC uses", async () => {
-    render(<GameDisksPage disks={[disk()]} machines={[machine({ game_disk_id: 1 })]} reload={vi.fn()} />);
+    render(<ImagesPage disks={[disk()]} machines={[machine({ game_image_id: 1 })]} reload={vi.fn()} />);
     await userEvent.click(screen.getByRole("button", { name: "Actions for cs2" }));
     expect(screen.getByRole("menuitem", { name: "Remove" })).toBeDisabled();
   });
 
-  it("lists OS images and game disks apart and creates an OS image", async () => {
+  it("lists OS images and game images apart and creates an OS image", async () => {
     const fetchMock = stubFetch(201, disk({ id: 3, name: "win11", kind: "os" }));
     render(
-      <GameDisksPage
+      <ImagesPage
         disks={[disk(), disk({ id: 3, name: "win11", kind: "os", zvol_path: "tank/ggnet/images/win11" })]}
-        machines={[machine({ mode: "boot", os_disk_id: 3, game_disk_id: 1 })]}
+        machines={[machine({ mode: "boot", os_image_id: 3, game_image_id: 1 })]}
         reload={vi.fn().mockResolvedValue(undefined)}
       />,
     );
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(headings).toEqual(["OS images1", "Game disks1"]);
+    expect(headings).toEqual(["OS Images1", "Game Images1"]);
     const [osTable, gameTable] = screen.getAllByRole("table");
     expect(osTable).toHaveTextContent("win11");
     expect(osTable).not.toHaveTextContent("cs2");
@@ -281,11 +281,11 @@ describe("GameDisksPage", () => {
     expect(calls(fetchMock).filter((c) => c.method === "POST")[0].body).toMatchObject({ kind: "os" });
   });
 
-  it("prepares an OS image from its dialog, with Defender off on request; game disks have none", async () => {
+  it("prepares an OS image from its dialog, with Defender off on request; game images have none", async () => {
     const fetchMock = stubFetch(200, disk({ id: 3, name: "win11", kind: "os", snapshot: "v2" }));
     const reload = vi.fn().mockResolvedValue(undefined);
     render(
-      <GameDisksPage
+      <ImagesPage
         disks={[disk(), disk({ id: 3, name: "win11", kind: "os" })]}
         machines={[]}
         reload={reload}
@@ -301,7 +301,7 @@ describe("GameDisksPage", () => {
     await userEvent.click(within(dialog).getByLabelText(/Turn off background services/));   // on by default
     await userEvent.click(within(dialog).getByRole("button", { name: /Prepare image/ }));
     expect(calls(fetchMock).filter((c) => c.method !== "GET")).toEqual([
-      { url: "/api/v1/game-disks/3/prepare", method: "POST", body: { defender_off: true, services_off: false } },
+      { url: "/api/v1/images/3/prepare", method: "POST", body: { defender_off: true, services_off: false } },
     ]);
     expect(reload).toHaveBeenCalled();
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -313,10 +313,10 @@ describe("GameDisksPage", () => {
       disk({ id: 3, name: "win11", kind: "os", snapshot: "v2", nic_models: ["Realtek PCIe GbE Family Controller"] }),
     );
     const reload = vi.fn().mockResolvedValue(undefined);
-    render(<GameDisksPage disks={[disk({ id: 3, name: "win11", kind: "os" })]} machines={[]} reload={reload} />);
+    render(<ImagesPage disks={[disk({ id: 3, name: "win11", kind: "os" })]} machines={[]} reload={reload} />);
     await menu("win11", "Check network cards");
     expect(calls(fetchMock).filter((c) => c.method !== "GET")).toEqual([
-      { url: "/api/v1/game-disks/3/check-hardware", method: "POST", body: undefined },
+      { url: "/api/v1/images/3/check-hardware", method: "POST", body: undefined },
     ]);
     expect(await screen.findByText(/win11@v2 has these network cards: Realtek PCIe GbE Family Controller/))
       .toBeInTheDocument();
@@ -325,11 +325,11 @@ describe("GameDisksPage", () => {
 
   it("marks an OS image whose active version has an unfinished Windows update", async () => {
     stubFetch(200, [
-      { disk_id: 3, snapshot: "v2", state: "pending", signs: ["pending.xml"], error: null },
-      { disk_id: 4, snapshot: "base", state: "none", signs: [], error: null },
+      { image_id: 3, snapshot: "v2", state: "pending", signs: ["pending.xml"], error: null },
+      { image_id: 4, snapshot: "base", state: "none", signs: [], error: null },
     ]);
     render(
-      <GameDisksPage
+      <ImagesPage
         disks={[
           disk({ id: 3, name: "win11", kind: "os", snapshot: "v2", nic_models: ["Realtek PCIe GbE"] }),
           disk({ id: 4, name: "win10", kind: "os", snapshot: "base", nic_models: ["Realtek PCIe GbE"] }),
@@ -349,27 +349,27 @@ describe("GameDisksPage", () => {
       url.endsWith("/usage")
         ? new Response(
             JSON.stringify([
-              { disk_id: 1, used_bytes: 48 * 1024 ** 3, volume_bytes: 120 * 1024 ** 3, compress_ratio: 1.653, versions: 3 },
+              { image_id: 1, used_bytes: 48 * 1024 ** 3, volume_bytes: 120 * 1024 ** 3, compress_ratio: 1.653, versions: 3 },
             ]),
           )
         : new Response(JSON.stringify(init?.method === "PUT" ? disk({ is_default: true }) : [])),
     );
     vi.stubGlobal("fetch", fetchMock);
     const reload = vi.fn().mockResolvedValue(undefined);
-    render(<GameDisksPage disks={[disk(), disk({ id: 3, name: "win11", kind: "os", is_default: true, nic_models: ["x"] })]} machines={[]} reload={reload} />);
+    render(<ImagesPage disks={[disk(), disk({ id: 3, name: "win11", kind: "os", is_default: true, nic_models: ["x"] })]} machines={[]} reload={reload} />);
     const headers = screen.getAllByRole("columnheader").map((h) => h.textContent);
     expect(headers.slice(0, 9)).toEqual([
       "Name", "Type", "Default", "State", "Size", "Volume", "Compression", "Versions", "Machines",
     ]);
     expect(screen.queryByText(/ZFS path/)).toBeNull();
     const cs2 = (await screen.findByText("1.65×")).closest("tr")!;
-    expect(cs2).toHaveTextContent("Game disk");
+    expect(cs2).toHaveTextContent("Game image");
     expect(cs2).toHaveTextContent("48.0 GB");
     expect(cs2).toHaveTextContent("120.0 GB");
     expect(screen.getByLabelText("Default").closest("tr")).toHaveTextContent("win11");
     await menu("cs2", "Make default");
     expect(calls(fetchMock).filter((c) => c.method === "PUT")).toEqual([
-      { url: "/api/v1/game-disks/1/default", method: "PUT", body: { default: true } },
+      { url: "/api/v1/images/1/default", method: "PUT", body: { default: true } },
     ]);
     expect(reload).toHaveBeenCalled();
   });

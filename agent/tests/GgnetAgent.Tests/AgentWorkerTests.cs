@@ -29,7 +29,7 @@ public class AgentWorkerTests
         () => _uptime);
 
     [Fact]
-    public async Task Connects_the_game_disk_and_reports_it_on_the_next_heartbeat()
+    public async Task Connects_the_game_image_and_reports_it_on_the_next_heartbeat()
     {
         var worker = Worker();
         await worker.TickAsync(CancellationToken.None);
@@ -155,7 +155,7 @@ public class AgentWorkerTests
     [Fact]
     public async Task Moves_the_disk_when_the_admin_changes_the_letter_and_reports_it()
     {
-        _server.Body = ConfigJson.Replace("\"game_disk\": \"cs2\"", "\"game_disk\": \"cs2\", \"drive_letter\": \"G\"");
+        _server.Body = ConfigJson.Replace("\"game_image\": \"cs2\"", "\"game_image\": \"cs2\", \"drive_letter\": \"G\"");
         var worker = Worker();
         await worker.TickAsync(CancellationToken.None);
         Assert.Equal($"connect {Target} 192.168.0.10:3260 G:", _iscsi.Calls[^1]);
@@ -260,7 +260,7 @@ public class AgentWorkerTests
     }
 
     [Fact]
-        public async Task Stop_keeps_the_game_disk_connected()
+        public async Task Stop_keeps_the_game_image_connected()
     {
         var worker = Worker();
         await worker.TickAsync(CancellationToken.None);

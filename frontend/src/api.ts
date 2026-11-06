@@ -14,7 +14,7 @@ export interface PrepareOptions {
   services_off: boolean;
 }
 
-export interface GameDisk {
+export interface Image {
   id: number;
   name: string;
   zvol_path: string;
@@ -23,22 +23,22 @@ export interface GameDisk {
   published: boolean;
   editor_id: number | null;
   created_at: string;
-  /** "os": a Boot Mode Windows image; "game": a game disk. Older servers send none (game). */
-  kind?: DiskKind;
+  /** "os": a Boot Mode Windows image; "game": a game image. Older servers send none (game). */
+  kind?: ImageKind;
   /** A copy in progress (or failed): the master@version it is copied from. */
   copy_source?: string | null;
   copy_percent?: number | null;
   copy_error?: string | null;
   /** OS image: the network card models Add new hardware installed; none: it needs hardware. */
   nic_models?: string[];
-  /** New PCs get the default OS image and game disk (Images → Make default). */
+  /** New PCs get the default OS image and game image (Images → Make default). */
   is_default?: boolean;
 }
 
 /** An OS image no PC can boot yet: Add new hardware has not added any network card. */
-export const needsHardware = (d: GameDisk) => d.kind === "os" && d.published && (d.nic_models ?? []).length === 0;
+export const needsHardware = (d: Image) => d.kind === "os" && d.published && (d.nic_models ?? []).length === 0;
 
-export type DiskKind = "game" | "os";
+export type ImageKind = "game" | "os";
 
 /** Whether a disk's copy_source is an image file being imported (a path), not a version being copied. */
 export const isImport = (source: string | null | undefined) => !!source && source.startsWith("/");
@@ -220,7 +220,7 @@ export interface ApplyChoice {
   comment?: string;
 }
 
-/** One version of a game disk (a ZFS snapshot of its master). */
+/** One version of a game image (a ZFS snapshot of its master). */
 export interface Snapshot {
   name: string;
   created_at: string;
@@ -238,14 +238,14 @@ export interface Snapshot {
 }
 
 /** The disk a new PC gets from `list`: the default one, else the only one; "" when there is a choice. */
-export function preselectDisk(list: GameDisk[]): string {
+export function preselectDisk(list: Image[]): string {
   const pick = list.find((d) => d.is_default) ?? (list.length === 1 ? list[0] : undefined);
   return pick ? String(pick.id) : "";
 }
 
 /** An image's space on the pool, read live from ZFS (Images table). */
 export interface ImageUsage {
-  disk_id: number;
+  image_id: number;
   /** On the pool, with its versions. */
   used_bytes: number;
   /** The disk's size as the PCs see it. */
@@ -256,7 +256,7 @@ export interface ImageUsage {
 
 /** Whether an OS image's active version has an unfinished Windows update. */
 export interface ImageUpdate {
-  disk_id: number;
+  image_id: number;
   snapshot: string;
   state: "none" | "pending" | "checking" | "unknown";
   signs: string[];
@@ -270,7 +270,7 @@ export function updatePending(e: unknown): string[] | null {
   return Array.isArray(detail?.update_pending) ? (detail.update_pending as string[]) : null;
 }
 
-/** A PC's writeback (clone) of a game disk. */
+/** A PC's writeback (clone) of a game image. */
 export interface Writeback {
   machine_id: number | null;
   machine_name: string;
@@ -325,7 +325,7 @@ export interface BootSettings {
   mok_password: string;
   /** New PC template: name with {n} or {nn} (the first free number), e.g. komp-{nn}. */
   new_pc_name: string;
-  /** Game disk of a new PC; null: unknown PCs are not registered by Add new hardware. */
+  /** Game image of a new PC; null: unknown PCs are not registered by Add new hardware. */
 }
 
 export interface BootSettingsOut extends BootSettings {
@@ -501,10 +501,10 @@ export interface Machine {
   mode: MachineMode;
   initiator_iqn: string;
   mac: string | null;
-  game_disk_id: number | null;
-  os_disk_id?: number | null;      // Boot Mode: the OS image
+  game_image_id: number | null;
+  os_image_id?: number | null;      // Boot Mode: the OS image
   os_clone_snapshot?: string | null; // Boot Mode: the OS image version the PC runs
-  editing_disk_id: number | null;
+  editing_image_id: number | null;
   drive_letter: string;
   reported_drive_letter: string | null;
   pinned_snapshot: string | null;
@@ -558,8 +558,8 @@ export interface Discovered {
 export interface DiscoveryClaim {
   name: string;
   mode?: MachineMode;
-  game_disk_id?: number | null;
-  os_disk_id?: number | null;     // Boot Mode: the OS image
+  game_image_id?: number | null;
+  os_image_id?: number | null;     // Boot Mode: the OS image
 }
 
 export interface MachineCreate {
@@ -567,8 +567,8 @@ export interface MachineCreate {
   mode?: MachineMode;
   /** Identifies the PC; the server derives the initiator IQN from it. */
   mac?: string | null;
-  game_disk_id?: number | null;
-  os_disk_id?: number | null;     // Boot Mode: the OS image
+  game_image_id?: number | null;
+  os_image_id?: number | null;     // Boot Mode: the OS image
   drive_letter?: string;
 }
 
@@ -673,19 +673,19 @@ export const api = {
   deleteUser: (id: number) => request<void>("DELETE", `/v1/users/${id}`),
   listActivity: (limit = 200) => request<Activity[]>("GET", `/v1/activity?limit=${limit}`),
 
-  listDisks: () => request<GameDisk[]>("GET", "/v1/game-disks"),
-  createDisk: (name: string, size_gb: number, kind: DiskKind = "game") =>
-    request<GameDisk>("POST", "/v1/game-disks", { name, size_gb, kind }),
-  publishDisk: (id: number) => request<GameDisk>("POST", `/v1/game-disks/${id}/publish`),
+  listDisks: () => request<Image[]>("GET", "/v1/images"),
+  createDisk: (name: string, size_gb: number, kind: ImageKind = "game") =>
+    request<Image>("POST", "/v1/images", { name, size_gb, kind }),
+  publishDisk: (id: number) => request<Image>("POST", `/v1/images/${id}/publish`),
   startEdit: (id: number, machine_id: number) =>
-    request<GameDisk>("POST", `/v1/game-disks/${id}/edit`, { machine_id }),
-  finishEdit: (id: number) => request<GameDisk>("POST", `/v1/game-disks/${id}/finish-edit`),
-  deleteDisk: (id: number) => request<void>("DELETE", `/v1/game-disks/${id}`),
-  renameDisk: (id: number, name: string) => request<GameDisk>("PATCH", `/v1/game-disks/${id}`, { name }),
+    request<Image>("POST", `/v1/images/${id}/edit`, { machine_id }),
+  finishEdit: (id: number) => request<Image>("POST", `/v1/images/${id}/finish-edit`),
+  deleteDisk: (id: number) => request<void>("DELETE", `/v1/images/${id}`),
+  renameDisk: (id: number, name: string) => request<Image>("PATCH", `/v1/images/${id}`, { name }),
   growDisk: (id: number, size_gb: number, extend = true) =>
-    request<{ disk: GameDisk; version: string | null; extended: boolean; note: string }>(
+    request<{ disk: Image; version: string | null; extended: boolean; note: string }>(
       "POST",
-      `/v1/game-disks/${id}/grow`,
+      `/v1/images/${id}/grow`,
       { size_gb, extend },
     ),
   importSources: () => request<ImportSources>("GET", "/v1/imports"),
@@ -694,40 +694,40 @@ export const api = {
   ejectUsb: (part: string) => request<void>("POST", `/v1/imports/usb/${part}/eject`),
   deleteImportFile: (path: string) =>
     request<void>("DELETE", `/v1/imports/file?path=${encodeURIComponent(path)}`),
-  startImport: (name: string, kind: DiskKind, path: string, options: { prepare: boolean } & PrepareOptions) =>
-    request<GameDisk>("POST", "/v1/imports", { name, kind, path, ...options }),
+  startImport: (name: string, kind: ImageKind, path: string, options: { prepare: boolean } & PrepareOptions) =>
+    request<Image>("POST", "/v1/imports", { name, kind, path, ...options }),
   cancelImport: (id: number) => request<void>("POST", `/v1/imports/${id}/cancel`),
-  getAddHardware: (id: number) => request<AddHardwareStatus>("GET", `/v1/game-disks/${id}/add-hardware`),
-  checkHardware: (id: number) => request<GameDisk>("POST", `/v1/game-disks/${id}/check-hardware`),
+  getAddHardware: (id: number) => request<AddHardwareStatus>("GET", `/v1/images/${id}/add-hardware`),
+  checkHardware: (id: number) => request<Image>("POST", `/v1/images/${id}/check-hardware`),
   openHardwareWizard: (id: number) =>
-    request<AddHardwareStatus>("POST", `/v1/game-disks/${id}/add-hardware/wizard`),
+    request<AddHardwareStatus>("POST", `/v1/images/${id}/add-hardware/wizard`),
   closeHardwareWizard: (id: number) =>
-    request<AddHardwareStatus>("DELETE", `/v1/game-disks/${id}/add-hardware/wizard`),
+    request<AddHardwareStatus>("DELETE", `/v1/images/${id}/add-hardware/wizard`),
   addHardware: (id: number, cards: HardwareCard[]) =>
-    request<AddHardwareJob>("POST", `/v1/game-disks/${id}/add-hardware`, { cards }),
+    request<AddHardwareJob>("POST", `/v1/images/${id}/add-hardware`, { cards }),
   cancelAddHardware: (id: number) =>
-    request<AddHardwareJob | null>("POST", `/v1/game-disks/${id}/add-hardware/cancel`),
+    request<AddHardwareJob | null>("POST", `/v1/images/${id}/add-hardware/cancel`),
   copyDisk: (id: number, name: string, snapshot?: string) =>
-    request<GameDisk>("POST", `/v1/game-disks/${id}/copy`, snapshot ? { name, snapshot } : { name }),
-  listSnapshots: (id: number) => request<Snapshot[]>("GET", `/v1/game-disks/${id}/snapshots`),
+    request<Image>("POST", `/v1/images/${id}/copy`, snapshot ? { name, snapshot } : { name }),
+  listSnapshots: (id: number) => request<Snapshot[]>("GET", `/v1/images/${id}/snapshots`),
   setActiveSnapshot: (id: number, snapshot: string) =>
-    request<GameDisk>("PUT", `/v1/game-disks/${id}/active-snapshot`, { snapshot }),
+    request<Image>("PUT", `/v1/images/${id}/active-snapshot`, { snapshot }),
   deleteSnapshot: (id: number, name: string) =>
-    request<void>("DELETE", `/v1/game-disks/${id}/snapshots/${encodeURIComponent(name)}`),
+    request<void>("DELETE", `/v1/images/${id}/snapshots/${encodeURIComponent(name)}`),
   setSnapshotComment: (id: number, name: string, comment: string) =>
-    request<Snapshot>("PUT", `/v1/game-disks/${id}/snapshots/${encodeURIComponent(name)}/comment`, { comment }),
+    request<Snapshot>("PUT", `/v1/images/${id}/snapshots/${encodeURIComponent(name)}/comment`, { comment }),
   setSnapshotLock: (id: number, name: string, locked: boolean) =>
-    request<Snapshot>("PUT", `/v1/game-disks/${id}/snapshots/${encodeURIComponent(name)}/lock`, { locked }),
+    request<Snapshot>("PUT", `/v1/images/${id}/snapshots/${encodeURIComponent(name)}/lock`, { locked }),
   prepareImage: (id: number, options?: PrepareOptions) =>
-    request<GameDisk>("POST", `/v1/game-disks/${id}/prepare`, options),
+    request<Image>("POST", `/v1/images/${id}/prepare`, options),
   mergeIntoBase: (id: number, name: string) =>
-    request<GameDisk>("POST", `/v1/game-disks/${id}/snapshots/${encodeURIComponent(name)}/merge-into-base`),
-  listWritebacks: (id: number) => request<Writeback[]>("GET", `/v1/game-disks/${id}/writebacks`),
+    request<Image>("POST", `/v1/images/${id}/snapshots/${encodeURIComponent(name)}/merge-into-base`),
+  listWritebacks: (id: number) => request<Writeback[]>("GET", `/v1/images/${id}/writebacks`),
 
-  getImageUsage: () => request<ImageUsage[]>("GET", "/v1/game-disks/usage"),
+  getImageUsage: () => request<ImageUsage[]>("GET", "/v1/images/usage"),
   setDefaultDisk: (id: number, isDefault: boolean) =>
-    request<GameDisk>("PUT", `/v1/game-disks/${id}/default`, { default: isDefault }),
-  getImageUpdates: () => request<ImageUpdate[]>("GET", "/v1/game-disks/updates"),
+    request<Image>("PUT", `/v1/images/${id}/default`, { default: isDefault }),
+  getImageUpdates: () => request<ImageUpdate[]>("GET", "/v1/images/updates"),
   getAgentPackage: () => request<AgentPackage>("GET", "/v1/agent/package"),
   getWinPe: () => request<WinPe>("GET", "/v1/winpe"),
   winPeFromIso: (path: string) => request<WinPe>("POST", "/v1/winpe/from-iso", { path }),
@@ -755,12 +755,12 @@ export const api = {
   createMachine: (body: MachineCreate) => request<Machine>("POST", "/v1/machines", body),
   updateMachine: (id: number, body: Partial<MachineCreate>) =>
     request<Machine>("PATCH", `/v1/machines/${id}`, body),
-  /** Game disk, and in Boot Mode the OS image (not sent keeps the current one). */
-  assignDisk: (id: number, game_disk_id: number | null, os_disk_id?: number | null) =>
+  /** Game image, and in Boot Mode the OS image (not sent keeps the current one). */
+  assignDisk: (id: number, game_image_id: number | null, os_image_id?: number | null) =>
     request<Machine>(
       "POST",
       `/v1/machines/${id}/assign`,
-      os_disk_id === undefined ? { game_disk_id } : { game_disk_id, os_disk_id },
+      os_image_id === undefined ? { game_image_id } : { game_image_id, os_image_id },
     ),
   setDriveLetterAll: (drive_letter: string) =>
     request<Machine[]>("PUT", "/v1/machines/drive-letter", { drive_letter }),
@@ -773,7 +773,7 @@ export const api = {
   bulk: (
     machine_ids: number[],
     action: BulkKind,
-    extra: { game_disk_id?: number | null; snapshot?: string | null; drive_letter?: string } = {},
+    extra: { game_image_id?: number | null; snapshot?: string | null; drive_letter?: string } = {},
   ) => request<BulkResult[]>("POST", "/v1/machines/bulk", { machine_ids, action, ...extra }),
   power: (id: number, action: "on" | "shutdown" | "reboot") =>
     request<Machine>("POST", `/v1/machines/${id}/power`, { action }),

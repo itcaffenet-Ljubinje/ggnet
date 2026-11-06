@@ -1,13 +1,13 @@
 # ggnet-agent
 
-Windows service for Disk Mode: on startup it connects the iSCSI game disk (D:) and sends heartbeats to the server.
+Windows service for Disk Mode: on startup it connects the iSCSI game image (D:) and sends heartbeats to the server.
 C#/.NET 10, published as one self-contained `ggnet-agent.exe` (no .NET install on clients).
 
 ## What it does
 
 Every 30 seconds (and at startup) the agent:
 
-1. reads the PC's iSCSI initiator name and checks that its game disk session is still up;
+1. reads the PC's iSCSI initiator name and checks that its game image session is still up;
 2. sends a heartbeat to the server and gets back the wanted target;
 3. makes the PC match it, using the built-in Windows iSCSI initiator (PowerShell cmdlets):
    - **connect**: add the portal, log in (non-persistent), bring the disk online and
@@ -39,7 +39,7 @@ Logs: Event Viewer → Windows Logs → Application, source `ggnet-agent`.
 
 ## Install on a client PC
 
-1. Register the PC in the ggNet web UI (its Windows computer name, lowercase) and assign a game disk.
+1. Register the PC in the ggNet web UI (its Windows computer name, lowercase) and assign a game image.
 2. Easiest: in an Administrator PowerShell on the PC, run the line shown in the web UI under
    Settings → Client app:
 
@@ -58,13 +58,13 @@ Logs: Event Viewer → Windows Logs → Application, source `ggnet-agent`.
    .\install.ps1 -ServerUrl http://<ggnet-server-ip>:8088
    ```
 
-   The game disk letter is set per machine in the web UI (Machines → Drive, or "Apply to all"); the agent
+   The game image letter is set per machine in the web UI (Machines → Drive, or "Apply to all"); the agent
    moves a connected disk when it changes. `-DriveLetter` is only used with a server that sends no letter.
    If the wanted letter is taken on a PC (DVD drive, second partition, USB stick), the agent keeps the letter
-   Windows already gave the game disk, or takes the first free one (wanted..Z, then D upward), logs a
+   Windows already gave the game image, or takes the first free one (wanted..Z, then D upward), logs a
    warning and reports it; the UI then shows "Got E:". Keep the same letter on every PC where you can:
    games and launchers (e.g. Steam library folders) remember the path they were installed to.
-   Boot Mode machines always get the game disk as D: (Windows itself is C:).
+   Boot Mode machines always get the game image as D: (Windows itself is C:).
 
 The same command updates an existing install. `scripts/uninstall.ps1` removes it.
 
@@ -112,8 +112,8 @@ The agent talks to the ggNet backend over HTTP (no authentication yet; JWT is pl
 - `name`: the Windows computer name (1-15 characters `[a-z0-9-]`, sent lowercase).
 - `initiator_iqn`: the client's actual iSCSI initiator name, shown in the UI so an
   IQN that does not match the server's ACL is visible.
-- `iscsi_connected`: whether the game disk target is currently connected.
-- `drive_letter`: the letter the game disk actually got (only while connected).
+- `iscsi_connected`: whether the game image target is currently connected.
+- `drive_letter`: the letter the game image actually got (only while connected).
 - `stopping`: `true` only in a goodbye heartbeat, so the server shows the PC as offline at once instead
   of after 90 s without heartbeats. The agent sends it right before it runs a Shutdown / Reboot command
   (then stays quiet for 2 minutes) and when its service is stopped (e.g. an update), giving up after 3 s.
@@ -123,7 +123,7 @@ The agent talks to the ggNet backend over HTTP (no authentication yet; JWT is pl
   read with CIM at start and then every 10 minutes. The server ignores an inventory it cannot parse;
   the heartbeat itself never fails because of it.
 - `booted_at`: when Windows booted (restarting the agent service keeps it). When it changes the server
-  discards the PC's old writeback before answering, so every boot gets a clean game disk
+  discards the PC's old writeback before answering, so every boot gets a clean game image
   (unless the machine has Keep Writeback).
 
 Response `200`:
@@ -138,15 +138,15 @@ Response `200`:
   "iscsi_target_iqn": "iqn.2025-05.net.ggnet:client-pc01",
   "portal_ip": "192.168.0.10",
   "portal_port": 3260,
-  "game_disk": "steam-main",
+  "game_image": "steam-main",
   "drive_letter": "D",
   "command": null
 }
 ```
 
 - Connect only when `iscsi_target_iqn` is not null (the machine is `provisioned`, or
-  `editing` a draft game disk). It is null while the machine has no disk or is in `error`.
-- `drive_letter` (D-Z) is the letter the game disk should get; when it changes while
+  `editing` a draft game image). It is null while the machine has no disk or is in `error`.
+- `drive_letter` (D-Z) is the letter the game image should get; when it changes while
   connected, move the disk to it (no reconnect).
 - `command` is `"shutdown"` or `"reboot"` when the admin clicked Shutdown / Reboot in the UI
   (sent once; the server drops it after 2 minutes). The agent runs `shutdown.exe` with a

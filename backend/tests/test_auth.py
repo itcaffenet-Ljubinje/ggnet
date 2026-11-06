@@ -44,7 +44,7 @@ def test_passwords_are_hashed_with_a_salt():
 
 def test_the_ui_api_needs_sign_in_but_the_pcs_do_not(anon_client):
     assert anon_client.get("/api/v1/machines").status_code == 401
-    assert anon_client.post("/api/v1/game-disks", json={"name": "x", "size_gb": 1}).status_code == 401
+    assert anon_client.post("/api/v1/images", json={"name": "x", "size_gb": 1}).status_code == 401
     assert anon_client.get("/api/v1/settings/boot").status_code == 401
     assert anon_client.get("/api/v1/users").status_code == 401
     # What the PCs and the sign-in screen use stays open.
@@ -114,7 +114,7 @@ def test_staff_may_only_power_pcs(anon_client, tmp_path):
     _login(anon_client, "ana", "staff-pass-1")
 
     assert anon_client.get("/api/v1/machines").status_code == 200
-    assert anon_client.get("/api/v1/game-disks").status_code == 200
+    assert anon_client.get("/api/v1/images").status_code == 200
     # Changing things is the admin's.
     assert anon_client.post("/api/v1/machines", json={"name": "pc02"}).status_code == 403
     assert anon_client.delete(f"/api/v1/machines/{m['id']}").status_code == 403
@@ -122,7 +122,7 @@ def test_staff_may_only_power_pcs(anon_client, tmp_path):
     assert anon_client.get("/api/v1/users").status_code == 403
     assert anon_client.get("/api/v1/activity").status_code == 403
     r = anon_client.post("/api/v1/machines/bulk", json={"machine_ids": [m["id"]], "action": "assign",
-                                                       "game_disk_id": None})
+                                                       "game_image_id": None})
     assert r.status_code == 403
     # Power is theirs (pc01 has no MAC, so turning it on fails, but not for want of rights).
     r = anon_client.post(f"/api/v1/machines/{m['id']}/power", json={"action": "on"})

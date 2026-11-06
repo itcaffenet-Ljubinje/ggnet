@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Gamepad2, Monitor, Save, X } from "lucide-react";
 
-import { api, type GameDisk } from "../api";
+import { api, type Image } from "../api";
 import { useAsyncAction } from "../useAsyncAction";
 import { ErrorBanner } from "./ErrorBanner";
 
@@ -9,7 +9,7 @@ const STEPS = [50, 100, 200];
 const MAX_GB = 16384;
 
 interface Props {
-  disk: GameDisk;
+  disk: Image;
   onClose: () => void;
   /** After a change: reload, and the note to show (what to do in Windows). */
   onSaved: (note: string | null) => Promise<void>;
@@ -18,7 +18,7 @@ interface Props {
 /**
  * Edit an image: its name and its size. A disk only grows: a published one
  * gets a new version with the bigger size and, unless turned off, its data
- * partition (a game disk's, or an OS image's C:) grown on the server.
+ * partition (a game image's, or an OS image's C:) grown on the server.
  */
 export function EditImage({ disk, onClose, onSaved }: Props) {
   const { busy, error, setError, run } = useAsyncAction();

@@ -41,7 +41,7 @@ describe("MachineSettings", () => {
   it("renames a PC with disks after a confirmation", async () => {
     const fetchMock = stubFetch(200, machine());
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
-    open(machine({ game_disk_id: 1, status: "provisioned" }));
+    open(machine({ game_image_id: 1, status: "provisioned" }));
 
     const name = screen.getByLabelText("Name");
     expect(name).toBeEnabled();
@@ -56,7 +56,7 @@ describe("MachineSettings", () => {
   it("does not rename when the confirmation is cancelled", async () => {
     const fetchMock = stubFetch(200, machine());
     vi.spyOn(window, "confirm").mockReturnValue(false);
-    open(machine({ game_disk_id: 1, status: "provisioned" }));
+    open(machine({ game_image_id: 1, status: "provisioned" }));
     await userEvent.type(screen.getByLabelText("Name"), "x");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(actions(fetchMock)).toEqual([]);
@@ -65,24 +65,24 @@ describe("MachineSettings", () => {
   it("asks before changing a Boot Mode PC's disks and sends the OS image too", async () => {
     const fetchMock = stubFetch(200, machine());
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
-    open(machine({ mode: "boot", game_disk_id: 1, os_disk_id: 5, status: "provisioned" }));
+    open(machine({ mode: "boot", game_image_id: 1, os_image_id: 5, status: "provisioned" }));
 
     await userEvent.click(screen.getByRole("tab", { name: "Disks" }));
-    await userEvent.selectOptions(screen.getByLabelText("Game disk"), "2");
+    await userEvent.selectOptions(screen.getByLabelText("Game image"), "2");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
     expect(confirm.mock.calls[0][0]).toContain("everything the PC wrote is lost");
     expect(actions(fetchMock)).toEqual([
-      { url: "/api/v1/machines/1/assign", method: "POST", body: { game_disk_id: 2, os_disk_id: 5 } },
+      { url: "/api/v1/machines/1/assign", method: "POST", body: { game_image_id: 2, os_image_id: 5 } },
     ]);
   });
 
   it("changes nothing when the disk change is not confirmed", async () => {
     const fetchMock = stubFetch(200, machine());
     vi.spyOn(window, "confirm").mockReturnValue(false);
-    open(machine({ game_disk_id: 1, status: "provisioned" }));
+    open(machine({ game_image_id: 1, status: "provisioned" }));
     await userEvent.click(screen.getByRole("tab", { name: "Disks" }));
-    await userEvent.selectOptions(screen.getByLabelText("Game disk"), "2");
+    await userEvent.selectOptions(screen.getByLabelText("Game image"), "2");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(actions(fetchMock)).toEqual([]);
   });
@@ -95,12 +95,12 @@ describe("MachineSettings", () => {
       return new Response(JSON.stringify(body), { status: 200 });
     });
     vi.stubGlobal("fetch", fetchMock);
-    open(machine({ game_disk_id: 1, status: "provisioned" }));
+    open(machine({ game_image_id: 1, status: "provisioned" }));
 
     await userEvent.click(screen.getByLabelText(/Keep writeback/));
     await userEvent.click(screen.getByRole("tab", { name: "Disks" }));
     await screen.findByRole("option", { name: "Pin @base" });
-    await userEvent.selectOptions(screen.getByLabelText("Game disk version"), "base");
+    await userEvent.selectOptions(screen.getByLabelText("Game image version"), "base");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
     expect(actions(fetchMock)).toEqual([
@@ -133,7 +133,7 @@ describe("MachineSettings", () => {
   it("switches a Disk Mode PC with a disk to Boot Mode: disks off, mode, new disks", async () => {
     const fetchMock = stubFetch(200, machine());
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
-    open(machine({ game_disk_id: 1, status: "provisioned" }));
+    open(machine({ game_image_id: 1, status: "provisioned" }));
 
     await userEvent.click(screen.getByRole("tab", { name: "Disks" }));
     await userEvent.selectOptions(screen.getByLabelText("Mode"), "boot");
@@ -142,19 +142,19 @@ describe("MachineSettings", () => {
 
     expect(confirm.mock.calls[0][0]).toContain("Switch pc01 to Boot Mode");
     expect(actions(fetchMock)).toEqual([
-      { url: "/api/v1/machines/1/assign", method: "POST", body: { game_disk_id: null } },
+      { url: "/api/v1/machines/1/assign", method: "POST", body: { game_image_id: null } },
       { url: "/api/v1/machines/1", method: "PATCH", body: { mode: "boot" } },
-      { url: "/api/v1/machines/1/assign", method: "POST", body: { game_disk_id: 1, os_disk_id: 5 } },
+      { url: "/api/v1/machines/1/assign", method: "POST", body: { game_image_id: 1, os_image_id: 5 } },
     ]);
   });
 
   it("does not switch to Boot Mode without an OS image", async () => {
     const fetchMock = stubFetch(200, machine());
-    open(machine({ game_disk_id: 1, status: "provisioned" }));
+    open(machine({ game_image_id: 1, status: "provisioned" }));
     await userEvent.click(screen.getByRole("tab", { name: "Disks" }));
     await userEvent.selectOptions(screen.getByLabelText("Mode"), "boot");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("needs an OS image and a game disk");
+    expect(screen.getByRole("alert")).toHaveTextContent("needs an OS image and a game image");
     expect(actions(fetchMock)).toEqual([]);
   });
 });

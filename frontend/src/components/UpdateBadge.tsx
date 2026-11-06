@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { TriangleAlert } from "lucide-react";
 
-import { api, type GameDisk, type ImageUpdate } from "../api";
+import { api, type Image, type ImageUpdate } from "../api";
 
 const POLL_MS = 10_000;
 
@@ -35,7 +35,7 @@ export function UpdateBadge({ signs }: { signs: string[] }) {
  * The OS images' active versions with an unfinished Windows update, by disk
  * id; asked again when the images change, and while some are being checked.
  */
-export function useImageUpdates(disks: GameDisk[]): Record<number, ImageUpdate> {
+export function useImageUpdates(disks: Image[]): Record<number, ImageUpdate> {
   const [updates, setUpdates] = useState<Record<number, ImageUpdate>>({});
   const key = disks
     .filter((d) => d.kind === "os" && d.published)
@@ -50,7 +50,7 @@ export function useImageUpdates(disks: GameDisk[]): Record<number, ImageUpdate> 
       try {
         const list = await api.getImageUpdates();
         if (stopped) return;
-        setUpdates(Object.fromEntries(list.map((u) => [u.disk_id, u])));
+        setUpdates(Object.fromEntries(list.map((u) => [u.image_id, u])));
         if (list.some((u) => u.state === "checking")) timer = window.setTimeout(load, POLL_MS);
       } catch {
         // Only a hint: the list works without it.

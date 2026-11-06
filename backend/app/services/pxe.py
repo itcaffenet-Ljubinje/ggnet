@@ -62,8 +62,8 @@ class BootSettings:
     mok_password: str = "ggnet"
     # New PC template: an unknown PC that boots while Add new hardware is open
     # is registered with this name ({n} or {nn}: the first free number) and the
-    # default game disk (Images -> Make default), in Boot Mode on the wizard's
-    # image. No default game disk: it is not.
+    # default game image (Images -> Make default), in Boot Mode on the wizard's
+    # image. No default game image: it is not.
     new_pc_name: str = "pc-{nn}"
 
 

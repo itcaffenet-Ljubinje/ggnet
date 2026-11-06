@@ -2,7 +2,7 @@
 Automatic writeback discard.
 
 A machine's writeback is thrown away by the SERVER whenever the client goes
-away, so every boot starts from a clean copy of the game disk's active
+away, so every boot starts from a clean copy of the game image's active
 snapshot. Nobody clicks "Reset". Three triggers:
 
   watcher   LIO shows no iSCSI session for the machine for `grace` seconds
@@ -75,10 +75,10 @@ def _now() -> datetime:
 
 def _managed(m: Machine) -> bool:
     """Machines whose writebacks this module may discard."""
-    if m.status is not MachineStatus.PROVISIONED or m.game_disk is None or not m.game_disk.published:
+    if m.status is not MachineStatus.PROVISIONED or m.game_image is None or not m.game_image.published:
         return False
     if m.mode is MachineMode.BOOT:
-        return m.os_disk is not None and m.os_disk.published and m.os_clone_zvol is not None
+        return m.os_image is not None and m.os_image.published and m.os_clone_zvol is not None
     return True
 
 
@@ -234,7 +234,7 @@ def tick(make_session: Callable[[], Session], prov: Provisioner,
 
 def measure(db: Session, prov: Provisioner, warning_bytes: int) -> None:
     """
-    Store how much each PC has written into its writebacks (OS and game disk)
+    Store how much each PC has written into its writebacks (OS and game image)
     and flag the ones over `warning_bytes` (0: none). A kept writeback is
     meant to grow (installs, updates), so it is never flagged. Nothing is
     done about a large one: a PC is never restarted for it. A new warning is

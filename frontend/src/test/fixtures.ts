@@ -1,8 +1,8 @@
 import { vi } from "vitest";
 
-import type { GameDisk, Machine } from "../api";
+import type { Image, Machine } from "../api";
 
-export function disk(overrides: Partial<GameDisk> = {}): GameDisk {
+export function disk(overrides: Partial<Image> = {}): Image {
   return {
     id: 1,
     name: "cs2",
@@ -23,8 +23,8 @@ export function machine(overrides: Partial<Machine> = {}): Machine {
     mode: "disk",
     initiator_iqn: "iqn.1991-05.com.microsoft:pc01",
     mac: null,
-    game_disk_id: null,
-    editing_disk_id: null,
+    game_image_id: null,
+    editing_image_id: null,
     drive_letter: "D",
     reported_drive_letter: null,
     pinned_snapshot: null,

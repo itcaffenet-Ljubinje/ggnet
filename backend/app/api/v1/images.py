@@ -1,8 +1,8 @@
 """
-API for game disks (master images).
+API for game images (master images).
 
 Flow: POST (empty zvol, draft) → POST /edit (the draft becomes one PC's
-game disk; partition and fill it there) → shut that PC down → POST
+game image; partition and fill it there) → shut that PC down → POST
 /finish-edit → POST /publish (@base, hold, readonly) → assign to machines.
 
 A disk of kind `os` is the Windows image of Boot Mode machines. It is not
@@ -27,14 +27,14 @@ from app.api.v1.schemas import (
     AddHardwareJobOut,
     AddHardwareStatusOut,
     AddHardwareWizardOut,
-    GameDiskCopy,
-    GameDiskCreate,
-    GameDiskDefault,
-    GameDiskGrow,
-    GameDiskGrown,
-    GameDiskEdit,
-    GameDiskOut,
-    GameDiskRename,
+    ImageCopy,
+    ImageCreate,
+    ImageDefault,
+    ImageGrow,
+    ImageGrown,
+    ImageEdit,
+    ImageOut,
+    ImageRename,
     HardwareOut,
     ImageUpdateOut,
     ImageUsageOut,
@@ -46,8 +46,8 @@ from app.api.v1.schemas import (
     WritebackOut,
 )
 from app.db.models import (
-    DiskKind,
-    GameDisk,
+    ImageKind,
+    Image,
     ImageHardware,
     Machine,
     MachineMode,
@@ -61,21 +61,21 @@ from app.services.provisioning import Provisioner, ProvisioningError
 from app.services.scan import nic_status
 from app.services.toolchain import activate_when_done
 
-logger = logging.getLogger("ggnet.api.game_disks")
+logger = logging.getLogger("ggnet.api.images")
 
-router = APIRouter(prefix="/game-disks", tags=["game-disks"])
+router = APIRouter(prefix="/images", tags=["images"])
 
 
-def _get(db: Session, disk_id: int) -> GameDisk:
-    disk = db.get(GameDisk, disk_id)
+def _get(db: Session, image_id: int) -> Image:
+    disk = db.get(Image, image_id)
     if disk is None:
-        not_found("Game disk", disk_id)
+        not_found("Game image", image_id)
     return disk
 
 
-@router.get("", response_model=list[GameDiskOut])
+@router.get("", response_model=list[ImageOut])
 def list_disks(db: Session = Depends(get_db)):
-    return db.scalars(select(GameDisk).order_by(GameDisk.name)).all()
+    return db.scalars(select(Image).order_by(Image.name)).all()
 
 
 @router.get("/updates", response_model=list[ImageUpdateOut])
@@ -86,11 +86,11 @@ def image_updates(db: Session = Depends(get_db), checker=Depends(get_update_chec
     background ("checking").
     """
     out = []
-    for disk in db.scalars(select(GameDisk).where(GameDisk.kind == DiskKind.OS).order_by(GameDisk.name)):
+    for disk in db.scalars(select(Image).where(Image.kind == ImageKind.OS).order_by(Image.name)):
         if not disk.published:
             continue
         state, signs, error = checker.state(disk.zvol_path, disk.snapshot)
-        out.append(ImageUpdateOut(disk_id=disk.id, snapshot=disk.snapshot, state=state, signs=signs, error=error))
+        out.append(ImageUpdateOut(image_id=disk.id, snapshot=disk.snapshot, state=state, signs=signs, error=error))
     return out
 
 
@@ -99,37 +99,37 @@ def image_usage(db: Session = Depends(get_db), prov: Provisioner = Depends(get_p
     """Each image's space on the pool, size, compression ratio and number of versions (one ZFS read)."""
     usage = prov.zfs.image_usage()
     out = []
-    for disk in db.scalars(select(GameDisk).order_by(GameDisk.name)):
+    for disk in db.scalars(select(Image).order_by(Image.name)):
         u = usage.get(disk.zvol_path)
         if u is not None:
-            out.append(ImageUsageOut(disk_id=disk.id, used_bytes=u["used"], volume_bytes=u["volsize"],
+            out.append(ImageUsageOut(image_id=disk.id, used_bytes=u["used"], volume_bytes=u["volsize"],
                                      compress_ratio=u["compressratio"], versions=u["versions"]))
     return out
 
 
-@router.get("/{disk_id}", response_model=GameDiskOut)
-def get_disk(disk_id: int, db: Session = Depends(get_db)):
-    return _get(db, disk_id)
+@router.get("/{image_id}", response_model=ImageOut)
+def get_disk(image_id: int, db: Session = Depends(get_db)):
+    return _get(db, image_id)
 
 
-@router.post("", response_model=GameDiskOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=ImageOut, status_code=status.HTTP_201_CREATED)
 def create_disk(
-    body: GameDiskCreate,
+    body: ImageCreate,
     db: Session = Depends(get_db),
     prov: Provisioner = Depends(get_provisioner),
 ):
-    if db.scalar(select(GameDisk).where(GameDisk.name == body.name)):
-        conflict(f"Game disk '{body.name}' already exists")
+    if db.scalar(select(Image).where(Image.name == body.name)):
+        conflict(f"Image '{body.name}' already exists")
     # A renamed disk keeps its zvol, so its old name stays taken on the host.
-    owner = db.scalar(select(GameDisk).where(GameDisk.zvol_path == prov.image_path(body.name)))
+    owner = db.scalar(select(Image).where(Image.zvol_path == prov.image_path(body.name)))
     if owner is not None:
         conflict(f"'{body.name}' is still the zvol name of '{owner.name}' (renamed); choose another name")
     try:
-        path = prov.create_disk(body.name, body.size_gb, os_image=body.kind is DiskKind.OS)
+        path = prov.create_disk(body.name, body.size_gb, is_os=body.kind is ImageKind.OS)
     except ProvisioningError as e:
         host_failed(str(e))
 
-    disk = GameDisk(name=body.name, zvol_path=path, size_gb=body.size_gb, kind=body.kind)
+    disk = Image(name=body.name, zvol_path=path, size_gb=body.size_gb, kind=body.kind)
     db.add(disk)
     try:
         db.commit()
@@ -140,55 +140,55 @@ def create_disk(
             prov.delete_disk(path, published=False)
         except ProvisioningError:
             logger.error("Zvol %s left on the host without a database record", path)
-        conflict(f"Game disk '{body.name}' already exists")
+        conflict(f"Image '{body.name}' already exists")
     return disk
 
 
-@router.patch("/{disk_id}", response_model=GameDiskOut)
-def rename_disk(disk_id: int, body: GameDiskRename, db: Session = Depends(get_db)):
+@router.patch("/{image_id}", response_model=ImageOut)
+def rename_disk(image_id: int, body: ImageRename, db: Session = Depends(get_db)):
     """
     Rename a disk in ggNet. Only the name changes: the zvol, its versions and
     every PC's writeback stay where they are, so this is safe while PCs run.
     """
-    disk = _get(db, disk_id)
+    disk = _get(db, image_id)
     if body.name == disk.name:
         return disk
-    if db.scalar(select(GameDisk).where(GameDisk.name == body.name)):
-        conflict(f"Game disk '{body.name}' already exists")
+    if db.scalar(select(Image).where(Image.name == body.name)):
+        conflict(f"Image '{body.name}' already exists")
     old, disk.name = disk.name, body.name
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
-        conflict(f"Game disk '{body.name}' already exists")
+        conflict(f"Image '{body.name}' already exists")
     logger.info("Disk '%s' renamed to '%s' (zvol %s unchanged)", old, disk.name, disk.zvol_path)
     return disk
 
 
-@router.put("/{disk_id}/default", response_model=GameDiskOut)
-def set_default(disk_id: int, body: GameDiskDefault, db: Session = Depends(get_db)):
+@router.put("/{image_id}/default", response_model=ImageOut)
+def set_default(image_id: int, body: ImageDefault, db: Session = Depends(get_db)):
     """
-    Make the disk the default of its kind (the OS image or the game disk new
+    Make the disk the default of its kind (the OS image or the game image new
     PCs get), or stop it being one. Only a published disk can be the default.
     """
-    disk = _get(db, disk_id)
+    disk = _get(db, image_id)
     if body.default:
         if not disk.published:
             conflict(f"'{disk.name}' is not published yet; only a published disk can be the default")
-        for other in db.scalars(select(GameDisk).where(GameDisk.kind == disk.kind, GameDisk.id != disk.id,
-                                                       GameDisk.is_default.is_(True))):
+        for other in db.scalars(select(Image).where(Image.kind == disk.kind, Image.id != disk.id,
+                                                       Image.is_default.is_(True))):
             other.is_default = False
     disk.is_default = body.default
     db.commit()
     logger.info("'%s' is %sthe default %s", disk.name, "" if body.default else "no longer ",
-                "OS image" if disk.kind is DiskKind.OS else "game disk")
+                "OS image" if disk.kind is ImageKind.OS else "game image")
     return disk
 
 
-@router.post("/{disk_id}/copy", response_model=GameDiskOut, status_code=status.HTTP_201_CREATED)
+@router.post("/{image_id}/copy", response_model=ImageOut, status_code=status.HTTP_201_CREATED)
 def copy_disk(
-    disk_id: int,
-    body: GameDiskCopy,
+    image_id: int,
+    body: ImageCopy,
     db: Session = Depends(get_db),
     prov: Provisioner = Depends(get_provisioner),
     copier=Depends(get_disk_copier),
@@ -198,20 +198,20 @@ def copy_disk(
     independent image of the same kind. The copy runs in the background;
     the new disk shows its progress and is published at @base when done.
     """
-    src = _get(db, disk_id)
+    src = _get(db, image_id)
     _published(src)
     snap = body.snapshot or src.snapshot
     if snap not in {v["name"] for v in _versions(prov, src)}:
         not_found("Snapshot", f"{src.name}@{snap}")
-    if db.scalar(select(GameDisk).where(GameDisk.name == body.name)):
-        conflict(f"Game disk '{body.name}' already exists")
+    if db.scalar(select(Image).where(Image.name == body.name)):
+        conflict(f"Image '{body.name}' already exists")
     path = prov.image_path(body.name)
-    owner = db.scalar(select(GameDisk).where(GameDisk.zvol_path == path))
+    owner = db.scalar(select(Image).where(Image.zvol_path == path))
     if owner is not None:
         conflict(f"'{body.name}' is still the zvol name of '{owner.name}' (renamed); choose another name")
     if prov.zfs.dataset_exists(path):
         conflict(f"Zvol {path} already exists on the host")
-    disk = GameDisk(name=body.name, zvol_path=path, size_gb=src.size_gb, kind=src.kind,
+    disk = Image(name=body.name, zvol_path=path, size_gb=src.size_gb, kind=src.kind,
                     copy_source=f"{src.zvol_path}@{snap}", copy_percent=0)
     # The copy knows the cards the copied version has.
     # A copy's only version is @base, with the cards of the version it copies.
@@ -222,17 +222,17 @@ def copy_disk(
         db.commit()
     except IntegrityError:
         db.rollback()
-        conflict(f"Game disk '{body.name}' already exists")
+        conflict(f"Image '{body.name}' already exists")
     logger.info("Copy of %s@%s to '%s' started", src.name, snap, disk.name)
     copier.start(disk.id)
     db.refresh(disk)
     return disk
 
 
-@router.post("/{disk_id}/grow", response_model=GameDiskGrown)
+@router.post("/{image_id}/grow", response_model=ImageGrown)
 def grow_disk(
-    disk_id: int,
-    body: GameDiskGrow,
+    image_id: int,
+    body: ImageGrow,
     db: Session = Depends(get_db),
     prov: Provisioner = Depends(get_provisioner),
 ):
@@ -240,10 +240,10 @@ def grow_disk(
     Make a disk bigger (never smaller). A published disk gets a new active
     version with the bigger size; PCs move to it at their next reboot. Its
     data partition is grown on the server too (`extend`, app.disk_grow): a
-    game disk's last partition, or an OS image's C: after its Recovery
+    game image's last partition, or an OS image's C: after its Recovery
     partition was moved to the end. Any other layout is extended in Windows.
     """
-    disk = _get(db, disk_id)
+    disk = _get(db, image_id)
     _not_copying(disk)
     _not_edited(disk)
     if body.size_gb <= disk.size_gb:
@@ -280,21 +280,21 @@ def grow_disk(
         except ProvisioningError as e:   # the version exists; only its comment is missing
             logger.warning("%s", e)
     logger.info("'%s' grown from %s to %s GB%s", disk.name, old, body.size_gb, f" as @{version}" if version else "")
-    return GameDiskGrown(disk=GameDiskOut.model_validate(disk), version=version,
+    return ImageGrown(disk=ImageOut.model_validate(disk), version=version,
                          extended=bool(result and result.extended), note=note)
 
 
-@router.get("/{disk_id}/hardware", response_model=HardwareOut)
-def hardware(disk_id: int, db: Session = Depends(get_db), prov: Provisioner = Depends(get_provisioner)):
+@router.get("/{image_id}/hardware", response_model=HardwareOut)
+def hardware(image_id: int, db: Session = Depends(get_db), prov: Provisioner = Depends(get_provisioner)):
     """
     Which PCs the OS image's active version can boot: each boot network card
     the PCs reported (iPXE, and the agent or the hardware scan its instance
     ID) is "ready" (installed in the image) or "missing" (those PCs need Add
     new hardware). PCs that never booted over the network are "unknown".
     """
-    disk = _get(db, disk_id)
-    if disk.kind is not DiskKind.OS:
-        conflict(f"'{disk.name}' is a game disk; only OS images are checked")
+    disk = _get(db, image_id)
+    if disk.kind is not ImageKind.OS:
+        conflict(f"'{disk.name}' is a game image; only OS images are checked")
     if not disk.published or disk.copying:
         return HardwareOut(snapshot=None, problem="not published yet", nics=[])
     by_card: dict[tuple[str, str | None] | None, list[str]] = {}
@@ -334,15 +334,15 @@ def _status_out(adder, master: str) -> AddHardwareStatusOut:
     )
 
 
-@router.get("/{disk_id}/add-hardware", response_model=AddHardwareStatusOut)
-def add_hardware_status(disk_id: int, db: Session = Depends(get_db), adder=Depends(get_hardware_adder)):
+@router.get("/{image_id}/add-hardware", response_model=AddHardwareStatusOut)
+def add_hardware_status(image_id: int, db: Session = Depends(get_db), adder=Depends(get_hardware_adder)):
     """The image's Add new hardware wizard and last run (since ggNet started), and the PCs waiting for it."""
-    return _status_out(adder, _get(db, disk_id).zvol_path)
+    return _status_out(adder, _get(db, image_id).zvol_path)
 
 
-@router.post("/{disk_id}/add-hardware/wizard", response_model=AddHardwareStatusOut)
+@router.post("/{image_id}/add-hardware/wizard", response_model=AddHardwareStatusOut)
 def open_hardware_wizard(
-    disk_id: int,
+    image_id: int,
     db: Session = Depends(get_db),
     prov: Provisioner = Depends(get_provisioner),
     adder=Depends(get_hardware_adder),
@@ -352,11 +352,11 @@ def open_hardware_wizard(
     the next PC that boots this image and whose network card it cannot start
     gets the card added to a new version, then boots it.
     """
-    disk = _get(db, disk_id)
+    disk = _get(db, image_id)
     _published(disk)
     _not_copying(disk)
-    if disk.kind is not DiskKind.OS:
-        conflict(f"'{disk.name}' is a game disk; only OS images get new hardware")
+    if disk.kind is not ImageKind.OS:
+        conflict(f"'{disk.name}' is a game image; only OS images get new hardware")
     names = [v["name"] for v in _versions(prov, disk)]
     if names and names[-1] != disk.snapshot:
         conflict(f"@{disk.snapshot} is active but @{names[-1]} is newer; "
@@ -368,17 +368,17 @@ def open_hardware_wizard(
     return _status_out(adder, disk.zvol_path)
 
 
-@router.delete("/{disk_id}/add-hardware/wizard", response_model=AddHardwareStatusOut)
-def close_hardware_wizard(disk_id: int, db: Session = Depends(get_db), adder=Depends(get_hardware_adder)):
+@router.delete("/{image_id}/add-hardware/wizard", response_model=AddHardwareStatusOut)
+def close_hardware_wizard(image_id: int, db: Session = Depends(get_db), adder=Depends(get_hardware_adder)):
     """Finish the wizard, or cancel it (a running install is stopped)."""
-    disk = _get(db, disk_id)
+    disk = _get(db, image_id)
     adder.close_wizard(disk.zvol_path)
     return _status_out(adder, disk.zvol_path)
 
 
-@router.post("/{disk_id}/add-hardware", response_model=AddHardwareJobOut, status_code=status.HTTP_202_ACCEPTED)
+@router.post("/{image_id}/add-hardware", response_model=AddHardwareJobOut, status_code=status.HTTP_202_ACCEPTED)
 def add_hardware(
-    disk_id: int,
+    image_id: int,
     body: AddHardwareIn,
     db: Session = Depends(get_db),
     prov: Provisioner = Depends(get_provisioner),
@@ -390,16 +390,16 @@ def add_hardware(
     temporary VM on this server; the clone becomes the next version and is
     made active. Runs in the background (a few minutes); GET shows how far.
     """
-    disk = _get(db, disk_id)
+    disk = _get(db, image_id)
     _published(disk)
     _not_copying(disk)
-    if disk.kind is not DiskKind.OS:
-        conflict(f"'{disk.name}' is a game disk; only OS images get new hardware")
+    if disk.kind is not ImageKind.OS:
+        conflict(f"'{disk.name}' is a game image; only OS images get new hardware")
     names = [v["name"] for v in _versions(prov, disk)]
     if names and names[-1] != disk.snapshot:
         conflict(f"@{disk.snapshot} is active but @{names[-1]} is newer; "
                  f"make @{names[-1]} active first (a new version always follows the newest)")
-    done = activate_when_done(sessionmaker(bind=db.get_bind(), expire_on_commit=False), disk_id, disk.snapshot)
+    done = activate_when_done(sessionmaker(bind=db.get_bind(), expire_on_commit=False), image_id, disk.snapshot)
 
     try:
         job = adder.start(disk.zvol_path, [(c.nic, c.instance) for c in body.cards], done)
@@ -409,28 +409,28 @@ def add_hardware(
     return _job_out(job)
 
 
-@router.post("/{disk_id}/add-hardware/cancel", response_model=AddHardwareJobOut | None)
-def cancel_add_hardware(disk_id: int, db: Session = Depends(get_db), adder=Depends(get_hardware_adder)):
+@router.post("/{image_id}/add-hardware/cancel", response_model=AddHardwareJobOut | None)
+def cancel_add_hardware(image_id: int, db: Session = Depends(get_db), adder=Depends(get_hardware_adder)):
     """Stop a running Add new hardware: the VM is stopped and the clone removed."""
-    disk = _get(db, disk_id)
+    disk = _get(db, image_id)
     if not adder.cancel(disk.zvol_path):
         conflict(f"Add new hardware is not running for '{disk.name}'")
     return _job_out(adder.job(disk.zvol_path))
 
 
-@router.post("/{disk_id}/check-hardware", response_model=GameDiskOut)
-def check_hardware(disk_id: int, db: Session = Depends(get_db), prov: Provisioner = Depends(get_provisioner)):
+@router.post("/{image_id}/check-hardware", response_model=ImageOut)
+def check_hardware(image_id: int, db: Session = Depends(get_db), prov: Provisioner = Depends(get_provisioner)):
     """
     Read the network cards installed in the OS image's active version (its
     registry, mounted read-only on a temporary clone) and make them the
     image's card list: for an image made on a real PC, or after versions
     were deleted or merged.
     """
-    disk = _get(db, disk_id)
+    disk = _get(db, image_id)
     _published(disk)
     _not_copying(disk)
-    if disk.kind is not DiskKind.OS:
-        conflict(f"'{disk.name}' is a game disk; only OS images have network cards")
+    if disk.kind is not ImageKind.OS:
+        conflict(f"'{disk.name}' is a game image; only OS images have network cards")
     found = prov.list_nics(disk.zvol_path, disk.snapshot)
     if isinstance(found, str):
         host_failed(f"Reading the network cards of {disk.name}@{disk.snapshot} failed: {found}")
@@ -444,7 +444,7 @@ def check_hardware(disk_id: int, db: Session = Depends(get_db), prov: Provisione
     return disk
 
 
-def _keep_hardware(db: Session, disk: GameDisk, snapshots: list[str]) -> None:
+def _keep_hardware(db: Session, disk: Image, snapshots: list[str]) -> None:
     """
     The image's network cards after versions are gone: a card added at a
     version that no longer exists still lives in the next newer version (its
@@ -462,34 +462,34 @@ def _keep_hardware(db: Session, disk: GameDisk, snapshots: list[str]) -> None:
     db.commit()
 
 
-def _not_copying(disk: GameDisk) -> None:
+def _not_copying(disk: Image) -> None:
     if disk.copying:
         conflict(f"'{disk.name}' is still being copied ({disk.copy_percent or 0}%); wait until it is done")
 
 
-def _not_edited(disk: GameDisk) -> None:
+def _not_edited(disk: Image) -> None:
     if disk.editor is not None:
-        conflict(f"Game disk '{disk.name}' is being edited on '{disk.editor.name}'; finish editing first")
+        conflict(f"Image '{disk.name}' is being edited on '{disk.editor.name}'; finish editing first")
 
 
-@router.post("/{disk_id}/edit", response_model=GameDiskOut)
+@router.post("/{image_id}/edit", response_model=ImageOut)
 def start_edit(
-    disk_id: int,
-    body: GameDiskEdit,
+    image_id: int,
+    body: ImageEdit,
     db: Session = Depends(get_db),
     prov: Provisioner = Depends(get_provisioner),
 ):
     """
-    Map the draft master as the game disk of one machine, so it can be
-    partitioned and filled on that PC. The machine must have no game disk.
+    Map the draft master as the game image of one machine, so it can be
+    partitioned and filled on that PC. The machine must have no game image.
     A published disk is changed with Keep Writeback + Apply Writebacks instead.
     """
-    disk = _get(db, disk_id)
+    disk = _get(db, image_id)
     _not_copying(disk)
-    if disk.kind is DiskKind.OS:
+    if disk.kind is ImageKind.OS:
         conflict(f"'{disk.name}' is an OS image; it cannot be edited on a Disk Mode PC")
     if disk.published:
-        conflict(f"Game disk '{disk.name}' is published; change it with Keep Writeback "
+        conflict(f"Image '{disk.name}' is published; change it with Keep Writeback "
                  "and Apply Writebacks")
     machine = db.get(Machine, body.machine_id)
     if machine is None:
@@ -500,15 +500,15 @@ def start_edit(
         _not_edited(disk)
     if machine.mode is not MachineMode.DISK:
         conflict(f"Machine '{machine.name}' is in {machine.mode.value} mode")
-    if machine.status is not MachineStatus.IDLE or machine.game_disk_id is not None:
-        conflict(f"Machine '{machine.name}' has a game disk or is busy; remove its disk first")
+    if machine.status is not MachineStatus.IDLE or machine.game_image_id is not None:
+        conflict(f"Machine '{machine.name}' has a game image or is busy; remove its disk first")
 
     try:
         iqn = prov.start_edit(machine.name, machine.initiator_iqn, disk.zvol_path)
     except ProvisioningError as e:
         host_failed(str(e), machine_id=machine.id)
     machine.status = MachineStatus.EDITING
-    machine.editing_disk_id = disk.id
+    machine.editing_image_id = disk.id
     machine.iscsi_target_iqn = iqn
     machine.last_error = None
     machine.session_active = machine.session_changed_at = None
@@ -517,17 +517,17 @@ def start_edit(
     return disk
 
 
-@router.post("/{disk_id}/finish-edit", response_model=GameDiskOut)
+@router.post("/{image_id}/finish-edit", response_model=ImageOut)
 def finish_edit(
-    disk_id: int,
+    image_id: int,
     db: Session = Depends(get_db),
     prov: Provisioner = Depends(get_provisioner),
 ):
     """Unmap the master from its editing machine; that PC must be shut down first."""
-    disk = _get(db, disk_id)
+    disk = _get(db, image_id)
     machine = disk.editor
     if machine is None:
-        conflict(f"Game disk '{disk.name}' is not being edited")
+        conflict(f"Image '{disk.name}' is not being edited")
     session = prov.session_active(machine.initiator_iqn, machine.iscsi_target_iqn)
     if session is None:
         host_failed(f"Cannot read the iSCSI session state of '{machine.name}'", machine_id=machine.id)
@@ -539,7 +539,7 @@ def finish_edit(
     except ProvisioningError as e:
         host_failed(str(e), machine_id=machine.id)
     machine.status = MachineStatus.IDLE
-    machine.editing_disk_id = None
+    machine.editing_image_id = None
     machine.iscsi_target_iqn = None
     machine.session_active = machine.session_changed_at = None
     db.commit()
@@ -547,15 +547,15 @@ def finish_edit(
     return disk
 
 
-@router.post("/{disk_id}/publish", response_model=GameDiskOut)
+@router.post("/{image_id}/publish", response_model=ImageOut)
 def publish_disk(
-    disk_id: int,
+    image_id: int,
     db: Session = Depends(get_db),
     prov: Provisioner = Depends(get_provisioner),
 ):
-    disk = _get(db, disk_id)
+    disk = _get(db, image_id)
     if disk.published:
-        conflict(f"Game disk '{disk.name}' is already published (@{disk.snapshot})")
+        conflict(f"Image '{disk.name}' is already published (@{disk.snapshot})")
     _not_edited(disk)
     if disk.copy_source is not None:
         conflict(f"'{disk.name}' is a copy; it is published by itself when the copy ends")
@@ -567,12 +567,12 @@ def publish_disk(
     return disk
 
 
-def _published(disk: GameDisk) -> None:
+def _published(disk: Image) -> None:
     if not disk.published:
-        conflict(f"Game disk '{disk.name}' is not published; it has no versions yet")
+        conflict(f"Image '{disk.name}' is not published; it has no versions yet")
 
 
-def _versions(prov: Provisioner, disk: GameDisk) -> list[dict]:
+def _versions(prov: Provisioner, disk: Image) -> list[dict]:
     try:
         return prov.snapshots(disk.zvol_path)
     except ProvisioningError as e:
@@ -590,14 +590,14 @@ def _machines_by_clone(db: Session) -> dict[str, Machine]:
     return out
 
 
-@router.get("/{disk_id}/snapshots", response_model=list[SnapshotOut])
+@router.get("/{image_id}/snapshots", response_model=list[SnapshotOut])
 def list_snapshots(
-    disk_id: int,
+    image_id: int,
     db: Session = Depends(get_db),
     prov: Provisioner = Depends(get_provisioner),
 ):
     """Versions of the disk, oldest first, read live from ZFS."""
-    disk = _get(db, disk_id)
+    disk = _get(db, image_id)
     if not disk.published:
         return []
     by_clone = _machines_by_clone(db)
@@ -613,53 +613,53 @@ def list_snapshots(
             pinned=sorted(m.name for m in disk.machines if m.pinned_snapshot == v["name"]),
             comment=v.get("comment"),
             locked=bool(v.get("locked")),
-            update=v.get("update") if disk.kind is DiskKind.OS else None,
+            update=v.get("update") if disk.kind is ImageKind.OS else None,
         )
         for v in _versions(prov, disk)
     ]
 
 
-@router.put("/{disk_id}/snapshots/{name}/comment", response_model=SnapshotOut)
+@router.put("/{image_id}/snapshots/{name}/comment", response_model=SnapshotOut)
 def set_snapshot_comment(
-    disk_id: int,
+    image_id: int,
     name: str,
     body: SnapshotComment,
     db: Session = Depends(get_db),
     prov: Provisioner = Depends(get_provisioner),
 ):
     """Set (or with "" remove) a version's comment: who, when, what changed."""
-    disk = _get(db, disk_id)
+    disk = _get(db, image_id)
     if not disk.published or name not in {v["name"] for v in _versions(prov, disk)}:
         not_found("Version", name)
     try:
         prov.set_comment(disk.zvol_path, name, body.comment)
     except ProvisioningError as e:
         host_failed(str(e))
-    return next(v for v in list_snapshots(disk_id, db, prov) if v.name == name)
+    return next(v for v in list_snapshots(image_id, db, prov) if v.name == name)
 
 
-@router.put("/{disk_id}/snapshots/{name}/lock", response_model=SnapshotOut)
+@router.put("/{image_id}/snapshots/{name}/lock", response_model=SnapshotOut)
 def set_snapshot_lock(
-    disk_id: int,
+    image_id: int,
     name: str,
     body: SnapshotLock,
     db: Session = Depends(get_db),
     prov: Provisioner = Depends(get_provisioner),
 ):
     """Lock a version (never deleted, by retention or by hand) or unlock it."""
-    disk = _get(db, disk_id)
+    disk = _get(db, image_id)
     if not disk.published or name not in {v["name"] for v in _versions(prov, disk)}:
         not_found("Version", name)
     try:
         prov.set_locked(disk.zvol_path, name, body.locked)
     except ProvisioningError as e:
         host_failed(str(e))
-    return next(v for v in list_snapshots(disk_id, db, prov) if v.name == name)
+    return next(v for v in list_snapshots(image_id, db, prov) if v.name == name)
 
 
-@router.put("/{disk_id}/active-snapshot", response_model=GameDiskOut)
+@router.put("/{image_id}/active-snapshot", response_model=ImageOut)
 def set_active_snapshot(
-    disk_id: int,
+    image_id: int,
     body: ActiveSnapshot,
     db: Session = Depends(get_db),
     prov: Provisioner = Depends(get_provisioner),
@@ -669,7 +669,7 @@ def set_active_snapshot(
     Nothing changes on the host: each PC moves to it at its next discard;
     PCs with Keep Writeback stay where they are.
     """
-    disk = _get(db, disk_id)
+    disk = _get(db, image_id)
     _published(disk)
     if body.snapshot not in {v["name"] for v in _versions(prov, disk)}:
         not_found("Snapshot", f"{disk.name}@{body.snapshot}")
@@ -678,15 +678,15 @@ def set_active_snapshot(
     return disk
 
 
-@router.delete("/{disk_id}/snapshots/{name}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{image_id}/snapshots/{name}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_snapshot(
-    disk_id: int,
+    image_id: int,
     name: str,
     db: Session = Depends(get_db),
     prov: Provisioner = Depends(get_provisioner),
 ):
     """Delete a version that is not active and that no PC's writeback was cloned from."""
-    disk = _get(db, disk_id)
+    disk = _get(db, image_id)
     _published(disk)
     versions = _versions(prov, disk)
     version = next((v for v in versions if v["name"] == name), None)
@@ -712,9 +712,9 @@ def delete_snapshot(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post("/{disk_id}/prepare", response_model=GameDiskOut)
+@router.post("/{image_id}/prepare", response_model=ImageOut)
 def prepare_image(
-    disk_id: int,
+    image_id: int,
     body: PrepareImage | None = None,
     db: Session = Depends(get_db),
     prov: Provisioner = Depends(get_provisioner),
@@ -725,10 +725,10 @@ def prepare_image(
     stale letters forgotten; app.windows_setup.prepare_image). PCs move to it
     at their next reboot. Apply Writebacks of an OS image does this already.
     """
-    disk = _get(db, disk_id)
+    disk = _get(db, image_id)
     _published(disk)
-    if disk.kind is not DiskKind.OS:
-        conflict(f"'{disk.name}' is a game disk; only OS images are prepared")
+    if disk.kind is not ImageKind.OS:
+        conflict(f"'{disk.name}' is a game image; only OS images are prepared")
     names = [v["name"] for v in _versions(prov, disk)]
     if names and names[-1] != disk.snapshot:
         conflict(f"@{disk.snapshot} is active but @{names[-1]} is newer; "
@@ -751,9 +751,9 @@ def prepare_image(
     return disk
 
 
-@router.post("/{disk_id}/snapshots/{name}/merge-into-base", response_model=GameDiskOut)
+@router.post("/{image_id}/snapshots/{name}/merge-into-base", response_model=ImageOut)
 def merge_into_base(
-    disk_id: int,
+    image_id: int,
     name: str,
     db: Session = Depends(get_db),
     prov: Provisioner = Depends(get_provisioner),
@@ -763,7 +763,7 @@ def merge_into_base(
     is renamed to `base` (e.g. @base, @v2, @v3, @v4 → @base with @v4's content).
     Refused while an older version is active, pinned or still used by a PC.
     """
-    disk = _get(db, disk_id)
+    disk = _get(db, image_id)
     _published(disk)
     versions = _versions(prov, disk)
     names = [v["name"] for v in versions]
@@ -816,14 +816,14 @@ def merge_into_base(
     return disk
 
 
-@router.get("/{disk_id}/writebacks", response_model=list[WritebackOut])
+@router.get("/{image_id}/writebacks", response_model=list[WritebackOut])
 def list_writebacks(
-    disk_id: int,
+    image_id: int,
     db: Session = Depends(get_db),
     prov: Provisioner = Depends(get_provisioner),
 ):
     """Every PC writeback cloned from any version of this disk, read live from ZFS."""
-    disk = _get(db, disk_id)
+    disk = _get(db, image_id)
     by_clone = _machines_by_clone(db)
     prefix = f"{disk.zvol_path}@"
     out = []
@@ -846,21 +846,21 @@ def list_writebacks(
     return sorted(out, key=lambda w: w.machine_name)
 
 
-@router.delete("/{disk_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{image_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_disk(
-    disk_id: int,
+    image_id: int,
     db: Session = Depends(get_db),
     prov: Provisioner = Depends(get_provisioner),
 ):
-    disk = _get(db, disk_id)
+    disk = _get(db, image_id)
     _not_edited(disk)
     _not_copying(disk)
     assigned = db.scalar(
         select(func.count()).select_from(Machine).where(
-            or_(Machine.game_disk_id == disk.id, Machine.os_disk_id == disk.id))
+            or_(Machine.game_image_id == disk.id, Machine.os_image_id == disk.id))
     )
     if assigned:
-        conflict(f"Game disk '{disk.name}' is assigned to {assigned} machine(s); move them first")
+        conflict(f"Image '{disk.name}' is assigned to {assigned} machine(s); move them first")
     try:
         prov.delete_disk(disk.zvol_path, disk.published)
     except ProvisioningError as e:

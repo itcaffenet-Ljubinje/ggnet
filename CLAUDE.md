@@ -1,6 +1,6 @@
 # ggNet — context for Claude Code
 
-ggNet is a diskless boot and game disk management system for gaming cafes, modeled after ggRock.
+ggNet is a diskless boot and game image management system for gaming cafes, modeled after ggRock.
 It is installed **directly on a Proxmox VE 9+ host** (ProxMenux-style: install script + systemd service on its own port)
 and manages ZFS and the LIO iSCSI target on that host.
 
@@ -27,15 +27,15 @@ Target clients: Windows 11, UEFI Secure Boot, TPM 2.0.
 
 1. `zfs_manager.py` (datasets, zvols, snapshots, clones, scrub)
 2. `iscsi_manager.py` (LIO via targetcli / rtslib)
-3. Game disks API
+3. Images API
 4. Disk Mode UI + `ggnet-agent`
 5. Boot Mode (iPXE + proxyDHCP UEFI)
 6. JWT auth + SSL
 
 ## Data model (Disk Mode)
 
-- `Machine`: add `mode` enum (disk/boot), `game_disk_id` FK, `iscsi_target_iqn`
-- New `GameDisk` model
+- `Machine`: add `mode` enum (disk/boot), `game_image_id` FK, `iscsi_target_iqn`
+- `Image` model (OS images and game images, `kind` os/game; table `images`)
 
 ## Layout
 

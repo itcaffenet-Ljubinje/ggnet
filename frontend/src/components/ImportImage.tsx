@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { FolderOpen, HardDriveDownload, RefreshCw, Trash2, Upload, Usb, X } from "lucide-react";
 
-import { api, uploadImage, type DiskKind, type ImageFile, type ImportSources } from "../api";
+import { api, uploadImage, type ImageKind, type ImageFile, type ImportSources } from "../api";
 import { formatBytes } from "../format";
 import { useAsyncAction } from "../useAsyncAction";
 import { ErrorBanner } from "./ErrorBanner";
@@ -31,7 +31,7 @@ export function nameFromFile(file: string): string {
 
 /**
  * Import an image file (VHD, VHDX, QCOW2, VMDK, RAW) as a new OS image or
- * game disk: from the imports folder on the pool, a USB disk plugged into the
+ * game image: from the imports folder on the pool, a USB disk plugged into the
  * server (opened read-only) or an upload from this browser.
  */
 export function ImportImage({ onClose, onStarted }: Props) {
@@ -41,7 +41,7 @@ export function ImportImage({ onClose, onStarted }: Props) {
   const [usbFiles, setUsbFiles] = useState<Record<string, ImageFile[]>>({});
   const [chosen, setChosen] = useState<ImageFile | null>(null);
   const [name, setName] = useState("");
-  const [kind, setKind] = useState<DiskKind>("os");
+  const [kind, setKind] = useState<ImageKind>("os");
   const [prepare, setPrepare] = useState(true);
   const [defenderOff, setDefenderOff] = useState(false);
   const [servicesOff, setServicesOff] = useState(true);
@@ -99,7 +99,7 @@ export function ImportImage({ onClose, onStarted }: Props) {
   async function start(e: FormEvent) {
     e.preventDefault();
     if (!chosen) return;
-    const what = kind === "os" ? "OS image" : "game disk";
+    const what = kind === "os" ? "OS image" : "game image";
     const msg =
       `Import ${chosen.name} (${formatBytes(chosen.size)}) as the ${what} "${name}"?\n\n` +
       "It is copied into a new zvol in the background and published when done; the file stays where it is.";
@@ -281,9 +281,9 @@ export function ImportImage({ onClose, onStarted }: Props) {
                 </label>
                 <label>
                   Kind
-                  <select value={kind} onChange={(e) => setKind(e.target.value as DiskKind)}>
+                  <select value={kind} onChange={(e) => setKind(e.target.value as ImageKind)}>
                     <option value="os">OS image (Boot Mode)</option>
-                    <option value="game">Game disk</option>
+                    <option value="game">Game image</option>
                   </select>
                 </label>
               </div>

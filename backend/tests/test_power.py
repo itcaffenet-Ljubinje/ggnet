@@ -116,9 +116,9 @@ def test_session_drop_after_the_last_heartbeat_means_offline(client, host, prov,
     from app.services import writebacks
     from app.services.writebacks import WritebackSettings
 
-    d = client.post("/api/v1/game-disks", json={"name": "cs2", "size_gb": 10}).json()
-    client.post(f"/api/v1/game-disks/{d['id']}/publish")
-    m = client.post("/api/v1/machines", json={"name": "pc01", "game_disk_id": d["id"]}).json()
+    d = client.post("/api/v1/images", json={"name": "cs2", "size_gb": 10}).json()
+    client.post(f"/api/v1/images/{d['id']}/publish")
+    m = client.post("/api/v1/machines", json={"name": "pc01", "game_image_id": d["id"]}).json()
     engine = make_engine(db_url)
     make_session = sessionmaker(bind=engine, expire_on_commit=False)
     watch = WritebackSettings(auto_discard=False)

@@ -29,12 +29,12 @@ def make_session(db_url):
 
 @pytest.fixture
 def disk(client) -> dict:
-    d = client.post("/api/v1/game-disks", json={"name": "cs2", "size_gb": 10}).json()
-    return client.post(f"/api/v1/game-disks/{d['id']}/publish").json()
+    d = client.post("/api/v1/images", json={"name": "cs2", "size_gb": 10}).json()
+    return client.post(f"/api/v1/images/{d['id']}/publish").json()
 
 
 def _machine(client, disk, name) -> dict:
-    r = client.post("/api/v1/machines", json={"name": name, "game_disk_id": disk["id"]})
+    r = client.post("/api/v1/machines", json={"name": name, "game_image_id": disk["id"]})
     assert r.status_code == 201, r.text
     return r.json()
 
@@ -46,7 +46,7 @@ def _keeper(client, disk, name="pc01") -> dict:
 
 
 def _versions(client, disk) -> list[str]:
-    return [v["name"] for v in client.get(f"/api/v1/game-disks/{disk['id']}/snapshots").json()]
+    return [v["name"] for v in client.get(f"/api/v1/images/{disk['id']}/snapshots").json()]
 
 
 def _five_versions(client, disk) -> dict:
@@ -134,7 +134,7 @@ def test_preview_and_run_delete_only_unused_old_versions(client, host, disk):
 
 def test_locked_versions_are_kept(client, disk):
     _five_versions(client, disk)
-    client.put(f"/api/v1/game-disks/{disk['id']}/snapshots/v2/lock", json={"locked": True})
+    client.put(f"/api/v1/images/{disk['id']}/snapshots/v2/lock", json={"locked": True})
     assert client.post("/api/v1/settings/retention/preview", json=SAVE).json() == []
 
 

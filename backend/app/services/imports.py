@@ -36,7 +36,7 @@ from typing import Callable
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.db.models import DiskKind, GameDisk
+from app.db.models import ImageKind, Image
 from app.services.provisioning import Provisioner
 
 logger = logging.getLogger("ggnet.imports")
@@ -57,9 +57,9 @@ _PART_NAME = re.compile(r"^[a-z0-9]+$")
 _RUNNING: dict[int, threading.Event] = {}
 
 
-def cancel(disk_id: int) -> bool:
+def cancel(image_id: int) -> bool:
     """Stop a running import; False when none runs for that disk here."""
-    flag = _RUNNING.get(disk_id)
+    flag = _RUNNING.get(image_id)
     if flag is None:
         return False
     flag.set()
@@ -219,33 +219,33 @@ class DiskImporter:
         self.prov = prov
         self.background = background     # tests run the import in the request
 
-    def start(self, disk_id: int, options: ImportOptions | None = None) -> None:
+    def start(self, image_id: int, options: ImportOptions | None = None) -> None:
         options = options or ImportOptions()
-        _RUNNING[disk_id] = threading.Event()
+        _RUNNING[image_id] = threading.Event()
         if not self.background:
-            self.run(disk_id, options)
+            self.run(image_id, options)
             return
-        threading.Thread(target=self.run, args=(disk_id, options), name=f"ggnet-import-{disk_id}",
+        threading.Thread(target=self.run, args=(image_id, options), name=f"ggnet-import-{image_id}",
                          daemon=True).start()
 
-    def run(self, disk_id: int, options: ImportOptions | None = None) -> None:
+    def run(self, image_id: int, options: ImportOptions | None = None) -> None:
         try:
-            self._run(disk_id, options or ImportOptions())
+            self._run(image_id, options or ImportOptions())
         finally:
-            _RUNNING.pop(disk_id, None)
+            _RUNNING.pop(image_id, None)
 
-    def _run(self, disk_id: int, options: ImportOptions) -> None:
+    def _run(self, image_id: int, options: ImportOptions) -> None:
         with self.make_session() as db:
-            disk = db.get(GameDisk, disk_id)
+            disk = db.get(Image, image_id)
             if disk is None or not disk.copying:
                 return
             source, target = disk.copy_source, disk.zvol_path
         fmt = image_format(Path(source)) or "raw"
         logger.info("Importing %s (%s) into %s", source, fmt, target)
         started = time.monotonic()
-        ok = self.prov.import_disk(source, fmt, target, self._progress(disk_id), cancel=_RUNNING.get(disk_id))
+        ok = self.prov.import_disk(source, fmt, target, self._progress(image_id), cancel=_RUNNING.get(image_id))
         with self.make_session() as db:
-            disk = db.get(GameDisk, disk_id)
+            disk = db.get(Image, image_id)
             if disk is None:
                 return
             if not ok:
@@ -253,12 +253,12 @@ class DiskImporter:
                 disk.copy_error = (self.prov.zfs.runner.last_error or "the import failed")[:500]
                 db.commit()
                 return
-            os_image = disk.kind is DiskKind.OS
-            disk.copy_percent = 99 if os_image and options.prepare else None
+            is_os = disk.kind is ImageKind.OS
+            disk.copy_percent = 99 if is_os and options.prepare else None
             db.commit()
         logger.info("Import of %s into %s done in %.0f s", source, target, time.monotonic() - started)
         snapshot, note = "base", f"ggNet: imported from {Path(source).name}"
-        if os_image and options.prepare:
+        if is_os and options.prepare:
             from app.services.os_setup import image_prep
             from app.services.provisioning import ProvisioningError
 
@@ -276,12 +276,12 @@ class DiskImporter:
         except Exception as e:      # the image is there; only its comment is missing
             logger.warning("%s", e)
         with self.make_session() as db:
-            disk = db.get(GameDisk, disk_id)
+            disk = db.get(Image, image_id)
             if disk is not None:
                 disk.snapshot, disk.copy_source, disk.copy_percent = snapshot, None, None
                 db.commit()
 
-    def _progress(self, disk_id: int) -> Callable[[float], None]:
+    def _progress(self, image_id: int) -> Callable[[float], None]:
         last = [0.0, -1]
 
         def update(percent: float) -> None:
@@ -290,7 +290,7 @@ class DiskImporter:
                 return
             last[0], last[1] = now, whole
             with self.make_session() as db:
-                disk = db.get(GameDisk, disk_id)
+                disk = db.get(Image, image_id)
                 if disk is not None and disk.copying:
                     disk.copy_percent = whole
                     db.commit()

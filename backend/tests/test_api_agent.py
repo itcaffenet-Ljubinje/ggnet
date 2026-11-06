@@ -10,9 +10,9 @@ BEAT = {"name": "PC01", "agent_version": "0.1.0",
 
 
 def _provisioned_machine(client) -> dict:
-    d = client.post("/api/v1/game-disks", json={"name": "cs2", "size_gb": 10}).json()
-    client.post(f"/api/v1/game-disks/{d['id']}/publish")
-    r = client.post("/api/v1/machines", json={"name": "pc01", "game_disk_id": d["id"]})
+    d = client.post("/api/v1/images", json={"name": "cs2", "size_gb": 10}).json()
+    client.post(f"/api/v1/images/{d['id']}/publish")
+    r = client.post("/api/v1/machines", json={"name": "pc01", "game_image_id": d["id"]})
     assert r.status_code == 201, r.text
     return r.json()
 
@@ -31,7 +31,7 @@ def test_heartbeat_returns_target_and_portal(client, host):
         "iscsi_target_iqn": TARGET,
         "portal_ip": "192.168.10.1",
         "portal_port": 3260,
-        "game_disk": "cs2",
+        "game_image": "cs2",
         "drive_letter": "D",
         "command": None,
         "secure_boot": None,
@@ -59,7 +59,7 @@ def test_heartbeat_without_disk_has_no_target(client):
     assert r.status_code == 200
     assert r.json()["status"] == "idle"
     assert r.json()["iscsi_target_iqn"] is None
-    assert r.json()["game_disk"] is None
+    assert r.json()["game_image"] is None
 
 
 def test_heartbeat_hides_target_while_in_error(client, host):
@@ -95,7 +95,7 @@ def test_new_machine_has_no_agent_state(client):
         None, None, None, None)
 
 
-# ── Game disk drive letter ────────────────────────────────────────────
+# ── Game image drive letter ────────────────────────────────────────────
 
 def test_heartbeat_sends_the_machine_letter_and_records_the_one_used(client):
     m = _provisioned_machine(client)
@@ -129,9 +129,9 @@ def test_set_drive_letter_for_all_disk_mode_machines(client, host):
     assert host.calls == []   # only the agents act on it
 
 
-def test_boot_mode_game_disk_is_always_d(client):
+def test_boot_mode_game_image_is_always_d(client):
     r = client.post("/api/v1/machines", json={"name": "boot01", "mode": "boot", "drive_letter": "G"})
-    assert r.status_code == 422 and "always get the game disk as D:" in r.text
+    assert r.status_code == 422 and "always get the game image as D:" in r.text
 
     m = client.post("/api/v1/machines", json={"name": "pc01", "drive_letter": "G"}).json()
     r = client.patch(f"/api/v1/machines/{m['id']}", json={"mode": "boot"})

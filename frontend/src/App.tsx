@@ -4,7 +4,7 @@ import { Clock, Database, Layers, LogOut, Monitor, RefreshCw, Server, Settings a
 import {
   api,
   type Discovered,
-  type GameDisk,
+  type Image,
   type Health,
   type Machine,
   type MachineTraffic,
@@ -14,7 +14,7 @@ import {
 } from "./api";
 import { isOnline } from "./components/AgentState";
 import { SignIn } from "./components/SignIn";
-import { GameDisksPage } from "./pages/GameDisksPage";
+import { ImagesPage } from "./pages/ImagesPage";
 import { MachinesPage } from "./pages/MachinesPage";
 import { ServerPage } from "./pages/ServerPage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -75,7 +75,7 @@ export function App() {
 function Console({ user, onSignOut }: { user: User; onSignOut: () => void }) {
   const [tab, setTab] = useState<Tab>("machines");
   const [health, setHealth] = useState<Health | null>(null);
-  const [disks, setDisks] = useState<GameDisk[]>([]);
+  const [disks, setDisks] = useState<Image[]>([]);
   const [machines, setMachines] = useState<Machine[]>([]);
   const [storage, setStorage] = useState<Storage | null>(null);
   const [traffic, setTraffic] = useState<Record<number, MachineTraffic>>({});
@@ -223,7 +223,7 @@ function Console({ user, onSignOut }: { user: User; onSignOut: () => void }) {
             reload={reload}
           />
         ) : tab === "disks" ? (
-          <GameDisksPage disks={disks} machines={machines} reload={reload} />
+          <ImagesPage disks={disks} machines={machines} reload={reload} />
         ) : tab === "server" ? (
           <ServerPage user={user} pcs={machines.length} />
         ) : (

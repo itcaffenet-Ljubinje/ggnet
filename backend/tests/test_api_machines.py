@@ -14,10 +14,10 @@ IQN = "iqn.1991-05.com.microsoft:pc01"
 
 
 def _disk(client, name="cs2", publish=True) -> dict:
-    r = client.post("/api/v1/game-disks", json={"name": name, "size_gb": 10})
+    r = client.post("/api/v1/images", json={"name": name, "size_gb": 10})
     assert r.status_code == 201, r.text
     if publish:
-        r = client.post(f"/api/v1/game-disks/{r.json()['id']}/publish")
+        r = client.post(f"/api/v1/images/{r.json()['id']}/publish")
         assert r.status_code == 200, r.text
     return r.json()
 
@@ -50,7 +50,7 @@ def test_create_machine_without_mac_gets_the_windows_iqn(client):
 
 def test_create_machine_auto_provisions(client, host):
     d = _disk(client)
-    m = _machine(client, game_disk_id=d["id"])
+    m = _machine(client, game_image_id=d["id"])
     assert m["status"] == "provisioned"
     assert m["clone_zvol"] == CLONE
     assert m["clone_snapshot"] == SNAP
@@ -61,13 +61,13 @@ def test_create_machine_auto_provisions(client, host):
 
 def test_create_machine_with_unpublished_disk(client):
     d = _disk(client, publish=False)
-    r = client.post("/api/v1/machines", json={"name": "pc01", "game_disk_id": d["id"]})
+    r = client.post("/api/v1/machines", json={"name": "pc01", "game_image_id": d["id"]})
     assert r.status_code == 409
     assert client.get("/api/v1/machines").json() == []
 
 
 def test_create_machine_unknown_disk(client):
-    r = client.post("/api/v1/machines", json={"name": "pc01", "game_disk_id": 42})
+    r = client.post("/api/v1/machines", json={"name": "pc01", "game_image_id": 42})
     assert r.status_code == 404
 
 
@@ -75,7 +75,7 @@ def test_create_boot_mode_machine_needs_an_os_image(client, host):
     d = _disk(client)
     host.calls.clear()
     r = client.post("/api/v1/machines",
-                    json={"name": "pc01", "mode": "boot", "game_disk_id": d["id"]})
+                    json={"name": "pc01", "mode": "boot", "game_image_id": d["id"]})
     assert r.status_code == 409
     assert host.calls == []
     assert _machine(client, mode="boot")["mode"] == "boot"
@@ -84,16 +84,16 @@ def test_create_boot_mode_machine_needs_an_os_image(client, host):
 def test_create_machine_host_failure_saved_as_error(client, host):
     d = _disk(client)
     host.fail_on[("zfs", "clone")] = "pool is full"
-    r = client.post("/api/v1/machines", json={"name": "pc01", "game_disk_id": d["id"]})
+    r = client.post("/api/v1/machines", json={"name": "pc01", "game_image_id": d["id"]})
     assert r.status_code == 502
     mid = r.json()["detail"]["machine_id"]
     m = client.get(f"/api/v1/machines/{mid}").json()
     assert m["status"] == "error" and "pool is full" in m["last_error"]
-    assert m["game_disk_id"] == d["id"]
+    assert m["game_image_id"] == d["id"]
 
     # Assigning again after the host is fixed recovers the machine.
     del host.fail_on[("zfs", "clone")]
-    r = client.post(f"/api/v1/machines/{mid}/assign", json={"game_disk_id": d["id"]})
+    r = client.post(f"/api/v1/machines/{mid}/assign", json={"game_image_id": d["id"]})
     assert r.status_code == 200 and r.json()["status"] == "provisioned"
 
 
@@ -123,7 +123,7 @@ def test_create_machine_duplicates(client):
 
 def test_update_host_bound_fields_only_while_idle(client):
     d = _disk(client)
-    m = _machine(client, game_disk_id=d["id"])
+    m = _machine(client, game_image_id=d["id"])
     for body in ({"initiator_iqn": "iqn.1991-05.com.microsoft:pc99"}, {"mode": "boot"}):
         assert client.patch(f"/api/v1/machines/{m['id']}", json=body).status_code == 409
     r = client.patch(f"/api/v1/machines/{m['id']}", json={"mac": "aa:bb:cc:dd:ee:ff"})
@@ -134,7 +134,7 @@ def test_update_host_bound_fields_only_while_idle(client):
 
 def test_rename_a_provisioned_machine_moves_its_writeback(client, host):
     d = _disk(client)
-    m = _machine(client, game_disk_id=d["id"])
+    m = _machine(client, game_image_id=d["id"])
     old = m["clone_zvol"]
     r = client.patch(f"/api/v1/machines/{m['id']}", json={"name": "pc99"})
     assert r.status_code == 200, r.text
@@ -151,7 +151,7 @@ def test_rename_a_provisioned_machine_moves_its_writeback(client, host):
 
 def test_rename_refused_while_the_pc_is_connected(client, host):
     d = _disk(client)
-    m = _machine(client, game_disk_id=d["id"])
+    m = _machine(client, game_image_id=d["id"])
     host.sessions.add(m["initiator_iqn"])
     r = client.patch(f"/api/v1/machines/{m['id']}", json={"name": "pc99"})
     assert r.status_code == 409 and "shut it down" in r.text
@@ -160,7 +160,7 @@ def test_rename_refused_while_the_pc_is_connected(client, host):
 
 def test_rename_refused_to_a_taken_name(client, host):
     d = _disk(client)
-    m = _machine(client, game_disk_id=d["id"])
+    m = _machine(client, game_image_id=d["id"])
     client.post("/api/v1/machines", json={"name": "pc02"})
     r = client.patch(f"/api/v1/machines/{m['id']}", json={"name": "pc02"})
     assert r.status_code == 409
@@ -169,7 +169,7 @@ def test_rename_refused_to_a_taken_name(client, host):
 
 def test_rename_rolls_back_when_the_host_fails(client, host):
     d = _disk(client)
-    m = _machine(client, game_disk_id=d["id"])
+    m = _machine(client, game_image_id=d["id"])
     host.fail_on[("targetcli", "/backstores/block", "create", "name=pc99-game")] = "no space"
     r = client.patch(f"/api/v1/machines/{m['id']}", json={"name": "pc99"})
     assert r.status_code == 502
@@ -197,24 +197,24 @@ def test_update_rejects_null_for_required_fields(client, body):
 def test_assign_switch_and_unassign(client, host):
     d1 = _disk(client, "cs2")
     d2 = _disk(client, "valorant")
-    m = _machine(client, game_disk_id=d1["id"])
+    m = _machine(client, game_image_id=d1["id"])
 
-    r = client.post(f"/api/v1/machines/{m['id']}/assign", json={"game_disk_id": d2["id"]})
+    r = client.post(f"/api/v1/machines/{m['id']}/assign", json={"game_image_id": d2["id"]})
     assert r.status_code == 200
     assert r.json()["clone_snapshot"] == "tank/ggnet/images/valorant@base"
     assert host.datasets[CLONE]["origin"].endswith("valorant@base")
 
-    r = client.post(f"/api/v1/machines/{m['id']}/assign", json={"game_disk_id": None})
-    assert r.json()["status"] == "idle" and r.json()["game_disk_id"] is None
+    r = client.post(f"/api/v1/machines/{m['id']}/assign", json={"game_image_id": None})
+    assert r.json()["status"] == "idle" and r.json()["game_image_id"] is None
     assert CLONE not in host.datasets
     assert host.visible(IQN) == [] and not host.backstores
 
 
 def test_assign_same_disk_is_noop(client, host):
     d = _disk(client)
-    m = _machine(client, game_disk_id=d["id"])
+    m = _machine(client, game_image_id=d["id"])
     host.calls.clear()
-    r = client.post(f"/api/v1/machines/{m['id']}/assign", json={"game_disk_id": d["id"]})
+    r = client.post(f"/api/v1/machines/{m['id']}/assign", json={"game_image_id": d["id"]})
     assert r.status_code == 200 and host.calls == []
 
 
@@ -222,13 +222,13 @@ def test_assign_to_boot_mode_machine_refused(client, host):
     d = _disk(client)
     m = _machine(client, mode="boot")
     host.calls.clear()
-    r = client.post(f"/api/v1/machines/{m['id']}/assign", json={"game_disk_id": d["id"]})
+    r = client.post(f"/api/v1/machines/{m['id']}/assign", json={"game_image_id": d["id"]})
     assert r.status_code == 409 and host.calls == []
 
 
 def test_reset_machine(client, host):
     d = _disk(client)
-    m = _machine(client, game_disk_id=d["id"])
+    m = _machine(client, game_image_id=d["id"])
     host.calls.clear()
     r = client.post(f"/api/v1/machines/{m['id']}/reset")
     assert r.status_code == 200 and r.json()["status"] == "provisioned"
@@ -243,7 +243,7 @@ def test_reset_without_disk(client):
 
 def test_reset_failure_is_502_and_recorded(client, host):
     d = _disk(client)
-    m = _machine(client, game_disk_id=d["id"])
+    m = _machine(client, game_image_id=d["id"])
     host.fail_on[("zfs", "destroy")] = "dataset is busy"
     r = client.post(f"/api/v1/machines/{m['id']}/reset")
     assert r.status_code == 502
@@ -259,10 +259,10 @@ def test_reset_failure_is_502_and_recorded(client, host):
 def test_outdated_after_new_snapshot(client, db_url):
     """When the disk gets @v2, a machine on @base is outdated until a reset."""
     d = _disk(client)
-    m = _machine(client, game_disk_id=d["id"])
+    m = _machine(client, game_image_id=d["id"])
     engine = make_engine(db_url)
     with engine.begin() as conn:
-        conn.execute(text("UPDATE game_disks SET snapshot='v2' WHERE id=:id"), {"id": d["id"]})
+        conn.execute(text("UPDATE images SET snapshot='v2' WHERE id=:id"), {"id": d["id"]})
     engine.dispose()
     assert client.get(f"/api/v1/machines/{m['id']}").json()["outdated"] is True
 
@@ -271,7 +271,7 @@ def test_outdated_after_new_snapshot(client, db_url):
 
 def test_delete_machine_cleans_host(client, host):
     d = _disk(client)
-    m = _machine(client, game_disk_id=d["id"])
+    m = _machine(client, game_image_id=d["id"])
     assert client.delete(f"/api/v1/machines/{m['id']}").status_code == 204
     assert CLONE not in host.datasets
     assert host.visible(IQN) == [] and not host.backstores
@@ -280,16 +280,16 @@ def test_delete_machine_cleans_host(client, host):
 
 def test_delete_machine_host_failure_keeps_record(client, host):
     d = _disk(client)
-    m = _machine(client, game_disk_id=d["id"])
+    m = _machine(client, game_image_id=d["id"])
     host.fail_on[("zfs", "destroy")] = "dataset is busy"
     assert client.delete(f"/api/v1/machines/{m['id']}").status_code == 502
     assert client.get(f"/api/v1/machines/{m['id']}").json()["status"] == "error"
 
 
-def test_game_disk_delete_refused_while_assigned_via_api(client):
+def test_game_image_delete_refused_while_assigned_via_api(client):
     d = _disk(client)
-    _machine(client, game_disk_id=d["id"])
-    assert client.delete(f"/api/v1/game-disks/{d['id']}").status_code == 409
+    _machine(client, game_image_id=d["id"])
+    assert client.delete(f"/api/v1/images/{d['id']}").status_code == 409
 
 
 def test_list_machines_sorted(client):

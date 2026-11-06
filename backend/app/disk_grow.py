@@ -2,7 +2,7 @@
 Grow the data partition of a disk image after its zvol got bigger, offline on
 the server, so Windows sees the new space without Disk Management.
 
-A game disk ends with its data partition: it is grown to the end of the disk.
+A game image ends with its data partition: it is grown to the end of the disk.
 An OS image ends with its Recovery partition right behind C:, so Windows
 could not extend C: either. The Recovery partition is moved to the end of the
 disk first (its data copied and compared, same GUID, type, name and

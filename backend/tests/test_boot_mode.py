@@ -24,9 +24,9 @@ TARGET = "iqn.2025-05.net.ggnet:storage"
 
 
 def _disk(client, name: str, kind: str = "game") -> dict:
-    r = client.post("/api/v1/game-disks", json={"name": name, "size_gb": 10, "kind": kind})
+    r = client.post("/api/v1/images", json={"name": name, "size_gb": 10, "kind": kind})
     assert r.status_code == 201, r.text
-    r = client.post(f"/api/v1/game-disks/{r.json()['id']}/publish")
+    r = client.post(f"/api/v1/images/{r.json()['id']}/publish")
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -37,10 +37,10 @@ def disks(client) -> tuple[dict, dict]:
 
 
 def _boot_machine(client, disks, **body) -> dict:
-    os_disk, game = disks
+    os_image, game = disks
     r = client.post("/api/v1/machines", json={
         "name": "vip-05", "mode": "boot", "mac": MAC,
-        "game_disk_id": game["id"], "os_disk_id": os_disk["id"], **body,
+        "game_image_id": game["id"], "os_image_id": os_image["id"], **body,
     })
     assert r.status_code == 201, r.text
     return r.json()
@@ -78,29 +78,29 @@ def auto(client):
 # ── OS images ─────────────────────────────────────────────────────────
 
 def test_os_image_is_created_for_windows_io(client, host):
-    r = client.post("/api/v1/game-disks", json={"name": "win11", "size_gb": 80, "kind": "os"})
+    r = client.post("/api/v1/images", json={"name": "win11", "size_gb": 80, "kind": "os"})
     assert r.status_code == 201, r.text
     assert r.json()["kind"] == "os"
     create = next(c for c in host.calls if c[:2] == ["zfs", "create"])
     assert {"volblocksize=16k", "compression=lz4", "sync=standard"} <= set(create)
 
 
-def test_game_disk_is_the_default_kind(client, host):
+def test_game_image_is_the_default_kind(client, host):
     assert _disk(client, "cs2")["kind"] == "game"
     create = next(c for c in host.calls if c[:2] == ["zfs", "create"])
     assert "volblocksize=64k" in create
 
 
 def test_os_image_cannot_be_edited_on_a_pc(client):
-    r = client.post("/api/v1/game-disks", json={"name": "win11", "size_gb": 80, "kind": "os"})
+    r = client.post("/api/v1/images", json={"name": "win11", "size_gb": 80, "kind": "os"})
     m = client.post("/api/v1/machines", json={"name": "pc01"}).json()
-    r = client.post(f"/api/v1/game-disks/{r.json()['id']}/edit", json={"machine_id": m["id"]})
+    r = client.post(f"/api/v1/images/{r.json()['id']}/edit", json={"machine_id": m["id"]})
     assert r.status_code == 409
 
 
 def test_os_image_in_use_cannot_be_deleted(client, disks):
     _boot_machine(client, disks)
-    r = client.delete(f"/api/v1/game-disks/{disks[0]['id']}")
+    r = client.delete(f"/api/v1/images/{disks[0]['id']}")
     assert r.status_code == 409
 
 
@@ -109,7 +109,7 @@ def test_os_image_in_use_cannot_be_deleted(client, disks):
 def test_boot_machine_gets_os_lun0_and_game_lun1(client, host, disks):
     m = _boot_machine(client, disks)
     assert m["status"] == "provisioned"
-    assert (m["os_disk_id"], m["os_clone_zvol"], m["os_clone_snapshot"]) == (
+    assert (m["os_image_id"], m["os_clone_zvol"], m["os_clone_snapshot"]) == (
         disks[0]["id"], OS_CLONE, "tank/ggnet/images/win11@base")
     assert (m["clone_zvol"], m["clone_snapshot"]) == (GAME_CLONE, "tank/ggnet/images/cs2@base")
     assert host.visible(IQN) == [f"/dev/zvol/{OS_CLONE}", f"/dev/zvol/{GAME_CLONE}"]
@@ -117,22 +117,22 @@ def test_boot_machine_gets_os_lun0_and_game_lun1(client, host, disks):
 
 def test_boot_machine_needs_an_os_image(client, host, disks):
     r = client.post("/api/v1/machines", json={
-        "name": "vip-05", "mode": "boot", "game_disk_id": disks[1]["id"]})
+        "name": "vip-05", "mode": "boot", "game_image_id": disks[1]["id"]})
     assert r.status_code == 409
     assert "OS image" in r.json()["detail"]["error"]
 
 
 def test_disks_must_be_of_the_right_kind(client, disks):
-    os_disk, game = disks
+    os_image, game = disks
     r = client.post("/api/v1/machines", json={
-        "name": "vip-05", "mode": "boot", "game_disk_id": os_disk["id"], "os_disk_id": game["id"]})
+        "name": "vip-05", "mode": "boot", "game_image_id": os_image["id"], "os_image_id": game["id"]})
     assert r.status_code == 409
 
 
 def test_disk_mode_machine_gets_no_os_image(client, disks):
-    os_disk, game = disks
+    os_image, game = disks
     r = client.post("/api/v1/machines", json={
-        "name": "pc01", "game_disk_id": game["id"], "os_disk_id": os_disk["id"]})
+        "name": "pc01", "game_image_id": game["id"], "os_image_id": os_image["id"]})
     assert r.status_code == 409
 
 
@@ -144,19 +144,19 @@ def test_machine_name_must_not_end_in_os(client):
 def test_assign_keeps_the_os_image_when_not_sent(client, host, disks):
     m = _boot_machine(client, disks)
     other = _disk(client, "valorant")
-    r = client.post(f"/api/v1/machines/{m['id']}/assign", json={"game_disk_id": other["id"]})
+    r = client.post(f"/api/v1/machines/{m['id']}/assign", json={"game_image_id": other["id"]})
     assert r.status_code == 200, r.text
-    assert r.json()["os_disk_id"] == disks[0]["id"]
+    assert r.json()["os_image_id"] == disks[0]["id"]
     assert host.visible(IQN) == [f"/dev/zvol/{OS_CLONE}", f"/dev/zvol/{GAME_CLONE}"]
     assert host.datasets[GAME_CLONE]["origin"] == "tank/ggnet/images/valorant@base"
 
 
 def test_remove_disks_deletes_both_writebacks(client, host, disks):
     m = _boot_machine(client, disks)
-    r = client.post(f"/api/v1/machines/{m['id']}/assign", json={"game_disk_id": None})
+    r = client.post(f"/api/v1/machines/{m['id']}/assign", json={"game_image_id": None})
     assert r.status_code == 200, r.text
     out = r.json()
-    assert (out["status"], out["os_disk_id"], out["os_clone_zvol"]) == ("idle", None, None)
+    assert (out["status"], out["os_image_id"], out["os_clone_zvol"]) == ("idle", None, None)
     assert not host.exists(OS_CLONE) and not host.exists(GAME_CLONE)
     assert host.visible(IQN) == []
 
@@ -165,14 +165,14 @@ def test_failed_os_clone_rolls_back_the_game_clone(client, host, disks):
     host.fail_on[("zfs", "clone", "-o", "sync=disabled", "tank/ggnet/images/win11@base")] = "out of space"
     r = client.post("/api/v1/machines", json={
         "name": "vip-05", "mode": "boot",
-        "game_disk_id": disks[1]["id"], "os_disk_id": disks[0]["id"]})
+        "game_image_id": disks[1]["id"], "os_image_id": disks[0]["id"]})
     assert r.status_code == 502
     assert not host.exists(GAME_CLONE)
     m = client.get("/api/v1/machines").json()[0]
     assert m["status"] == "error"
     # The leftovers are recorded, so removing the disks cleans up.
     del host.fail_on[("zfs", "clone", "-o", "sync=disabled", "tank/ggnet/images/win11@base")]
-    r = client.post(f"/api/v1/machines/{m['id']}/assign", json={"game_disk_id": None})
+    r = client.post(f"/api/v1/machines/{m['id']}/assign", json={"game_image_id": None})
     assert r.status_code == 200, r.text
 
 
@@ -214,8 +214,8 @@ def test_apply_writebacks_makes_both_next_versions(client, host, disks, windows)
     out = r.json()
     assert out["os_clone_snapshot"] == "tank/ggnet/images/win11@v2"
     assert out["clone_snapshot"] == "tank/ggnet/images/cs2@v2"
-    assert client.get(f"/api/v1/game-disks/{disks[0]['id']}").json()["snapshot"] == "v2"
-    assert client.get(f"/api/v1/game-disks/{disks[1]['id']}").json()["snapshot"] == "v2"
+    assert client.get(f"/api/v1/images/{disks[0]['id']}").json()["snapshot"] == "v2"
+    assert client.get(f"/api/v1/images/{disks[1]['id']}").json()["snapshot"] == "v2"
     assert host.datasets[OS_CLONE]["origin"] == "tank/ggnet/images/win11@v2"
     assert host.datasets[GAME_CLONE]["origin"] == "tank/ggnet/images/cs2@v2"
     # Both writebacks are still kept, and the fresh OS one is this PC again.
@@ -232,7 +232,7 @@ def test_apply_only_the_os_writeback_keeps_the_game_one(client, host, disks, win
     out = r.json()
     assert out["os_clone_snapshot"] == "tank/ggnet/images/win11@v2"
     assert out["clone_snapshot"] == "tank/ggnet/images/cs2@base"
-    assert client.get(f"/api/v1/game-disks/{disks[1]['id']}").json()["snapshot"] == "base"
+    assert client.get(f"/api/v1/images/{disks[1]['id']}").json()["snapshot"] == "base"
     # The game writeback was mapped again as it was, not re-cloned.
     assert ["zfs", "destroy", "-r", GAME_CLONE] not in host.calls
     assert host.datasets[GAME_CLONE]["origin"] == "tank/ggnet/images/cs2@base"
@@ -272,7 +272,7 @@ def test_apply_failing_on_the_second_disk_records_the_first(client, host, disks)
     host.snapshots["tank/ggnet/images/win11@manual"] = set()   # the OS apply fails
     r = client.post(f"/api/v1/machines/{m['id']}/apply-writebacks")
     assert r.status_code == 502 and "Reset the machine" in r.json()["detail"]["error"]
-    assert client.get(f"/api/v1/game-disks/{disks[1]['id']}").json()["snapshot"] == "v2"
+    assert client.get(f"/api/v1/images/{disks[1]['id']}").json()["snapshot"] == "v2"
     assert _get(client, m)["status"] == "error"
 
 
@@ -389,7 +389,7 @@ def test_ipxe_unknown_pc_waits_for_registration(client, disks):
     # Once registered as a Boot Mode PC, the same request boots it.
     r = client.post("/api/v1/machines", json={
         "name": "pc-99", "mode": "boot", "mac": "aa:bb:cc:dd:ee:99",
-        "game_disk_id": disks[1]["id"], "os_disk_id": disks[0]["id"]})
+        "game_image_id": disks[1]["id"], "os_image_id": disks[0]["id"]})
     assert r.status_code == 201, r.text
     assert "sanboot" in _ipxe(client, "aa-bb-cc-dd-ee-99")
 
@@ -530,7 +530,7 @@ def test_a_setup_problem_does_not_stop_the_boot(client, host, disks, windows):
 
 def test_disk_mode_pcs_are_never_set_up(client, disks, windows):
     _, game = disks
-    r = client.post("/api/v1/machines", json={"name": "pc01", "game_disk_id": game["id"]})
+    r = client.post("/api/v1/machines", json={"name": "pc01", "game_image_id": game["id"]})
     assert r.status_code == 201
     assert windows.done == []
 
@@ -609,7 +609,7 @@ def test_a_waiting_pc_reports_its_nic_and_keeps_it_when_added(client, disks, win
     [d] = client.get("/api/v1/discovery").json()
     assert d["boot_nic"] == NIC_ID
     r = client.post(f"/api/v1/discovery/{d['id']}/claim", json={
-        "name": "pc-99", "mode": "boot", "game_disk_id": disks[1]["id"], "os_disk_id": disks[0]["id"]})
+        "name": "pc-99", "mode": "boot", "game_image_id": disks[1]["id"], "os_image_id": disks[0]["id"]})
     assert r.status_code == 201, r.text
     assert r.json()["boot_nic"] == NIC_ID
 
@@ -671,10 +671,10 @@ def test_an_unfinished_windows_update_stops_apply_until_the_admin_overrides(clie
                     json={"os": True, "game": False, "ignore_update": True})
     assert r.status_code == 200, r.text
     assert host.snap_props["tank/ggnet/images/win11@v2"]["ggnet:update"] == "pending.xml,RebootPending"
-    updates = client.get("/api/v1/game-disks/updates").json()
+    updates = client.get("/api/v1/images/updates").json()
     assert [(u["snapshot"], u["state"], u["signs"]) for u in updates] == [
         ("v2", "pending", ["pending.xml", "RebootPending"])]
-    versions = client.get(f"/api/v1/game-disks/{disks[0]['id']}/snapshots").json()
+    versions = client.get(f"/api/v1/images/{disks[0]['id']}/snapshots").json()
     assert [v["update"] for v in versions] == [None, ["pending.xml", "RebootPending"]]
 
 
@@ -684,7 +684,7 @@ def test_a_finished_update_is_recorded_on_the_new_version(client, host, disks, w
     r = client.post(f"/api/v1/machines/{m['id']}/apply-writebacks", json={"os": True, "game": True})
     assert r.status_code == 200, r.text
     assert host.snap_props["tank/ggnet/images/win11@v2"]["ggnet:update"] == "none"
-    assert "ggnet:update" not in host.snap_props.get("tank/ggnet/images/cs2@v2", {})   # game disk
+    assert "ggnet:update" not in host.snap_props.get("tank/ggnet/images/cs2@v2", {})   # game image
 
 
 def test_applying_only_the_game_writeback_prepares_nothing(client, host, disks, windows):
@@ -696,9 +696,9 @@ def test_applying_only_the_game_writeback_prepares_nothing(client, host, disks, 
 
 
 def test_prepare_image_makes_a_new_active_version(client, host, disks, windows):
-    os_disk, game = disks
+    os_image, game = disks
     host.calls.clear()
-    r = client.post(f"/api/v1/game-disks/{os_disk['id']}/prepare")
+    r = client.post(f"/api/v1/images/{os_image['id']}/prepare")
     assert r.status_code == 200, r.text
     assert r.json()["snapshot"] == "v2"
     tmp = "tank/ggnet/writebacks/win11_ggnet_prep"
@@ -706,43 +706,43 @@ def test_prepare_image_makes_a_new_active_version(client, host, disks, windows):
                for c in host.calls)
     [(device, prep, promoted)] = windows.prepared
     assert device == f"/dev/zvol/{tmp}" and promoted is False
-    versions = client.get(f"/api/v1/game-disks/{os_disk['id']}/snapshots").json()
+    versions = client.get(f"/api/v1/images/{os_image['id']}/snapshots").json()
     assert [v["name"] for v in versions] == ["base", "v2"]
     assert versions[-1]["comment"].startswith("ggNet: prepared for all PCs")
-    # Game disks are not Windows images.
-    assert client.post(f"/api/v1/game-disks/{game['id']}/prepare").status_code == 409
+    # Game images are not Windows images.
+    assert client.post(f"/api/v1/images/{game['id']}/prepare").status_code == 409
 
 
 def test_prepare_image_can_turn_defender_off(client, host, disks, windows):
-    os_disk, _ = disks
-    r = client.post(f"/api/v1/game-disks/{os_disk['id']}/prepare", json={"defender_off": True})
+    os_image, _ = disks
+    r = client.post(f"/api/v1/images/{os_image['id']}/prepare", json={"defender_off": True})
     assert r.status_code == 200, r.text
     [(_, prep, _)] = windows.prepared
     assert prep.defender_off is True
-    versions = client.get(f"/api/v1/game-disks/{os_disk['id']}/snapshots").json()
+    versions = client.get(f"/api/v1/images/{os_image['id']}/snapshots").json()
     assert versions[-1]["comment"].endswith(", Defender off")
-    client.post(f"/api/v1/game-disks/{os_disk['id']}/prepare")       # without a body: left as it is
+    client.post(f"/api/v1/images/{os_image['id']}/prepare")       # without a body: left as it is
     assert windows.prepared[-1][1].defender_off is False
 
 
 def test_a_failed_prepare_changes_nothing(client, host, disks, windows):
-    os_disk, _ = disks
+    os_image, _ = disks
     windows.prep_problem = "no Program Files folder in the image"
-    r = client.post(f"/api/v1/game-disks/{os_disk['id']}/prepare")
+    r = client.post(f"/api/v1/images/{os_image['id']}/prepare")
     assert r.status_code == 502
     assert "no Program Files folder" in r.text
-    assert client.get(f"/api/v1/game-disks/{os_disk['id']}").json()["snapshot"] == "base"
+    assert client.get(f"/api/v1/images/{os_image['id']}").json()["snapshot"] == "base"
     assert ["zfs", "destroy", "tank/ggnet/writebacks/win11_ggnet_prep"] in [c[:3] for c in host.calls]
 
 
 def test_hardware_check_tells_which_pcs_the_image_can_boot(client, host, disks, windows, db_url):
-    os_disk, game = disks
+    os_image, game = disks
     for name, nic, inst in (("komp-01", "VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_16", None),
                             ("vip-01", "VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_15", "01000000684CE00000"),
                             ("asus-01", "VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_15", "6&95d5d6a&0&0000020A"),
                             ("new-pc", "VEN_8086&DEV_15B8&SUBSYS_86721043&REV_00", None),
                             ("disk-pc", None, None)):
-        client.post("/api/v1/machines", json={"name": name, "game_disk_id": game["id"]})
+        client.post("/api/v1/machines", json={"name": name, "game_image_id": game["id"]})
         if nic:
             engine = make_engine(db_url)
             with engine.begin() as conn:
@@ -750,7 +750,7 @@ def test_hardware_check_tells_which_pcs_the_image_can_boot(client, host, disks, 
                              {"n": nic, "i": inst, "m": name})
             engine.dispose()
     host.calls.clear()
-    r = client.get(f"/api/v1/game-disks/{os_disk['id']}/hardware")
+    r = client.get(f"/api/v1/images/{os_image['id']}/hardware")
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["snapshot"] == "base" and body["problem"] is None
@@ -768,23 +768,23 @@ def test_hardware_check_tells_which_pcs_the_image_can_boot(client, host, disks, 
         ("VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_16", None),
         ("VEN_8086&DEV_15B8&SUBSYS_86721043&REV_00", None)])]
     assert tmp not in host.datasets                                   # the temporary clone is gone
-    client.get(f"/api/v1/game-disks/{os_disk['id']}/hardware")
+    client.get(f"/api/v1/images/{os_image['id']}/hardware")
     assert len(windows.checked) == 1                                  # a version is checked once
-    assert client.get(f"/api/v1/game-disks/{game['id']}/hardware").status_code == 409
+    assert client.get(f"/api/v1/images/{game['id']}/hardware").status_code == 409
 
 
 def test_a_failed_hardware_check_is_reported_and_retried(client, host, disks, windows, db_url):
-    os_disk, game = disks
-    client.post("/api/v1/machines", json={"name": "komp-01", "game_disk_id": game["id"]})
+    os_image, game = disks
+    client.post("/api/v1/machines", json={"name": "komp-01", "game_image_id": game["id"]})
     engine = make_engine(db_url)
     with engine.begin() as conn:
         conn.execute(text("UPDATE machines SET boot_nic = 'VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_16'"))
     engine.dispose()
     windows.check_problem = "no Windows partition found"
-    body = client.get(f"/api/v1/game-disks/{os_disk['id']}/hardware").json()
+    body = client.get(f"/api/v1/images/{os_image['id']}/hardware").json()
     assert (body["problem"], body["nics"]) == ("no Windows partition found", [])
     windows.check_problem = None
-    assert client.get(f"/api/v1/game-disks/{os_disk['id']}/hardware").json()["nics"][0]["status"] == "ready"
+    assert client.get(f"/api/v1/images/{os_image['id']}/hardware").json()["nics"][0]["status"] == "ready"
 
 
 # ── Spare writebacks ──────────────────────────────────────────────────

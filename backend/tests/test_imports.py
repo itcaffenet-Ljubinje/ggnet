@@ -135,7 +135,7 @@ def test_import_makes_a_published_image_of_the_files_size(client, host, folder, 
     f = _file(host, folder, "win11.vhdx", size=60 * GiB + 1)
     r = client.post("/api/v1/imports", json={"name": "Win11-Real", "kind": "os", "path": str(f)})
     assert r.status_code == 201, r.text
-    d = client.get(f"/api/v1/game-disks/{r.json()['id']}").json()
+    d = client.get(f"/api/v1/images/{r.json()['id']}").json()
     assert (d["name"], d["kind"], d["size_gb"], d["snapshot"], d["copy_source"]) == ("win11-real", "os", 61, "base", None)
     master = "tank/ggnet/images/win11-real"
     assert host.datasets[master]["readonly"] is True and f"{master}@base" in host.snapshots
@@ -147,7 +147,7 @@ def test_a_failed_import_keeps_the_error_and_removes_the_zvol(client, host, fold
     f = _file(host, folder, "broken.vhd")
     host.fail_on[("qemu-img", "convert")] = "qemu-img: Could not read image: Invalid argument"
     r = client.post("/api/v1/imports", json={"name": "broken", "kind": "game", "path": str(f)})
-    d = client.get(f"/api/v1/game-disks/{r.json()['id']}").json()
+    d = client.get(f"/api/v1/images/{r.json()['id']}").json()
     assert d["published"] is False and "Invalid argument" in d["copy_error"]
     assert "tank/ggnet/images/broken" not in host.datasets
 
@@ -164,7 +164,7 @@ def test_import_refuses_files_outside_the_folder_or_unknown(client, host, folder
     r = client.post("/api/v1/imports", json={"name": "x", "path": str(unreadable)})
     assert r.status_code == 409 and "not a readable" in r.text
     f = _file(host, folder, "ok.vhdx")
-    client.post("/api/v1/game-disks", json={"name": "taken", "size_gb": 1})
+    client.post("/api/v1/images", json={"name": "taken", "size_gb": 1})
     assert client.post("/api/v1/imports", json={"name": "taken", "path": str(f)}).status_code == 409
 
 
@@ -207,11 +207,11 @@ def test_an_imported_os_image_is_prepared_as_its_next_version(client, host, fold
     prov.windows.prep_problem = None
     f = _file(host, folder, "pc07.vhdx")
     r = client.post("/api/v1/imports", json={"name": "win11-pc07", "path": str(f), "defender_off": True})
-    d = client.get(f"/api/v1/game-disks/{r.json()['id']}").json()
+    d = client.get(f"/api/v1/images/{r.json()['id']}").json()
     assert (d["snapshot"], d["copy_source"]) == ("v2", None)
     [(_, prep, _)] = prov.windows.prepared
     assert prep.defender_off is True
-    versions = {v["name"]: v["comment"] for v in client.get(f"/api/v1/game-disks/{d['id']}/snapshots").json()}
+    versions = {v["name"]: v["comment"] for v in client.get(f"/api/v1/images/{d['id']}/snapshots").json()}
     assert versions["base"] == "ggNet: imported from pc07.vhdx"
     assert versions["v2"] == "ggNet: prepared for all PCs after the import, Defender off"
 
@@ -219,20 +219,20 @@ def test_an_imported_os_image_is_prepared_as_its_next_version(client, host, fold
 def test_prepare_can_be_skipped_and_a_failed_prepare_keeps_base(client, host, folder, importer, prov):
     f = _file(host, folder, "a.vhdx")
     r = client.post("/api/v1/imports", json={"name": "plain", "path": str(f), "prepare": False})
-    assert client.get(f"/api/v1/game-disks/{r.json()['id']}").json()["snapshot"] == "base"
+    assert client.get(f"/api/v1/images/{r.json()['id']}").json()["snapshot"] == "base"
     prov.windows = None                                   # Windows setup not available here
     f = _file(host, folder, "b.vhdx")
     r = client.post("/api/v1/imports", json={"name": "unprepared", "path": str(f)})
-    d = client.get(f"/api/v1/game-disks/{r.json()['id']}").json()
+    d = client.get(f"/api/v1/images/{r.json()['id']}").json()
     assert (d["snapshot"], d["copy_error"]) == ("base", None)
-    base = client.get(f"/api/v1/game-disks/{d['id']}/snapshots").json()[0]
+    base = client.get(f"/api/v1/images/{d['id']}/snapshots").json()[0]
     assert "Prepare image failed" in base["comment"]
 
 
-def test_a_game_disk_import_is_never_prepared(client, host, folder, importer, prov):
+def test_a_game_image_import_is_never_prepared(client, host, folder, importer, prov):
     f = _file(host, folder, "games.qcow2")
     r = client.post("/api/v1/imports", json={"name": "games2", "kind": "game", "path": str(f)})
-    assert client.get(f"/api/v1/game-disks/{r.json()['id']}").json()["snapshot"] == "base"
+    assert client.get(f"/api/v1/images/{r.json()['id']}").json()["snapshot"] == "base"
 
 
 def test_a_cancelled_import_fails_and_removes_its_zvol(host, prov, folder):

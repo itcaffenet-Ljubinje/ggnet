@@ -8,7 +8,7 @@ app.services.imports:
   PUT    /imports/upload/{filename}  upload a file into the imports folder (the body is the file)
   DELETE /imports/file?path=...      delete a file from the imports folder
   POST   /imports                    import a file: a new disk, filled in the background
-  POST   /imports/{disk_id}/cancel   stop a running import
+  POST   /imports/{image_id}/cancel   stop a running import
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_disk_importer, get_provisioner, get_usb_disks
 from app.api.v1.errors import conflict, host_failed, not_found
-from app.api.v1.schemas import GameDiskOut, ImageFileOut, ImportIn, ImportSources, UsbFolderOut
-from app.db.models import DiskKind, GameDisk
+from app.api.v1.schemas import ImageOut, ImageFileOut, ImportIn, ImportSources, UsbFolderOut
+from app.db.models import ImageKind, Image
 from app.db.session import get_db
 from app.services import imports
 from app.services.provisioning import Provisioner, ProvisioningError
@@ -73,8 +73,8 @@ def open_usb(part: str, usb=Depends(get_usb_disks)):
 
 @router.post("/usb/{part}/eject", status_code=status.HTTP_204_NO_CONTENT)
 def eject_usb(part: str, db: Session = Depends(get_db), usb=Depends(get_usb_disks)):
-    busy = db.scalar(select(GameDisk).where(GameDisk.copy_source.like(f"{usb.mounts / part}/%"),
-                                            GameDisk.copy_error.is_(None)))
+    busy = db.scalar(select(Image).where(Image.copy_source.like(f"{usb.mounts / part}/%"),
+                                            Image.copy_error.is_(None)))
     if busy is not None:
         conflict(f"'{busy.name}' is still being imported from it ({busy.copy_percent or 0}%)")
     try:
@@ -123,13 +123,13 @@ def delete_file(path: str, db: Session = Depends(get_db), prov: Provisioner = De
     file = Path(path)
     if folder is None or not imports.inside(file, folder) or not file.is_file():
         not_found("File in the imports folder", path)
-    if db.scalar(select(GameDisk).where(GameDisk.copy_source == str(file), GameDisk.copy_error.is_(None))):
+    if db.scalar(select(Image).where(Image.copy_source == str(file), Image.copy_error.is_(None))):
         conflict(f"{file.name} is being imported")
     file.unlink()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post("", response_model=GameDiskOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=ImageOut, status_code=status.HTTP_201_CREATED)
 def start_import(
     body: ImportIn,
     db: Session = Depends(get_db),
@@ -146,10 +146,10 @@ def start_import(
     fmt = imports.image_format(file)
     if not allowed or fmt is None or not file.is_file():
         not_found("Image file", body.path)
-    if db.scalar(select(GameDisk).where(GameDisk.name == body.name)):
-        conflict(f"Game disk '{body.name}' already exists")
+    if db.scalar(select(Image).where(Image.name == body.name)):
+        conflict(f"Image '{body.name}' already exists")
     path = prov.image_path(body.name)
-    owner = db.scalar(select(GameDisk).where(GameDisk.zvol_path == path))
+    owner = db.scalar(select(Image).where(Image.zvol_path == path))
     if owner is not None:
         conflict(f"'{body.name}' is still the zvol name of '{owner.name}' (renamed); choose another name")
     size = imports.virtual_size(prov.zfs.runner, str(file), fmt)
@@ -157,10 +157,10 @@ def start_import(
         conflict(f"{file.name} is not a readable {fmt} image")
     size_gb = math.ceil(size / GiB)
     try:
-        prov.create_disk(body.name, size_gb, os_image=body.kind is DiskKind.OS)
+        prov.create_disk(body.name, size_gb, is_os=body.kind is ImageKind.OS)
     except ProvisioningError as e:
         host_failed(str(e))
-    disk = GameDisk(name=body.name, zvol_path=path, size_gb=size_gb, kind=body.kind,
+    disk = Image(name=body.name, zvol_path=path, size_gb=size_gb, kind=body.kind,
                     copy_source=str(file.resolve()), copy_percent=0)
     db.add(disk)
     try:
@@ -168,7 +168,7 @@ def start_import(
     except IntegrityError:
         db.rollback()
         prov.delete_disk(path, published=False)
-        conflict(f"Game disk '{body.name}' already exists")
+        conflict(f"Image '{body.name}' already exists")
     logger.info("Import of %s (%s, %d GB) into '%s' started", file, fmt, size_gb, disk.name)
     importer.start(disk.id, imports.ImportOptions(prepare=body.prepare, defender_off=body.defender_off,
                                                   services_off=body.services_off))
@@ -176,14 +176,14 @@ def start_import(
     return disk
 
 
-@router.post("/{disk_id}/cancel", status_code=status.HTTP_204_NO_CONTENT)
-def cancel_import(disk_id: int, db: Session = Depends(get_db)):
+@router.post("/{image_id}/cancel", status_code=status.HTTP_204_NO_CONTENT)
+def cancel_import(image_id: int, db: Session = Depends(get_db)):
     """Stop a running import; the disk then shows "Cancelled" and can be removed."""
-    disk = db.get(GameDisk, disk_id)
+    disk = db.get(Image, image_id)
     if disk is None:
-        not_found("Game disk", disk_id)
+        not_found("Game image", image_id)
     if not disk.copying or not str(disk.copy_source).startswith("/"):
         conflict(f"'{disk.name}' is not being imported")
-    if not imports.cancel(disk_id):
+    if not imports.cancel(image_id):
         conflict(f"The import of '{disk.name}' does not run in this server process")
     return Response(status_code=status.HTTP_204_NO_CONTENT)

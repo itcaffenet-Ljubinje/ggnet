@@ -9,7 +9,7 @@ Two client modes, built in this order:
 1. **Disk Mode**: Windows 11 boots from the PC's own SSD. `ggnet-agent` logs in to iSCSI and mounts the game
    disk (e.g. `D:`). Games are installed and updated once, on the server.
 2. **Boot Mode**: the PC has no disk. UEFI PXE → iPXE → iSCSI `sanboot`. LUN 0 is the PC's Windows writeback,
-   LUN 1 its game disk writeback.
+   LUN 1 its game image writeback.
 
 Status of each part is tracked in [Roadmap](#roadmap).
 
@@ -25,7 +25,7 @@ Names come from `[storage]` in `/etc/ggnet/config.toml`; nothing is hard-coded. 
 ```
 <pool>/ggnet/
 ├── images/                 masters, read-only after publish
-│   ├── cs2                 game disk zvol      @base @v2 @v3 ...  (holds: ggnet:protected)
+│   ├── cs2                 game image zvol      @base @v2 @v3 ...  (holds: ggnet:protected)
 │   └── win11-os            OS zvol (Boot Mode) @v1 @v2 ...
 ├── writebacks/             per-PC clones, disposable (sync=disabled)
 │   ├── pc01                clone of images/cs2@v3      → Disk Mode, mapped LUN 0
@@ -48,7 +48,7 @@ same ARC blocks. A clone only costs the space of what that PC wrote since its la
 
 Why these values:
 
-- `64k` for games: game files are large and read sequentially. Format the game disk in Windows as **NTFS with a
+- `64k` for games: game files are large and read sequentially. Format the game image in Windows as **NTFS with a
   64K allocation unit** so one NTFS cluster is one ZFS block (no read-modify-write).
 - `16k` for the OS (the OpenZFS 2.2+ default): Windows does small random I/O. `4k`/`8k` zvols on a mirror waste
   metadata and compress badly; on RAIDZ they waste a lot of space. On this host's ZFS RAID10 `16k` is the right
@@ -152,11 +152,11 @@ also removes those, so a PC moves to the shared target the next time it is reset
 
 Check with `targetcli /iscsi ls`: after all PCs are reset only the `:storage` target remains.
 
-### Why the game disk is not one shared read-only LUN
+### Why the game image is not one shared read-only LUN
 
 Exposing the master itself read-only to all PCs looks simpler but breaks in practice: Steam, Riot and Epic write
 into the game folder on launch (logs, shader caches, update checks), and NTFS on a write-protected disk fails
-those writes. Each PC therefore gets a ZFS clone of the master as its game disk. The clone is created instantly,
+those writes. Each PC therefore gets a ZFS clone of the master as its game image. The clone is created instantly,
 shares all blocks with the master, takes writes, and is discarded on reset. The master never changes. This is
 also how other diskless systems behave, and it gives the same read performance as a shared LUN because the blocks
 in ARC are the same.
@@ -199,14 +199,14 @@ ever touches that one PC's ACL, backstore and clone.
 
 ### Filling a new master (Edit on PC)
 
-A new game disk starts as an empty, writable **draft** zvol. To fill it, **Edit on PC** maps the draft zvol itself
-(no clone) as the game disk of one Disk Mode PC that has no game disk; the machine's status becomes `editing`.
+A new game image starts as an empty, writable **draft** zvol. To fill it, **Edit on PC** maps the draft zvol itself
+(no clone) as the game image of one Disk Mode PC that has no game image; the machine's status becomes `editing`.
 ggnet-agent connects it as usual; on first use the admin initializes and formats it in Disk Management (the agent
 assigns the drive letter once a data partition exists) and installs the games. Then the PC is shut down and
 **Finish editing** unmaps the draft (refused while the PC still has an iSCSI session), and **Publish** takes `@base`,
 holds it and sets `readonly=on`.
 
-While a draft is being edited, it cannot be published or deleted, and the editing PC cannot get a game disk or be
+While a draft is being edited, it cannot be published or deleted, and the editing PC cannot get a game image or be
 deleted. The writeback watcher only records the editing PC's session state; it never discards anything there,
 because there is no writeback: every write goes straight into the draft.
 
@@ -245,7 +245,7 @@ refused when `@v3` is no longer the newest snapshot of the master (someone appli
 the admin then discards the PC's writeback and redoes the change.
 
 PCs that are running when a new version is applied keep their current snapshot until they reboot. The Machines
-page shows this as the image status, next to the game disk:
+page shows this as the image status, next to the game image:
 
 | Badge | Icon | Meaning |
 |---|---|---|
@@ -255,13 +255,13 @@ page shows this as the image status, next to the game disk:
 | `Pinned @base` (red) | red circle | pinned: stays on that version whatever is active |
 | `Keep writeback` (red) | red circle | keeps its writeback, so it never moves on its own |
 
-**Per-PC snapshot pin** (the Version drop-down under the game disk; `machines.pinned_snapshot`): a PC runs a chosen
+**Per-PC snapshot pin** (the Version drop-down under the game image; `machines.pinned_snapshot`): a PC runs a chosen
 version of its image instead of the active one, for testing a version on one PC or rolling one PC back. Nothing
 changes on the host when the pin is set: the PC is cloned from the pinned version at its next discard. A pinned
-version cannot be deleted; switching the PC's game disk or applying its writeback clears the pin.
+version cannot be deleted; switching the PC's game image or applying its writeback clears the pin.
 **Rollback for everyone** = make an older snapshot active.
 
-**Merge into base** (`POST /game-disks/{id}/snapshots/{name}/merge-into-base`): after a few Windows or game
+**Merge into base** (`POST /images/{id}/snapshots/{name}/merge-into-base`): after a few Windows or game
 updates (`@base @v2 @v3 @v4`), the chosen version becomes the new `@base` and every older one is deleted. Nothing
 is merged or copied: a ZFS snapshot is the whole disk, so `@v4` already holds every change.
 
@@ -310,13 +310,13 @@ being active). The job thread is off in dev defaults (`[retention] job = false`)
 *Done: OS images, a Boot Mode PC's OS and game writebacks, and the per-MAC iPXE script. Planned: the
 dnsmasq proxyDHCP, the iPXE build, importing a `.vhdx` into an OS image, and Secure Boot.*
 
-An OS image is a disk of kind `os` (`POST /game-disks` with `"kind": "os"`; created with the OS properties
-above). A Boot Mode machine is assigned an OS image and a game disk together (`os_disk_id` + `game_disk_id`) and
+An OS image is a disk of kind `os` (`POST /images` with `"kind": "os"`; created with the OS properties
+above). A Boot Mode machine is assigned an OS image and a game image together (`os_image_id` + `game_image_id`) and
 gets two writebacks: `<writebacks>/<name>-os` (mapped LUN 0) and `<writebacks>/<name>` (mapped LUN 1; the same
 path as a Disk Mode game writeback). Machine names may not end in `-os`, so the two never collide. Both
 writebacks are discarded together, by the same rules as in Disk Mode, and the OS writeback always follows the OS
 image's active version (no pin yet). Apply Writebacks of a Boot Mode PC with Keep Writeback turns its OS
-writeback into the OS image's next version and its game writeback into the game disk's next version
+writeback into the OS image's next version and its game writeback into the game image's next version
 (`{"os": false}` or `{"game": false}` applies only one; the other stays kept as it is). The fresh OS writeback
 is set up as the PC again.
 
@@ -400,7 +400,7 @@ reboot
 
 - No `--no-describe`: Windows needs the iBFT table iPXE writes to continue booting from iSCSI.
 - `initiator-iqn` must equal the PC's ACL IQN, otherwise LIO refuses the login.
-- Only LUN 0 is named in the root path. Windows sees LUN 1 (the game disk) through the same iSCSI session.
+- Only LUN 0 is named in the root path. Windows sees LUN 1 (the game image) through the same iSCSI session.
 - The iBFT gateway is 0.0.0.0 by default (`set netX/gateway 0.0.0.0` before `sanboot`). With the router's gateway in the iBFT, Windows lost its iSCSI disk as it took over from iPXE (0x7B on vip-05, A/B tested on the same image on 2026-10-16); with 0.0.0.0 it boots and still gets its default route and internet afterwards. `[boot] gateway` in config.toml: `"none"` (the default), `"dhcp"` (keep the router's gateway) or an IP (e.g. the server with IP forwarding).
 
 Unknown MAC (not registered, or registration window open):
@@ -439,8 +439,8 @@ writeback offline before it is mapped, so Windows comes up as that PC without an
      gets a DHCP reservation on the router.
    - `MountedDevices`: every `\DosDevices\X:` but C: is removed. The image remembered the letters of the PC it
      was made on (vip-05's local D:, E:, F:); elsewhere those volumes do not exist, yet Windows kept the letters,
-     so the agent could not give the game disk D: (`Set-Partition` 42012). Windows letters present volumes again
-     at boot, and the agent then gives the game disk its letter on every PC.
+     so the agent could not give the game image D: (`Set-Partition` 42012). Windows letters present volumes again
+     at boot, and the agent then gives the game image its letter on every PC.
 4. Unmount.
 
 It runs whenever an OS writeback is cloned fresh (assign, reset, every discard) and never touches the image.
@@ -472,7 +472,7 @@ React + Vite, served by the backend on port 8088. Layout: Machines, Images, Serv
 - Settings dialog: Main (name, read-only IP and MAC, mode, game image, OS image, hide), Hardware (NIC, GPU, CPU,
   motherboard, reported by the agent), Advanced (Keep Writeback, snapshot pin per image).
 - Bulk: select PCs → Turn On, Turn Off, Reboot, Edit Selected (images, Keep Writeback, pins, hide). *(done:
-  Turn on, Shutdown, Reboot, game disk, version pin (when the PCs share a disk), drive letter, stop keeping
+  Turn on, Shutdown, Reboot, game image, version pin (when the PCs share a disk), drive letter, stop keeping
   writeback; `POST /machines/bulk` runs each machine like its single route and reports per machine)*
 
 **Images**
@@ -495,10 +495,10 @@ network throughput of the iSCSI interface.
 
 | Step | State |
 |---|---|
-| ZFS manager, game disks API, machines API, agent heartbeat, Disk Mode UI | done |
+| ZFS manager, game images API, machines API, agent heartbeat, Disk Mode UI | done |
 | One shared iSCSI target with per-PC ACLs and mapped LUNs | done |
 | Automatic writeback discard, Keep Writeback, Apply Writebacks (zfs promote), image versions | done |
-| Edit on PC for drafts, game disk drive letter per machine, Images page: versions and writebacks | done |
+| Edit on PC for drafts, game image drive letter per machine, Images page: versions and writebacks | done |
 | Snapshot pin per machine and the image status | done |
 | Retention job, reserved space and warning threshold | done |
 | Machines UI (IP, uptime, link speed, hardware, Sent/Received), WoL / shutdown / reboot, bulk | done |

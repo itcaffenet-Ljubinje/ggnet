@@ -1,10 +1,10 @@
 """
 API for client machines, with auto-provisioning.
 
-`game_disk_id` is the WANTED assignment, `status` is the actual host state:
+`game_image_id` is the WANTED assignment, `status` is the actual host state:
   idle         no disk, nothing on the host
   provisioned  clone exists and is mapped on the shared iSCSI target
-  editing      a draft master is mapped instead (game disk /edit); no
+  editing      a draft master is mapped instead (game image /edit); no
                assign or delete until /finish-edit
   error       an operation failed; `last_error` says why, and
                assign/reset/DELETE retry and clean up leftovers
@@ -13,8 +13,8 @@ Writebacks are discarded automatically by the server after every disconnect
 (app.services.writebacks); `keep_writeback` keeps them, and
 /apply-writebacks turns a kept writeback into the disk's next version.
 
-A Boot Mode machine gets two writebacks: one of its OS image (`os_disk_id`,
-mapped LUN 0) and one of its game disk (mapped LUN 1). Both are provisioned,
+A Boot Mode machine gets two writebacks: one of its OS image (`os_image_id`,
+mapped LUN 0) and one of its game image (mapped LUN 1). Both are provisioned,
 discarded and removed together; /apply-writebacks applies either or both.
 """
 
@@ -47,7 +47,7 @@ from app.api.v1.schemas import (
     MachineUpdate,
     WINDOWS_IQN_PREFIX,
 )
-from app.db.models import DiskKind, GameDisk, Machine, MachineMode, MachineStatus, User, UserRole
+from app.db.models import ImageKind, Image, Machine, MachineMode, MachineStatus, User, UserRole
 from app.db.session import get_db
 from app.services import discovery
 from app.services.os_setup import image_prep, os_setup_for
@@ -99,37 +99,37 @@ def _get(db: Session, machine_id: int) -> Machine:
     return machine
 
 
-def _published_disk(db: Session, disk_id: int, kind: DiskKind = DiskKind.GAME) -> GameDisk:
-    disk = db.get(GameDisk, disk_id)
+def _published_disk(db: Session, image_id: int, kind: ImageKind = ImageKind.GAME) -> Image:
+    disk = db.get(Image, image_id)
     if disk is None:
-        not_found("Game disk", disk_id)
+        not_found("Game image", image_id)
     if disk.kind is not kind:
-        conflict(f"'{disk.name}' is not a{'n OS image' if kind is DiskKind.OS else ' game disk'}")
+        conflict(f"'{disk.name}' is not a{'n OS image' if kind is ImageKind.OS else ' game image'}")
     if not disk.published:
-        conflict(f"Game disk '{disk.name}' is not published; call /publish first")
+        conflict(f"Image '{disk.name}' is not published; call /publish first")
     return disk
 
 
-def _os_disk(db: Session, mode: MachineMode, name: str, game_disk_id: int | None,
-             os_disk_id: int | None) -> GameDisk | None:
+def _os_image(db: Session, mode: MachineMode, name: str, game_image_id: int | None,
+             os_image_id: int | None) -> Image | None:
     """
-    The OS image a machine gets with its game disk: required in Boot Mode,
+    The OS image a machine gets with its game image: required in Boot Mode,
     refused in Disk Mode (Windows is on the PC's own SSD there).
     """
     if mode is MachineMode.DISK:
-        if os_disk_id is not None:
+        if os_image_id is not None:
             conflict(f"Machine '{name}' is in disk mode; only boot mode gets an OS image")
         return None
-    if game_disk_id is None:
+    if game_image_id is None:
         return None
-    if os_disk_id is None:
-        conflict(f"Machine '{name}' is in boot mode; it needs an OS image with its game disk")
-    return _published_disk(db, os_disk_id, DiskKind.OS)
+    if os_image_id is None:
+        conflict(f"Machine '{name}' is in boot mode; it needs an OS image with its game image")
+    return _published_disk(db, os_image_id, ImageKind.OS)
 
 
 def _not_editing(m: Machine) -> None:
     if m.status is MachineStatus.EDITING:
-        conflict(f"'{m.name}' is editing game disk '{m.editing_disk.name}'; finish editing first")
+        conflict(f"'{m.name}' is editing game image '{m.editing_image.name}'; finish editing first")
 
 
 def _has_host_state(m: Machine) -> bool:
@@ -181,17 +181,17 @@ def _deprovision(db: Session, prov: Provisioner, m: Machine) -> None:
     _set_idle(m)
 
 
-def _provision(db: Session, prov: Provisioner, m: Machine, disk: GameDisk,
-               os_disk: GameDisk | None = None) -> None:
-    m.game_disk_id = disk.id
-    m.os_disk_id = os_disk.id if os_disk else None
+def _provision(db: Session, prov: Provisioner, m: Machine, disk: Image,
+               os_image: Image | None = None) -> None:
+    m.game_image_id = disk.id
+    m.os_image_id = os_image.id if os_image else None
     try:
         cd = prov.provision(m.name, m.initiator_iqn, disk.snapshot_path,
-                            os_disk.snapshot_path if os_disk else None, os_setup_for(m))
+                            os_image.snapshot_path if os_image else None, os_setup_for(m))
     except ProvisioningError as e:
         # The clones may be left over (rollback failed); remember their paths for cleanup.
         m.clone_zvol = prov.client_path(m.name)
-        m.os_clone_zvol = prov.os_client_path(m.name) if os_disk else None
+        m.os_clone_zvol = prov.os_client_path(m.name) if os_image else None
         _fail(db, m, e)
     _set_provisioned(m, cd)
     _keep_sync(db, prov, m)
@@ -207,7 +207,7 @@ def list_machines(db: Session = Depends(get_db)):
 @router.put("/drive-letter", response_model=list[MachineOut])
 def set_drive_letter_all(body: DriveLetterAll, db: Session = Depends(get_db)):
     """
-    Give every Disk Mode machine the same game disk letter. The agents move
+    Give every Disk Mode machine the same game image letter. The agents move
     the disk on their next heartbeat; nothing changes on the server host.
     """
     for m in db.scalars(select(Machine).where(Machine.mode == MachineMode.DISK)):
@@ -236,7 +236,7 @@ def bulk(
         if body.action in ("on", "shutdown", "reboot"):
             power(machine_id, PowerAction(action=body.action), db, wol)
         elif body.action == "assign":
-            assign_disk(machine_id, MachineAssign(game_disk_id=body.game_disk_id), db, prov)
+            assign_disk(machine_id, MachineAssign(game_image_id=body.game_image_id), db, prov)
         elif body.action == "pin":
             pin_snapshot(machine_id, MachinePin(snapshot=body.snapshot), db, prov)
         elif body.action == "drive_letter":
@@ -295,15 +295,15 @@ def create_machine(
     prov: Provisioner = Depends(get_provisioner),
 ):
     """
-    Register a machine; with `game_disk_id` (and `os_disk_id` in Boot Mode)
+    Register a machine; with `game_image_id` (and `os_image_id` in Boot Mode)
     it is provisioned right away.
     """
     disk = None
-    os_disk = _os_disk(db, body.mode, body.name, body.game_disk_id, body.os_disk_id)
-    if body.game_disk_id is not None:
-        disk = _published_disk(db, body.game_disk_id)
-    elif body.os_disk_id is not None:
-        conflict(f"Machine '{body.name}' needs a game disk with its OS image")
+    os_image = _os_image(db, body.mode, body.name, body.game_image_id, body.os_image_id)
+    if body.game_image_id is not None:
+        disk = _published_disk(db, body.game_image_id)
+    elif body.os_image_id is not None:
+        conflict(f"Machine '{body.name}' needs a game image with its OS image")
 
     machine = Machine(name=body.name, mode=body.mode, mac=body.mac, drive_letter=body.drive_letter,
                       initiator_iqn=body.initiator_iqn or default_iqn(prov, body.name, body.mac),
@@ -319,7 +319,7 @@ def create_machine(
     db.commit()
 
     if disk is not None:
-        _provision(db, prov, machine, disk, os_disk)
+        _provision(db, prov, machine, disk, os_image)
         db.commit()
     return machine
 
@@ -342,7 +342,7 @@ def update_machine(
     # paths and backstore names: a powered-off PC is renamed on the host too.
     host_bound = {k for k in ("initiator_iqn", "mode") if k in changes
                   and changes[k] != getattr(machine, k)}
-    if host_bound and (_has_host_state(machine) or machine.game_disk_id is not None):
+    if host_bound and (_has_host_state(machine) or machine.game_image_id is not None):
         conflict(f"{', '.join(sorted(host_bound))} can only change while the machine has no disk")
     if "name" in changes and changes["name"] != machine.name and _has_host_state(machine):
         _rename_on_host(db, prov, machine, changes["name"])
@@ -391,34 +391,34 @@ def assign_disk(
     prov: Provisioner = Depends(get_provisioner),
 ):
     """
-    Assign (or with `null` remove) a game disk, and in Boot Mode the OS
-    image with it (`os_disk_id`; not sent keeps the current one). Changing a
+    Assign (or with `null` remove) a game image, and in Boot Mode the OS
+    image with it (`os_image_id`; not sent keeps the current one). Changing a
     disk destroys the old clones, so everything the client wrote is lost.
     The client must be powered off or disconnected.
     """
     machine = _get(db, machine_id)
     _not_editing(machine)
-    os_disk_id = body.os_disk_id if "os_disk_id" in body.model_fields_set else machine.os_disk_id
-    if body.game_disk_id is None and "os_disk_id" in body.model_fields_set \
-            and body.os_disk_id is not None:
-        conflict(f"Machine '{machine.name}' needs a game disk with its OS image")
-    os_disk = _os_disk(db, machine.mode, machine.name, body.game_disk_id, os_disk_id)
+    os_image_id = body.os_image_id if "os_image_id" in body.model_fields_set else machine.os_image_id
+    if body.game_image_id is None and "os_image_id" in body.model_fields_set \
+            and body.os_image_id is not None:
+        conflict(f"Machine '{machine.name}' needs a game image with its OS image")
+    os_image = _os_image(db, machine.mode, machine.name, body.game_image_id, os_image_id)
     disk = None
-    if body.game_disk_id is not None:
-        disk = _published_disk(db, body.game_disk_id)
+    if body.game_image_id is not None:
+        disk = _published_disk(db, body.game_image_id)
 
     if (disk is not None and machine.status is MachineStatus.PROVISIONED
-            and machine.game_disk_id == disk.id
-            and machine.os_disk_id == (os_disk.id if os_disk else None)):
+            and machine.game_image_id == disk.id
+            and machine.os_image_id == (os_image.id if os_image else None)):
         return machine   # already so; nothing is touched on the host
 
     if _has_host_state(machine):
         _deprovision(db, prov, machine)
-    machine.game_disk_id = machine.os_disk_id = None
+    machine.game_image_id = machine.os_image_id = None
     machine.pinned_snapshot = None   # a pin names a version of the old disk
 
     if disk is not None:
-        _provision(db, prov, machine, disk, os_disk)
+        _provision(db, prov, machine, disk, os_image)
     db.commit()
     return machine
 
@@ -437,16 +437,16 @@ def reset_machine(
     disconnect. Kept for recovery (e.g. after an `error`).
     """
     machine = _get(db, machine_id)
-    if machine.game_disk_id is None:
+    if machine.game_image_id is None:
         conflict(f"Machine '{machine.name}' has no disk assigned")
-    disk = _published_disk(db, machine.game_disk_id)
+    disk = _published_disk(db, machine.game_image_id)
 
     clone = machine.clone_zvol or prov.client_path(machine.name)
     os_clone = None
     if machine.mode is MachineMode.BOOT:
-        if machine.os_disk_id is None:
+        if machine.os_image_id is None:
             conflict(f"Machine '{machine.name}' has no OS image assigned")
-        _published_disk(db, machine.os_disk_id, DiskKind.OS)
+        _published_disk(db, machine.os_image_id, ImageKind.OS)
         os_clone = machine.os_clone_zvol or prov.os_client_path(machine.name)
     try:
         cd = prov.reset(machine.name, machine.initiator_iqn, clone, machine.target_snapshot_path,
@@ -501,14 +501,14 @@ def pin_snapshot(
     prov: Provisioner = Depends(get_provisioner),
 ):
     """
-    Run this machine on a chosen version of its game disk instead of the
+    Run this machine on a chosen version of its game image instead of the
     active one (`null` follows the active version again). Nothing changes on
     the host now: the PC moves to it at its next discard (reboot).
     """
     machine = _get(db, machine_id)
-    if machine.game_disk_id is None:
-        conflict(f"'{machine.name}' has no game disk")
-    disk = _published_disk(db, machine.game_disk_id)
+    if machine.game_image_id is None:
+        conflict(f"'{machine.name}' has no game image")
+    disk = _published_disk(db, machine.game_image_id)
     if body.snapshot is not None:
         try:
             versions = prov.snapshots(disk.zvol_path)
@@ -563,9 +563,9 @@ def discard_writeback(
     went wrong). The PC must be powered off.
     """
     machine = _get(db, machine_id)
-    if machine.status is not MachineStatus.PROVISIONED or machine.game_disk_id is None:
-        conflict(f"'{machine.name}' has no provisioned game disk")
-    _published_disk(db, machine.game_disk_id)
+    if machine.status is not MachineStatus.PROVISIONED or machine.game_image_id is None:
+        conflict(f"'{machine.name}' has no provisioned game image")
+    _published_disk(db, machine.game_image_id)
     session = prov.session_active(machine.initiator_iqn, machine.iscsi_target_iqn)
     if session is None:
         host_failed(f"Cannot read the iSCSI session state of '{machine.name}'")
@@ -587,7 +587,7 @@ def apply_writebacks(
 ):
     """
     Apply Writebacks: the machine's kept writeback becomes the next
-    version of its game disk (base → v2 → v3 ...) and that version becomes
+    version of its game image (base → v2 → v3 ...) and that version becomes
     active. Every other machine moves to it at its next discard, i.e. its
     next reboot. The machine must keep its writeback and be powered off.
 
@@ -600,19 +600,19 @@ def apply_writebacks(
     boot = machine.mode is MachineMode.BOOT
     if not machine.keep_writeback:
         conflict(f"'{machine.name}' does not keep its writeback; nothing to apply")
-    if machine.status is not MachineStatus.PROVISIONED or machine.game_disk_id is None:
-        conflict(f"'{machine.name}' has no provisioned game disk")
+    if machine.status is not MachineStatus.PROVISIONED or machine.game_image_id is None:
+        conflict(f"'{machine.name}' has no provisioned game image")
     if not body.game and not (boot and body.os):
         conflict("Nothing to apply; choose the OS writeback, the game writeback or both")
 
     # (disk, writeback) pairs; each writeback must come from its disk's active version.
-    targets: list[tuple[GameDisk, str]] = []
+    targets: list[tuple[Image, str]] = []
     if body.game:
-        targets.append((_published_disk(db, machine.game_disk_id), machine.clone_zvol))
+        targets.append((_published_disk(db, machine.game_image_id), machine.clone_zvol))
     if boot and body.os:
-        if machine.os_disk_id is None or machine.os_clone_zvol is None:
+        if machine.os_image_id is None or machine.os_clone_zvol is None:
             conflict(f"'{machine.name}' has no provisioned OS image")
-        targets.append((_published_disk(db, machine.os_disk_id, DiskKind.OS), machine.os_clone_zvol))
+        targets.append((_published_disk(db, machine.os_image_id, ImageKind.OS), machine.os_clone_zvol))
     runs = {machine.clone_zvol: machine.clone_snapshot, machine.os_clone_zvol: machine.os_clone_snapshot}
     for disk, clone in targets:
         if runs[clone] != disk.snapshot_path:
@@ -655,7 +655,7 @@ def apply_writebacks(
         host_failed(str(e), machine_id=machine.id)
     for (disk, _), new in zip(targets, news):
         disk.snapshot = new
-        if update is not None and disk.kind is DiskKind.OS:
+        if update is not None and disk.kind is ImageKind.OS:
             prov.zfs.set_snapshot_update(f"{disk.zvol_path}@{new}", update)
         if body.comment:
             try:

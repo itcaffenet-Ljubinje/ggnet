@@ -1,12 +1,12 @@
 import { useState } from "react";
 
-import { api, preselectDisk, type Discovered, type GameDisk, type MachineMode } from "../api";
+import { api, preselectDisk, type Discovered, type Image, type MachineMode } from "../api";
 import { formatNic } from "../format";
 
 interface Props {
   discovered: Discovered[];
-  /** All disks; published OS images and game disks are offered. */
-  disks: GameDisk[];
+  /** All disks; published OS images and game images are offered. */
+  disks: Image[];
   busy: boolean;
   run: (key: string, fn: () => Promise<unknown>) => Promise<boolean>;
   reload: () => Promise<void>;
@@ -66,19 +66,19 @@ function DiscoveredRow({ d, disks, busy, run, reload }: { d: Discovered } & Omit
   // A PC that booted from the network is a Boot Mode PC; one with an agent runs local Windows.
   const [mode, setMode] = useState<MachineMode>(d.source === "pxe" ? "boot" : "disk");
   const osImages = disks.filter((x) => x.published && x.kind === "os");
-  const gameDisks = disks.filter((x) => x.published && x.kind !== "os");
+  const gameImages = disks.filter((x) => x.published && x.kind !== "os");
   // The default image (Images → Make default), or the only one.
-  const [osDiskId, setOsDiskId] = useState(preselectDisk(osImages));
-  const [diskId, setDiskId] = useState(preselectDisk(gameDisks));
+  const [osImageId, setOsImageId] = useState(preselectDisk(osImages));
+  const [imageId, setImageId] = useState(preselectDisk(gameImages));
   // A Boot Mode PC cannot boot without both.
-  const ready = !!name.trim() && (mode !== "boot" || (!!osDiskId && !!diskId));
+  const ready = !!name.trim() && (mode !== "boot" || (!!osImageId && !!imageId));
 
   async function claim() {
     const body = {
       name: name.trim(),
       mode,
-      ...(diskId ? { game_disk_id: Number(diskId) } : {}),
-      ...(mode === "boot" && osDiskId ? { os_disk_id: Number(osDiskId) } : {}),
+      ...(imageId ? { game_image_id: Number(imageId) } : {}),
+      ...(mode === "boot" && osImageId ? { os_image_id: Number(osImageId) } : {}),
     };
     if (await run(`claim-${d.id}`, () => api.claimDiscovered(d.id, body))) {
       await reload();
@@ -123,7 +123,7 @@ function DiscoveredRow({ d, disks, busy, run, reload }: { d: Discovered } & Omit
       </td>
       <td>
         {mode === "boot" && (
-          <select aria-label={`OS image for ${d.mac}`} value={osDiskId} onChange={(e) => setOsDiskId(e.target.value)}>
+          <select aria-label={`OS image for ${d.mac}`} value={osImageId} onChange={(e) => setOsImageId(e.target.value)}>
             <option value="">OS image…</option>
             {osImages.map((x) => (
               <option key={x.id} value={x.id}>
@@ -132,9 +132,9 @@ function DiscoveredRow({ d, disks, busy, run, reload }: { d: Discovered } & Omit
             ))}
           </select>
         )}
-        <select aria-label={`Game disk for ${d.mac}`} value={diskId} onChange={(e) => setDiskId(e.target.value)}>
-          <option value="">{mode === "boot" ? "Game disk…" : "No game disk"}</option>
-          {gameDisks.map((x) => (
+        <select aria-label={`Game image for ${d.mac}`} value={imageId} onChange={(e) => setImageId(e.target.value)}>
+          <option value="">{mode === "boot" ? "Game image…" : "No game image"}</option>
+          {gameImages.map((x) => (
             <option key={x.id} value={x.id}>
               {x.name}
             </option>

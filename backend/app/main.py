@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import OperationalError
 
 from app.api.deps import require_user
-from app.api.v1 import agent, auth, boot, discovery, game_disks, imports, machines, server, settings, winpe
+from app.api.v1 import agent, auth, boot, discovery, images, imports, machines, server, settings, winpe
 from app.config import get_config
 
 VERSION_FILE = Path(__file__).resolve().parents[2] / "VERSION"
@@ -109,7 +109,7 @@ app = FastAPI(title="ggNet", version=read_version(), lifespan=lifespan)
 # The web UI's API needs a signed-in user (app.services.auth); what the PCs
 # use (agent, boot) and signing in itself do not.
 signed_in = [Depends(require_user)]
-app.include_router(game_disks.router, prefix="/api/v1", dependencies=signed_in)
+app.include_router(images.router, prefix="/api/v1", dependencies=signed_in)
 app.include_router(imports.router, prefix="/api/v1", dependencies=signed_in)
 app.include_router(machines.router, prefix="/api/v1", dependencies=signed_in)
 app.include_router(settings.router, prefix="/api/v1", dependencies=signed_in)

@@ -26,7 +26,7 @@ is on. Windows takes the boot NIC's address from the iBFT anyway.
 
 The image also remembers the letters of the PC it was made on (vip-05's
 local D:, E:, F:). On another PC those volumes do not exist, yet Windows
-keeps the letters for them, so the agent could not give the game disk D:
+keeps the letters for them, so the agent could not give the game image D:
 (Set-Partition 42012). Windows gives present volumes letters again at boot.
 
 The PC's boot network card is never written into its writeback: Windows
@@ -309,7 +309,7 @@ def agent_service_patch(control_set: int) -> list[str]:
         f'"ImagePath"={_hex("hex(2)", (AGENT_IMAGE_PATH + chr(0)).encode("utf-16-le"))}',
         '"ObjectName"="LocalSystem"',
         '"DisplayName"="ggNet agent"',
-        '"Description"="Connects the ggNet game disk over iSCSI and reports to the ggNet server."',
+        '"Description"="Connects the ggNet game image over iSCSI and reports to the ggNet server."',
         f'"FailureActions"={_hex("hex", AGENT_FAILURE_ACTIONS)}',
         # "Shut down" with Fast Startup is a hibernation: the server would not see a new boot.
         "", f"[{cs}\\Control\\Session Manager\\Power]",
@@ -1185,7 +1185,7 @@ class WindowsSetup:
 
 
 def agent_settings(server_url: str) -> dict:
-    """appsettings.json as install.ps1 writes it (Boot Mode: the game disk is D:)."""
+    """appsettings.json as install.ps1 writes it (Boot Mode: the game image is D:)."""
     return {
         "Agent": {
             "ServerUrl": server_url.rstrip("/"),

@@ -1,8 +1,8 @@
 # ggNet
 
-Diskless boot and game disk management for gaming cafes, installed directly on a **Proxmox VE** host.
+Diskless boot and game image management for gaming cafes, installed directly on a **Proxmox VE** host.
 
-- **Disk Mode** — clients keep a local Windows 11 install; the server serves a shared game disk over iSCSI (with per-client writeback zvols).
+- **Disk Mode** — clients keep a local Windows 11 install; the server serves a shared game image over iSCSI (with per-client writeback zvols).
 - **Boot Mode** — fully diskless UEFI PXE boot (iPXE + proxyDHCP) from ZFS zvols.
 
 ggNet runs as a systemd service next to Proxmox and manages ZFS and the LIO iSCSI target on the host itself — no VM or container needed.

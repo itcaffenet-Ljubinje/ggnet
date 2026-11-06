@@ -30,7 +30,7 @@ logger = logging.getLogger("ggnet.zfs")
 _COMPONENT_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.:-]*$")
 # A version's comment (who, when, what changed), kept as a user property on
 # its snapshot so it travels with the snapshot (rename, promote, zfs send).
-# A copy of a large game disk can take hours.
+# A copy of a large game image can take hours.
 COPY_TIMEOUT = 24 * 3600
 COMMENT_PROP = "ggnet:comment"
 COMMENT_MAX = 200

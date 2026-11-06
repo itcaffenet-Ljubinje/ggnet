@@ -34,7 +34,7 @@ describe("api", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(api.createDisk("cs2", 10)).resolves.toMatchObject({ name: "cs2" });
-    expect(fetchMock).toHaveBeenCalledWith("/api/v1/game-disks", {
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/images", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "cs2", size_gb: 10, kind: "game" }),
