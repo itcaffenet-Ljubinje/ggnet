@@ -73,6 +73,8 @@ def test_usb_partitions_offer_only_free_usb_file_systems():
         {"name": "sdm", "path": "/dev/sdm", "tran": "usb", "type": "disk", "size": 5, "children": [
             {"name": "sdm1", "path": "/dev/sdm1", "fstype": "ntfs", "type": "part", "size": 5},
             {"name": "sdm2", "path": "/dev/sdm2", "fstype": "LVM2_member", "type": "part", "size": 5}]},
+        {"name": "sdi", "path": "/dev/sdi", "tran": "usb", "type": "disk", "model": "Internal SD-CARD", "size": 8,
+         "children": [{"name": "sdi1", "path": "/dev/sdi1", "fstype": "vfat", "type": "part", "size": 8}]},
     ]}
     parts = usb_partitions(json.dumps(lsblk), Path("/run/ggnet/usb"))
     assert [(p["name"], p["fstype"], p["model"], p["mounted"]) for p in parts] == [

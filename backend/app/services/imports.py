@@ -121,6 +121,11 @@ def inside(path: Path, folder: Path) -> bool:
 
 # ── USB disks ─────────────────────────────────────────────────────────
 
+# Storage built into the server that sits on an internal USB bus (HPE's
+# "Internal SD-CARD", Dell's "Internal Dual SD"): never offered as a USB disk.
+_INTERNAL = re.compile(r"\binternal\b", re.IGNORECASE)
+
+
 def usb_partitions(lsblk_json: str, mounts: Path = USB_MOUNTS) -> list[dict]:
     """
     File systems on USB disks that may be opened read-only: from
@@ -136,6 +141,8 @@ def usb_partitions(lsblk_json: str, mounts: Path = USB_MOUNTS) -> list[dict]:
     for disk in devices:
         if disk.get("tran") != "usb" or disk.get("type") != "disk":
             continue
+        if _INTERNAL.search(disk.get("model") or ""):
+            continue                     # the server's own SD card or module, on its internal USB bus
         parts = disk.get("children") or [disk]
         fstypes = {p.get("fstype") for p in parts} | {disk.get("fstype")}
         if fstypes & {"zfs_member", "LVM2_member", "linux_raid_member", "swap"}:

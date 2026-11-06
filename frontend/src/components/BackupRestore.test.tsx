@@ -48,11 +48,12 @@ function stub(free = 28 * 1024 ** 3, jobs: BackupJob[] = []) {
 const IMAGES = [disk({ id: 3, name: "win11", kind: "os" }), disk({ id: 1, name: "cs2" })];
 
 describe("BackupRestore", () => {
-  it("backs up the chosen images to the USB disk, opened writable, after checking the size", async () => {
+  it("backs up the chosen images to the only USB disk, opened read-only until the backup starts", async () => {
     const calls = stub();
     render(<BackupRestore images={IMAGES} onClose={vi.fn()} onRestored={vi.fn()} />);
     expect(await screen.findByText("28.0 GB")).toBeInTheDocument();             // free space
-    expect(calls.some((c) => c.url.endsWith("/locations/usb%3Asdk1/open?writable=true"))).toBe(true);
+    expect(calls.some((c) => c.url.endsWith("/locations/usb%3Asdk1/open?writable=false"))).toBe(true);
+    expect(calls.some((c) => c.url.includes("writable=true"))).toBe(false);
     await userEvent.click(screen.getByLabelText("Back up win11"));
     expect(await screen.findAllByText("9.00 GB")).toHaveLength(2);              // row and total
     await userEvent.click(screen.getByRole("button", { name: /Back up/ }));
@@ -95,5 +96,29 @@ describe("BackupRestore", () => {
     expect(within(rows[2]).getByText("zfs send failed")).toBeInTheDocument();
     await userEvent.click(within(rows[1]).getByRole("button", { name: "Cancel" }));
     expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/jobs/1/cancel"))).toBe(true);
+  });
+
+  it("lets the admin choose when there are several disks, and opens none before", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        calls.push(url);
+        return new Response(
+          JSON.stringify(
+            url.endsWith("/backups/locations")
+              ? [
+                  { id: "usb:sdj1", kind: "usb", label: "USB SanDisk (ntfs)", size: 1, path: null },
+                  { id: "dir:0", kind: "dir", label: "/mnt/backup", size: null, path: "/mnt/backup" },
+                ]
+              : [],
+          ),
+        );
+      }),
+    );
+    render(<BackupRestore images={IMAGES} onClose={vi.fn()} onRestored={vi.fn()} />);
+    expect(await screen.findByRole("option", { name: "Choose a disk…" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Location")).toHaveValue("");
+    expect(calls.some((u) => u.includes("/open"))).toBe(false);
   });
 });

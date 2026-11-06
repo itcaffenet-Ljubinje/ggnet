@@ -52,7 +52,8 @@ export function BackupRestore({ images, onClose, onRestored }: Props) {
       .backupLocations()
       .then((list) => {
         setLocations(list);
-        setLocation((cur) => cur || list[0]?.id || "");
+        // Only one place to choose: take it; otherwise the admin picks.
+        setLocation((cur) => cur || (list.length === 1 ? list[0].id : ""));
       })
       .catch((e) => setError(errorText(e)));
     loadJobs();
@@ -66,13 +67,14 @@ export function BackupRestore({ images, onClose, onRestored }: Props) {
     return () => window.clearInterval(timer);
   }, [active, loadJobs]);
 
-  // Open the chosen location: writable for a backup, read-only to restore.
+  // Open the chosen location read-only: free space and its backups. A backup
+  // mounts it writable only when it starts.
   useEffect(() => {
     setOpened(null);
     if (!location || tab === "history") return;
     let stopped = false;
     api
-      .openBackupLocation(location, tab === "backup")
+      .openBackupLocation(location, false)
       .then((o) => !stopped && setOpened(o))
       .catch((e) => !stopped && setError(errorText(e)));
     return () => {
@@ -133,7 +135,12 @@ export function BackupRestore({ images, onClose, onRestored }: Props) {
               <label>
                 Location
                 <select value={location} onChange={(e) => setLocation(e.target.value)} disabled={!locations?.length}>
-                  {locations?.length === 0 && <option value="">No USB disk or backup folder found</option>}
+                  {locations?.length === 0 ? (
+                    <option value="">No USB disk or backup folder found</option>
+                  ) : (
+                    locations &&
+                    locations.length > 1 && <option value="">Choose a disk…</option>
+                  )}
                   {locations?.map((l) => (
                     <option key={l.id} value={l.id}>
                       {l.label}
