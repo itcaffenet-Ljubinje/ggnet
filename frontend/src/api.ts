@@ -31,6 +31,8 @@ export interface GameDisk {
   copy_error?: string | null;
   /** OS image: the network card models Add new hardware installed; none: it needs hardware. */
   nic_models?: string[];
+  /** New PCs get the default OS image and game disk (Images → Make default). */
+  is_default?: boolean;
 }
 
 /** An OS image no PC can boot yet: Add new hardware has not added any network card. */
@@ -235,6 +237,23 @@ export interface Snapshot {
   update?: string[] | null;
 }
 
+/** The disk a new PC gets from `list`: the default one, else the only one; "" when there is a choice. */
+export function preselectDisk(list: GameDisk[]): string {
+  const pick = list.find((d) => d.is_default) ?? (list.length === 1 ? list[0] : undefined);
+  return pick ? String(pick.id) : "";
+}
+
+/** An image's space on the pool, read live from ZFS (Images table). */
+export interface ImageUsage {
+  disk_id: number;
+  /** On the pool, with its versions. */
+  used_bytes: number;
+  /** The disk's size as the PCs see it. */
+  volume_bytes: number;
+  compress_ratio: number | null;
+  versions: number;
+}
+
 /** Whether an OS image's active version has an unfinished Windows update. */
 export interface ImageUpdate {
   disk_id: number;
@@ -307,7 +326,6 @@ export interface BootSettings {
   /** New PC template: name with {n} or {nn} (the first free number), e.g. komp-{nn}. */
   new_pc_name: string;
   /** Game disk of a new PC; null: unknown PCs are not registered by Add new hardware. */
-  new_pc_game_disk_id: number | null;
 }
 
 export interface BootSettingsOut extends BootSettings {
@@ -706,6 +724,9 @@ export const api = {
     request<GameDisk>("POST", `/v1/game-disks/${id}/snapshots/${encodeURIComponent(name)}/merge-into-base`),
   listWritebacks: (id: number) => request<Writeback[]>("GET", `/v1/game-disks/${id}/writebacks`),
 
+  getImageUsage: () => request<ImageUsage[]>("GET", "/v1/game-disks/usage"),
+  setDefaultDisk: (id: number, isDefault: boolean) =>
+    request<GameDisk>("PUT", `/v1/game-disks/${id}/default`, { default: isDefault }),
   getImageUpdates: () => request<ImageUpdate[]>("GET", "/v1/game-disks/updates"),
   getAgentPackage: () => request<AgentPackage>("GET", "/v1/agent/package"),
   getWinPe: () => request<WinPe>("GET", "/v1/winpe"),

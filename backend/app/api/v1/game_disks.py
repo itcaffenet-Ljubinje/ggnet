@@ -29,6 +29,7 @@ from app.api.v1.schemas import (
     AddHardwareWizardOut,
     GameDiskCopy,
     GameDiskCreate,
+    GameDiskDefault,
     GameDiskGrow,
     GameDiskGrown,
     GameDiskEdit,
@@ -36,6 +37,7 @@ from app.api.v1.schemas import (
     GameDiskRename,
     HardwareOut,
     ImageUpdateOut,
+    ImageUsageOut,
     NicSupportOut,
     PrepareImage,
     SnapshotComment,
@@ -89,6 +91,19 @@ def image_updates(db: Session = Depends(get_db), checker=Depends(get_update_chec
             continue
         state, signs, error = checker.state(disk.zvol_path, disk.snapshot)
         out.append(ImageUpdateOut(disk_id=disk.id, snapshot=disk.snapshot, state=state, signs=signs, error=error))
+    return out
+
+
+@router.get("/usage", response_model=list[ImageUsageOut])
+def image_usage(db: Session = Depends(get_db), prov: Provisioner = Depends(get_provisioner)):
+    """Each image's space on the pool, size, compression ratio and number of versions (one ZFS read)."""
+    usage = prov.zfs.image_usage()
+    out = []
+    for disk in db.scalars(select(GameDisk).order_by(GameDisk.name)):
+        u = usage.get(disk.zvol_path)
+        if u is not None:
+            out.append(ImageUsageOut(disk_id=disk.id, used_bytes=u["used"], volume_bytes=u["volsize"],
+                                     compress_ratio=u["compressratio"], versions=u["versions"]))
     return out
 
 
@@ -147,6 +162,26 @@ def rename_disk(disk_id: int, body: GameDiskRename, db: Session = Depends(get_db
         db.rollback()
         conflict(f"Game disk '{body.name}' already exists")
     logger.info("Disk '%s' renamed to '%s' (zvol %s unchanged)", old, disk.name, disk.zvol_path)
+    return disk
+
+
+@router.put("/{disk_id}/default", response_model=GameDiskOut)
+def set_default(disk_id: int, body: GameDiskDefault, db: Session = Depends(get_db)):
+    """
+    Make the disk the default of its kind (the OS image or the game disk new
+    PCs get), or stop it being one. Only a published disk can be the default.
+    """
+    disk = _get(db, disk_id)
+    if body.default:
+        if not disk.published:
+            conflict(f"'{disk.name}' is not published yet; only a published disk can be the default")
+        for other in db.scalars(select(GameDisk).where(GameDisk.kind == disk.kind, GameDisk.id != disk.id,
+                                                       GameDisk.is_default.is_(True))):
+            other.is_default = False
+    disk.is_default = body.default
+    db.commit()
+    logger.info("'%s' is %sthe default %s", disk.name, "" if body.default else "no longer ",
+                "OS image" if disk.kind is DiskKind.OS else "game disk")
     return disk
 
 

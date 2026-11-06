@@ -24,8 +24,7 @@ export function NetworkBoot() {
   const [mokEnroll, setMokEnroll] = useState(false);
   const [mokPassword, setMokPassword] = useState("ggnet");
   const [newPcName, setNewPcName] = useState("pc-{nn}");
-  const [newPcGame, setNewPcGame] = useState<number | null>(null);
-  const [gameDisks, setGameDisks] = useState<GameDisk[]>([]);
+  const [defaultGame, setDefaultGame] = useState<GameDisk | null>(null);
   const [done, setDone] = useState(false);
 
   function show(s: BootSettingsOut) {
@@ -36,14 +35,13 @@ export function NetworkBoot() {
     setMokEnroll(s.mok_enroll);
     setMokPassword(s.mok_password);
     setNewPcName(s.new_pc_name ?? "pc-{nn}");
-    setNewPcGame(s.new_pc_game_disk_id ?? null);
   }
 
   useEffect(() => {
     run("load", async () => {
       show(await api.getBootSettings());
       setStatus(await api.getPxe());
-      setGameDisks((await api.listDisks()).filter((d) => d.published && d.kind !== "os"));
+      setDefaultGame((await api.listDisks()).find((d) => d.published && d.kind !== "os" && d.is_default) ?? null);
     });
   }, [run]);
 
@@ -69,7 +67,6 @@ export function NetworkBoot() {
       mok_enroll: mokEnroll,
       mok_password: mokPassword,
       new_pc_name: newPcName.trim(),
-      new_pc_game_disk_id: newPcGame,
     };
     const ok = await run("save", async () => show(await api.saveBootSettings(body)));
     if (ok) setDone(true);
@@ -198,25 +195,19 @@ export function NetworkBoot() {
                 required
               />
             </label>
-            <label>
-              Game disk
-              <select
-                value={newPcGame ?? ""}
-                onChange={(e) => setNewPcGame(e.target.value ? Number(e.target.value) : null)}
-              >
-                <option value="">None: register new PCs by hand</option>
-                {gameDisks.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                  </option>
-                ))}
-              </select>
-              <span className="muted small">
-                While Add new hardware is open on an image, a PC ggNet does not know yet that boots from the network
-                is registered with this name (the first free number) and game disk, in Boot Mode on that image, and
-                goes straight through the wizard.
+            <p className="small">
+              Game disk:{" "}
+              {defaultGame ? (
+                <span className="strong">{defaultGame.name}</span>
+              ) : (
+                <span className="warn-text">none, register new PCs by hand</span>
+              )}{" "}
+              <span className="muted">
+                (the default game disk: Images → ⋮ → Make default). While Add new hardware is open on an image, a PC
+                ggNet does not know yet that boots from the network is registered with this name (the first free
+                number) and the default game disk, in Boot Mode on that image, and goes straight through the wizard.
               </span>
-            </label>
+            </p>
           </div>
           <div className="actions-row">
             <button type="submit" disabled={busy !== null}>

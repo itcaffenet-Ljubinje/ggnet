@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { api, type Discovered, type GameDisk, type MachineMode } from "../api";
+import { api, preselectDisk, type Discovered, type GameDisk, type MachineMode } from "../api";
 import { formatNic } from "../format";
 
 interface Props {
@@ -67,10 +67,9 @@ function DiscoveredRow({ d, disks, busy, run, reload }: { d: Discovered } & Omit
   const [mode, setMode] = useState<MachineMode>(d.source === "pxe" ? "boot" : "disk");
   const osImages = disks.filter((x) => x.published && x.kind === "os");
   const gameDisks = disks.filter((x) => x.published && x.kind !== "os");
-  // With a single choice there is nothing to pick.
-  const only = (list: GameDisk[]) => (list.length === 1 ? String(list[0].id) : "");
-  const [osDiskId, setOsDiskId] = useState(only(osImages));
-  const [diskId, setDiskId] = useState(only(gameDisks));
+  // The default image (Images → Make default), or the only one.
+  const [osDiskId, setOsDiskId] = useState(preselectDisk(osImages));
+  const [diskId, setDiskId] = useState(preselectDisk(gameDisks));
   // A Boot Mode PC cannot boot without both.
   const ready = !!name.trim() && (mode !== "boot" || (!!osDiskId && !!diskId));
 

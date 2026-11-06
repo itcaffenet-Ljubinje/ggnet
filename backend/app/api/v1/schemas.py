@@ -304,6 +304,21 @@ class GameDiskOut(BaseModel):
     copy_error: str | None = None
     # OS image: the network card models Add new hardware installed; none: it needs hardware.
     nic_models: list[str] = []
+    is_default: bool = False          # new PCs get the default OS image and game disk
+
+
+class GameDiskDefault(BaseModel):
+    default: bool
+
+
+class ImageUsageOut(BaseModel):
+    """An image's space on the pool, read live from ZFS."""
+
+    disk_id: int
+    used_bytes: int                   # on the pool, with its versions
+    volume_bytes: int                 # the disk's size as the PCs see it
+    compress_ratio: float | None      # e.g. 1.65
+    versions: int
 
 
 class GameDiskEdit(BaseModel):
@@ -818,7 +833,6 @@ class BootSettingsIn(BaseModel):
     mok_password: str = Field("ggnet", pattern=r"^[a-z0-9]{4,16}$")
     # New PC template (Add new hardware): a name with {n} or {nn}, and the game disk.
     new_pc_name: str = "pc-{nn}"
-    new_pc_game_disk_id: int | None = None
 
     @field_validator("new_pc_name")
     @classmethod

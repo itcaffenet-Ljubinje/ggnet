@@ -1,4 +1,4 @@
-import { Fragment, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useState, type FormEvent } from "react";
 import {
   CheckCircle2,
   Copy,
@@ -12,6 +12,8 @@ import {
   Pencil,
   Plus,
   ScanSearch,
+  Star,
+  StarOff,
   Trash2,
   Wand2,
   XCircle,
@@ -24,9 +26,11 @@ import {
   needsHardware,
   type DiskKind,
   type GameDisk,
+  type ImageUsage,
   type Machine,
   type PrepareOptions,
 } from "../api";
+import { formatBytes } from "../format";
 import { ActionMenu, type MenuAction } from "../components/ActionMenu";
 import { EditImage } from "../components/EditImage";
 import { ImportImage } from "../components/ImportImage";
@@ -49,6 +53,7 @@ interface Props {
 export function GameDisksPage({ disks, machines, reload }: Props) {
   const { busy, error, setError, run } = useAsyncAction();
   const updates = useImageUpdates(disks);
+  const usage = useImageUsage(disks);
   const [name, setName] = useState("");
   const [sizeGb, setSizeGb] = useState("100");
   const [kind, setKind] = useState<DiskKind>("game");
@@ -155,6 +160,11 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
     await reload();
   }
 
+  async function makeDefault(d: GameDisk, isDefault: boolean) {
+    await run(`default-${d.id}`, () => api.setDefaultDisk(d.id, isDefault));
+    await reload();
+  }
+
   function menuFor(d: GameDisk): MenuAction[] {
     const users = assigned(d.id);
     return [
@@ -174,6 +184,19 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
               onSelect: () => copy(d),
               disabled: busy !== null,
               title: `New independent image from @${d.snapshot}`,
+            },
+          ]
+        : []),
+      ...(d.published
+        ? [
+            {
+              label: d.is_default ? "Remove default" : "Make default",
+              icon: d.is_default ? StarOff : Star,
+              onSelect: () => makeDefault(d, !d.is_default),
+              disabled: busy !== null,
+              title: d.is_default
+                ? `New PCs no longer get ${d.name}`
+                : `New PCs get this ${d.kind === "os" ? "OS image" : "game disk"}`,
             },
           ]
         : []),
@@ -303,10 +326,14 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
               <thead>
                 <tr>
                   <th>Name</th>
-                  <th>Size</th>
+                  <th>Type</th>
+                  <th>Default</th>
                   <th>State</th>
+                  <th title="Space on the pool, with all versions">Size</th>
+                  <th title="The disk's size as the PCs see it">Volume</th>
+                  <th>Compression</th>
+                  <th>Versions</th>
                   <th>Machines</th>
-                  <th>ZFS path</th>
                   <th />
                 </tr>
               </thead>
@@ -329,7 +356,14 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
                           {d.name}
                         </button>
                       </td>
-                      <td>{d.size_gb} GB</td>
+                      <td>{d.kind === "os" ? "OS image" : "Game disk"}</td>
+                      <td>
+                        {d.is_default && (
+                          <span className="default-mark" title="New PCs get this one">
+                            <Star size={14} aria-label="Default" />
+                          </span>
+                        )}
+                      </td>
                       <td>
                         {copying(d) ? (
                           <span className="badge badge-editing" title={`From ${d.copy_source}`}>
@@ -358,8 +392,11 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
                           <span className="badge badge-idle">Draft</span>
                         )}
                       </td>
+                      <td>{usage[d.id] ? formatBytes(usage[d.id].used_bytes) : "—"}</td>
+                      <td>{usage[d.id] ? formatBytes(usage[d.id].volume_bytes) : `${d.size_gb} GB`}</td>
+                      <td>{usage[d.id]?.compress_ratio ? `${usage[d.id].compress_ratio!.toFixed(2)}×` : "—"}</td>
+                      <td>{usage[d.id] ? usage[d.id].versions : "—"}</td>
                       <td>{assigned(d.id)}</td>
-                      <td className="mono muted">{d.zvol_path}</td>
                       <td className="actions">
                         {!d.published && d.editor_id === null && !d.copy_source && (
                           <>
@@ -516,4 +553,26 @@ function ImageKpis({ disks, machines }: { disks: GameDisk[]; machines: Machine[]
       ))}
     </div>
   );
+}
+
+/** Each image's space, compression and versions from ZFS, by disk id; read again when the images change. */
+function useImageUsage(disks: GameDisk[]): Record<number, ImageUsage> {
+  const [usage, setUsage] = useState<Record<number, ImageUsage>>({});
+  const key = disks.map((d) => `${d.id}@${d.snapshot}:${d.copy_percent ?? ""}`).join(",");
+  useEffect(() => {
+    if (!key) return;
+    let stopped = false;
+    api
+      .getImageUsage()
+      .then((list) => {
+        if (!stopped) setUsage(Object.fromEntries(list.map((u) => [u.disk_id, u])));
+      })
+      .catch(() => {
+        // Only numbers: the list works without them.
+      });
+    return () => {
+      stopped = true;
+    };
+  }, [key]);
+  return usage;
 }
