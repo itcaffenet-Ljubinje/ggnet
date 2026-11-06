@@ -667,6 +667,35 @@ class ZFSManager:
         ok, _, _ = self._run(["zfs", "set", f"{prop}={value}", dataset])
         return ok
 
+    def image_usage(self) -> dict[str, dict]:
+        """
+        Every image under storage.images: its space on the pool with its
+        versions (used), its size as the PCs see it (volsize), its compression
+        ratio and its number of versions. Empty when it cannot be read.
+        """
+        images = self.layout.images
+        ok, out, _ = self._run(["zfs", "list", "-r", "-H", "-p", "-t", "volume",
+                                "-o", "name,used,volsize,compressratio", images])
+        if not ok:
+            return {}
+        usage: dict[str, dict] = {}
+        for line in out.splitlines():
+            parts = line.split("\t")
+            if len(parts) != 4:
+                continue
+            try:
+                ratio = float(parts[3].rstrip("x"))
+            except ValueError:
+                ratio = None
+            usage[parts[0]] = {"used": _int(parts[1]), "volsize": _int(parts[2]),
+                               "compressratio": ratio, "versions": 0}
+        ok, out, _ = self._run(["zfs", "list", "-r", "-H", "-t", "snapshot", "-o", "name", images])
+        for line in out.splitlines() if ok else []:
+            zvol = line.partition("@")[0]
+            if zvol in usage:
+                usage[zvol]["versions"] += 1
+        return usage
+
     def list_clients(self) -> list[dict]:
         """All per-client clones under storage.writebacks, with size (bytes) and origin."""
         ok, out, _ = self._run([

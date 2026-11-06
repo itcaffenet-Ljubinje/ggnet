@@ -149,6 +149,8 @@ class FakeHost:
             "ggnet:comment": self.snap_props.get(name, {}).get("ggnet:comment", "-"),
             "ggnet:locked": self.snap_props.get(name, {}).get("ggnet:locked", "-"),
             "ggnet:update": self.snap_props.get(name, {}).get("ggnet:update", "-"),
+            "volsize": str(self.datasets.get(name, {}).get("props", {}).get("volsize", 0)),
+            "compressratio": str(self.datasets.get(name, {}).get("props", {}).get("compressratio", "1.00")),
         }
         return "\t".join(values[f] for f in fields)
 
@@ -165,13 +167,16 @@ class FakeHost:
                 ds = a[-1]
                 if ds not in self.datasets:
                     return self._err(f"cannot open '{ds}': dataset does not exist")
-                mine = [s for s in self.snapshots if s.split("@")[0] == ds]   # creation order
+                under = {ds, *self._children(ds)} if "-r" in a else {ds}
+                mine = [s for s in self.snapshots if s.split("@")[0] in under]   # creation order
                 return self._ok("\n".join(self._row(s, fields) for s in mine))
             if "-r" in a:
                 root = a[-1]
                 if root not in self.datasets:
                     return self._err(f"cannot open '{root}': dataset does not exist")
                 rows = [root] + self._children(root)
+                if "-t" in a and a[a.index("-t") + 1] == "volume":
+                    rows = [d for d in rows if self.datasets[d].get("volume", d != root)]
                 return self._ok("\n".join(self._row(d, fields) for d in rows))
             name = a[-1]
             if name == self.pool["name"] and fields != ["name"]:

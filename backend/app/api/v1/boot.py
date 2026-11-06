@@ -51,7 +51,7 @@ from app.api.deps import (
 from app.api.v1.errors import not_found
 from app.config import get_config
 from app.api.v1.schemas import _mac
-from app.db.models import DiscoverySource, Machine, MachineMode, MachineStatus
+from app.db.models import DiscoverySource, DiskKind, GameDisk, Machine, MachineMode, MachineStatus
 from app.db.session import get_db
 from app.services import discovery, pxe, scan
 from app.services.toolchain import activate_when_done
@@ -351,18 +351,20 @@ def _register_new_pc(db: Session, prov: Provisioner, adder, mac: str) -> Machine
     """
     The New PC template: while Add new hardware is open (and waiting) on one
     OS image, an unknown PC that boots is registered on that image in Boot
-    Mode, with the template's name and game disk, so the wizard takes it.
-    None when no wizard waits, more than one does, or the template has no game disk.
+    Mode, with the template's name and the default game disk, so the wizard
+    takes it. None when no wizard waits, more than one does, or there is no
+    default game disk.
     """
     from app.api.v1.machines import create_machine
     from app.api.v1.schemas import MachineCreate
 
     waiting = [w for w in adder.wizards.values() if w.active and w.machine is None and w.step == "waiting"]
     settings, _ = pxe.load_settings(db)
-    if len(waiting) != 1 or settings.new_pc_game_disk_id is None:
+    game = db.scalar(select(GameDisk).where(GameDisk.kind == DiskKind.GAME, GameDisk.is_default.is_(True)))
+    if len(waiting) != 1 or game is None or not game.published:
         if waiting:
-            logger.info("Unknown PC %s not registered: %s", mac, "the New PC template has no game disk"
-                        if settings.new_pc_game_disk_id is None else "Add new hardware is open on several images")
+            logger.info("Unknown PC %s not registered: %s", mac, "no default game disk (Images -> Make default)"
+                        if game is None or not game.published else "Add new hardware is open on several images")
         return None
     taken = set(db.scalars(select(Machine.name)))
     name = pxe.new_pc_name(settings.new_pc_name, taken)
@@ -371,7 +373,7 @@ def _register_new_pc(db: Session, prov: Provisioner, adder, mac: str) -> Machine
         return None
     try:
         m = create_machine(MachineCreate(name=name, mode=MachineMode.BOOT, mac=mac,
-                                         game_disk_id=settings.new_pc_game_disk_id,
+                                         game_disk_id=game.id,
                                          os_disk_id=waiting[0].disk_id), db, prov)
     except HTTPException as e:
         logger.warning("Unknown PC %s not registered as %s: %s", mac, name, e.detail)

@@ -2577,6 +2577,12 @@ tr.row-warn td {
   vertical-align: -2px;
 }
 
+.default-mark {
+  display: inline-flex;
+  color: #fbbf24;
+  vertical-align: -2px;
+}
+
 /* ==========================================================================
    Import image dialog
    ========================================================================== */

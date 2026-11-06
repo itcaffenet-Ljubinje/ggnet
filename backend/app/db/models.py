@@ -21,6 +21,7 @@ from sqlalchemy import (
     TypeDecorator,
     UniqueConstraint,
 )
+from sqlalchemy import false as sa_false
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 # Stable constraint names; Alembic cannot reliably alter unnamed ones.
@@ -106,6 +107,9 @@ class GameDisk(Base):
     copy_source: Mapped[str | None] = mapped_column(String(255), default=None)
     copy_percent: Mapped[int | None] = mapped_column(Integer, default=None)
     copy_error: Mapped[str | None] = mapped_column(String(500), default=None)
+    # The default of its kind: new PCs get the default OS image and game disk
+    # (the New PC template, the Machines and Discovered forms). One per kind.
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa_false())
 
     machines: Mapped[list["Machine"]] = relationship(
         back_populates="game_disk", foreign_keys="Machine.game_disk_id"

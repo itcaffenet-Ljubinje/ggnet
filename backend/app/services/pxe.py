@@ -61,10 +61,10 @@ class BootSettings:
     mok_enroll: bool = False
     mok_password: str = "ggnet"
     # New PC template: an unknown PC that boots while Add new hardware is open
-    # is registered with this name ({n} or {nn}: the first free number) and this
-    # game disk, in Boot Mode on the wizard's image. No game disk: it is not.
+    # is registered with this name ({n} or {nn}: the first free number) and the
+    # default game disk (Images -> Make default), in Boot Mode on the wizard's
+    # image. No default game disk: it is not.
     new_pc_name: str = "pc-{nn}"
-    new_pc_game_disk_id: int | None = None
 
 
 def new_pc_name(pattern: str, taken: set[str]) -> str | None:
@@ -84,7 +84,6 @@ def _defaults(cfg: dict[str, Any]) -> BootSettings:
         mok_enroll=bool(boot.get("mok_enroll", False)),
         mok_password=str(boot.get("mok_password") or "ggnet"),
         new_pc_name=str(boot.get("new_pc_name") or "pc-{nn}"),
-        new_pc_game_disk_id=boot.get("new_pc_game_disk_id"),
     )
 
 

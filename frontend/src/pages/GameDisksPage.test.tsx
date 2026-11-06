@@ -54,7 +54,7 @@ describe("GameDisksPage", () => {
     await userEvent.type(screen.getByLabelText("Size (GB)"), "50");
     await userEvent.click(screen.getByRole("button", { name: "Create" }));
 
-    expect(calls(fetchMock)).toEqual([
+    expect(calls(fetchMock).filter((c) => c.method !== "GET")).toEqual([
       { url: "/api/v1/game-disks", method: "POST", body: { name: "cs2", size_gb: 50, kind: "game" } },
     ]);
     expect(reload).toHaveBeenCalled();
@@ -72,7 +72,7 @@ describe("GameDisksPage", () => {
       />,
     );
     await userEvent.click(screen.getByRole("button", { name: "Publish" }));
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(calls(fetchMock).filter((c) => c.method !== "GET")).toEqual([]);
   });
 
   it("renames a disk in the Edit dialog", async () => {
@@ -84,7 +84,7 @@ describe("GameDisksPage", () => {
     await userEvent.clear(within(dialog).getByLabelText(/^Name/));
     await userEvent.type(within(dialog).getByLabelText(/^Name/), " Steam-Main ");
     await userEvent.click(within(dialog).getByRole("button", { name: /Save/ }));
-    expect(calls(fetchMock)).toEqual([
+    expect(calls(fetchMock).filter((c) => c.method !== "GET")).toEqual([
       { url: "/api/v1/game-disks/1", method: "PATCH", body: { name: "steam-main" } },
     ]);
     expect(reload).toHaveBeenCalled();
@@ -108,7 +108,7 @@ describe("GameDisksPage", () => {
     await userEvent.click(within(dialog).getByLabelText(/Extend the data partition/));
     await userEvent.click(within(dialog).getByRole("button", { name: /Save/ }));
     expect(confirm.mock.calls[0][0]).toContain("from 100 GB to 250 GB");
-    expect(calls(fetchMock)).toEqual([
+    expect(calls(fetchMock).filter((c) => c.method !== "GET")).toEqual([
       { url: "/api/v1/game-disks/1/grow", method: "POST", body: { size_gb: 250, extend: false } },
     ]);
     expect(await screen.findByRole("status")).toHaveTextContent("The data partition was extended too.");
@@ -124,7 +124,7 @@ describe("GameDisksPage", () => {
     await menu("cs2", "Edit");
     await userEvent.click(screen.getByRole("button", { name: "+200 GB" }));
     await userEvent.click(screen.getByRole("button", { name: /Save/ }));
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(calls(fetchMock).filter((c) => c.method !== "GET")).toEqual([]);
   });
 
   it("shows the backend error when delete fails", async () => {
@@ -157,7 +157,7 @@ describe("GameDisksPage", () => {
 
     await userEvent.selectOptions(select, "1");
     await userEvent.click(screen.getByRole("button", { name: "Edit on PC" }));
-    expect(calls(fetchMock)).toEqual([
+    expect(calls(fetchMock).filter((c) => c.method !== "GET")).toEqual([
       { url: "/api/v1/game-disks/1/edit", method: "POST", body: { machine_id: 1 } },
     ]);
     expect(reload).toHaveBeenCalled();
@@ -184,7 +184,7 @@ describe("GameDisksPage", () => {
       />,
     );
     await userEvent.click(screen.getByRole("button", { name: "Finish editing" }));
-    expect(calls(fetchMock)).toEqual([
+    expect(calls(fetchMock).filter((c) => c.method !== "GET")).toEqual([
       { url: "/api/v1/game-disks/1/finish-edit", method: "POST", body: undefined },
     ]);
   });
@@ -214,7 +214,7 @@ describe("GameDisksPage", () => {
     render(<GameDisksPage disks={[disk()]} machines={[]} reload={reload} />);
     await menu("cs2", "Copy");
     expect(prompt.mock.calls[0][1]).toBe("cs2-copy");
-    expect(calls(fetchMock)).toEqual([{ url: "/api/v1/game-disks/1/copy", method: "POST", body: { name: "cs2-b" } }]);
+    expect(calls(fetchMock).filter((c) => c.method !== "GET")).toEqual([{ url: "/api/v1/game-disks/1/copy", method: "POST", body: { name: "cs2-b" } }]);
     expect(reload).toHaveBeenCalled();
   });
 
@@ -230,7 +230,7 @@ describe("GameDisksPage", () => {
     );
     expect(screen.getByText("Importing 7%")).toBeInTheDocument();
     await menu("win", "Cancel import");
-    expect(calls(fetchMock)).toEqual([{ url: "/api/v1/imports/4/cancel", method: "POST", body: undefined }]);
+    expect(calls(fetchMock).filter((c) => c.method !== "GET")).toEqual([{ url: "/api/v1/imports/4/cancel", method: "POST", body: undefined }]);
   });
 
   it("shows a running and a failed copy with their limits", async () => {
@@ -342,5 +342,35 @@ describe("GameDisksPage", () => {
     expect(badge.closest("tr")).toHaveTextContent("win11");
     expect(badge.closest("span")).toHaveAttribute("title", expect.stringContaining("WinSxS\\pending.xml"));
     expect(screen.getAllByText("Update pending")).toHaveLength(1);
+  });
+
+  it("shows type, default, size, volume, compression and versions, and makes an image the default", async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) =>
+      url.endsWith("/usage")
+        ? new Response(
+            JSON.stringify([
+              { disk_id: 1, used_bytes: 48 * 1024 ** 3, volume_bytes: 120 * 1024 ** 3, compress_ratio: 1.653, versions: 3 },
+            ]),
+          )
+        : new Response(JSON.stringify(init?.method === "PUT" ? disk({ is_default: true }) : [])),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const reload = vi.fn().mockResolvedValue(undefined);
+    render(<GameDisksPage disks={[disk(), disk({ id: 3, name: "win11", kind: "os", is_default: true, nic_models: ["x"] })]} machines={[]} reload={reload} />);
+    const headers = screen.getAllByRole("columnheader").map((h) => h.textContent);
+    expect(headers.slice(0, 9)).toEqual([
+      "Name", "Type", "Default", "State", "Size", "Volume", "Compression", "Versions", "Machines",
+    ]);
+    expect(screen.queryByText(/ZFS path/)).toBeNull();
+    const cs2 = (await screen.findByText("1.65×")).closest("tr")!;
+    expect(cs2).toHaveTextContent("Game disk");
+    expect(cs2).toHaveTextContent("48.0 GB");
+    expect(cs2).toHaveTextContent("120.0 GB");
+    expect(screen.getByLabelText("Default").closest("tr")).toHaveTextContent("win11");
+    await menu("cs2", "Make default");
+    expect(calls(fetchMock).filter((c) => c.method === "PUT")).toEqual([
+      { url: "/api/v1/game-disks/1/default", method: "PUT", body: { default: true } },
+    ]);
+    expect(reload).toHaveBeenCalled();
   });
 });

@@ -263,8 +263,9 @@ def _new_pc_ipxe(client) -> str:
 
 def test_an_unknown_pc_is_registered_from_the_template_while_the_wizard_waits(client, pc):
     game = client.get(f"/api/v1/machines/{pc['id']}").json()["game_disk_id"]
-    r = client.put("/api/v1/settings/boot", json={"new_pc_name": "komp-{nn}", "new_pc_game_disk_id": game})
-    assert r.status_code == 200, r.text
+    assert client.put("/api/v1/settings/boot", json={"new_pc_name": "komp-{nn}"}).status_code == 200
+    r = client.put(f"/api/v1/game-disks/{game}/default", json={"default": True})
+    assert r.status_code == 200 and r.json()["is_default"], r.text
     assert "not registered" in _new_pc_ipxe(client)                 # no wizard: it waits in New PCs
     client.post(f"/api/v1/game-disks/{pc['os_disk_id']}/add-hardware/wizard")
     script = _new_pc_ipxe(client)
@@ -275,7 +276,7 @@ def test_an_unknown_pc_is_registered_from_the_template_while_the_wizard_waits(cl
     assert _wizard(client, pc)["wizard"]["machine"] == "komp-01"
 
 
-def test_without_a_template_game_disk_an_unknown_pc_waits_in_new_pcs(client, pc):
+def test_without_a_default_game_disk_an_unknown_pc_waits_in_new_pcs(client, pc):
     client.post(f"/api/v1/game-disks/{pc['os_disk_id']}/add-hardware/wizard")
     assert "not registered" in _new_pc_ipxe(client)
     assert not any(m["mac"] == NEW_MAC for m in client.get("/api/v1/machines").json())

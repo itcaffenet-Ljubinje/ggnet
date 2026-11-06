@@ -42,6 +42,20 @@ describe("MachinesPage", () => {
     expect(screen.queryByRole("dialog", { name: "Add machine" })).toBeNull();
   });
 
+  it("a new machine starts with the default OS image and game disk", async () => {
+    const fetchMock = stubFetch(201, machine({ mode: "boot" }));
+    const disks = [disk(), disk({ id: 4, name: "valorant", is_default: true }), { ...OS_IMAGE, is_default: true },
+      disk({ id: 5, name: "win10", kind: "os" })];
+    render(<MachinesPage disks={disks} machines={[]} reload={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Add machine" }));
+    await userEvent.type(screen.getByLabelText("Name"), "pc01");
+    await userEvent.type(screen.getByLabelText("MAC"), "18:c0:4d:4f:ab:a8");
+    await userEvent.selectOptions(screen.getByLabelText("Mode"), "boot");
+    await userEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(actions(fetchMock)[0].body).toMatchObject({ mode: "boot", os_disk_id: 3, game_disk_id: 4 });
+  });
+
   it("does not add a machine without a MAC", async () => {
     const fetchMock = stubFetch(201, machine());
     render(<MachinesPage disks={DISKS} machines={[]} reload={vi.fn()} />);

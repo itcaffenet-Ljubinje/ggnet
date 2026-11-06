@@ -22,6 +22,7 @@ import {
 import {
   api,
   applyWritebacksChecked,
+  preselectDisk,
   type ApplyChoice,
   type BulkKind,
   type BulkResult,
@@ -646,10 +647,11 @@ function AddMachine({ disks, busy, run, reload, onClose }: AddMachineProps) {
   const [name, setName] = useState("");
   const [mac, setMac] = useState("");
   const [mode, setMode] = useState<MachineMode>("disk");
-  const [diskId, setDiskId] = useState("");
-  const [osDiskId, setOsDiskId] = useState("");
   const gameDisks = disks.filter((d) => d.published && d.kind !== "os");
   const osImages = disks.filter((d) => d.published && d.kind === "os");
+  // New PCs get the default images (Images → Make default).
+  const [diskId, setDiskId] = useState(preselectDisk(gameDisks));
+  const [osDiskId, setOsDiskId] = useState(preselectDisk(osImages));
 
   async function create(e: FormEvent) {
     e.preventDefault();

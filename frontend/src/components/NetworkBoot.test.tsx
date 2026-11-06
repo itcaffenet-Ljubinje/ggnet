@@ -22,11 +22,10 @@ const BOOT = {
   mok_enroll: false,
   mok_password: "ggnet",
   new_pc_name: "pc-{nn}",
-  new_pc_game_disk_id: null,
   saved: false,
 };
 const DISKS = [
-  { id: 6, name: "games", kind: "game", published: true, snapshot: "base" },
+  { id: 6, name: "games", kind: "game", published: true, snapshot: "base", is_default: true },
   { id: 9, name: "hw-test", kind: "os", published: true, snapshot: "v2" },
 ];
 const KEY = { subject: "CN = ggNet Secure Boot (pve)", fingerprint: "FA:23:CA:52", expires: null, ipxe_signed: true };
@@ -89,7 +88,6 @@ describe("NetworkBoot", () => {
           mok_enroll: false,
           mok_password: "ggnet",
           new_pc_name: "pc-{nn}",
-          new_pc_game_disk_id: null,
         },
       },
     ]);
@@ -156,7 +154,6 @@ describe("NetworkBoot", () => {
           mok_enroll: true,
           mok_password: "cafe2026",
           new_pc_name: "pc-{nn}",
-          new_pc_game_disk_id: null,
         },
       },
     ]);
@@ -168,16 +165,20 @@ describe("NetworkBoot", () => {
     expect(await screen.findByLabelText(/Prepare the Secure Boot key on PCs/)).toBeDisabled();
   });
 
-  it("saves the New PC template with a game disk (OS images are not offered)", async () => {
+  it("saves the New PC name and shows the default game disk new PCs get", async () => {
     const mock = stubHost();
     render(<NetworkBoot />);
     const name = await screen.findByLabelText("Name");
+    expect(await screen.findByText("games")).toBeInTheDocument();
     await userEvent.clear(name);
     await userEvent.type(name, "komp-{{nn}");
-    const game = screen.getByLabelText(/^Game disk/);
-    expect(screen.queryByRole("option", { name: "hw-test" })).toBeNull();
-    await userEvent.selectOptions(game, "games");
     await userEvent.click(screen.getByRole("button", { name: /Save/ }));
-    expect(actions(mock)[0].body).toMatchObject({ new_pc_name: "komp-{nn}", new_pc_game_disk_id: 6 });
+    expect(actions(mock)[0].body).toEqual({
+      gateway: "none",
+      unregistered: "wait",
+      mok_enroll: false,
+      mok_password: "ggnet",
+      new_pc_name: "komp-{nn}",
+    });
   });
 });

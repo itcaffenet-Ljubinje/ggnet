@@ -237,3 +237,34 @@ def test_edit_host_failure_leaves_machine_idle(client, host):
 def test_finish_edit_without_editor(client):
     d = _disk(client, publish=False)
     assert client.post(f"/api/v1/game-disks/{d['id']}/finish-edit").status_code == 409
+
+
+# ── Default images and the Images table's numbers ─────────────────────
+
+def test_one_default_per_kind_and_only_when_published(client, host):
+    def make(name, kind="game"):
+        d = client.post("/api/v1/game-disks", json={"name": name, "size_gb": 10, "kind": kind}).json()
+        return d
+
+    cs2, valorant, win11 = make("cs2"), make("valorant"), make("win11", "os")
+    r = client.put(f"/api/v1/game-disks/{cs2['id']}/default", json={"default": True})
+    assert r.status_code == 409 and "not published" in r.text
+    for d in (cs2, valorant, win11):
+        assert client.post(f"/api/v1/game-disks/{d['id']}/publish").status_code == 200
+    for d in (cs2, valorant, win11):
+        assert client.put(f"/api/v1/game-disks/{d['id']}/default", json={"default": True}).status_code == 200
+    defaults = {d["name"]: d["is_default"] for d in client.get("/api/v1/game-disks").json()}
+    assert defaults == {"cs2": False, "valorant": True, "win11": True}     # one game disk, one OS image
+    assert client.put(f"/api/v1/game-disks/{win11['id']}/default", json={"default": False}).json()["is_default"] is False
+
+
+def test_the_images_table_reads_size_compression_and_versions(client, host):
+    d = client.post("/api/v1/game-disks", json={"name": "cs2", "size_gb": 10}).json()
+    client.post(f"/api/v1/game-disks/{d['id']}/publish")
+    zvol = d["zvol_path"]
+    host.datasets[zvol].setdefault("props", {}).update({"volsize": str(10 << 30), "compressratio": "1.65x"})
+    host.sizes[zvol] = (3 << 30, 2 << 30)
+    host.snapshots[f"{zvol}@v2"] = set()
+    [u] = client.get("/api/v1/game-disks/usage").json()
+    assert u == {"disk_id": d["id"], "used_bytes": 3 << 30, "volume_bytes": 10 << 30,
+                 "compress_ratio": 1.65, "versions": 2}
