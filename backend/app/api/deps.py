@@ -76,6 +76,32 @@ def get_driver_library():
     return DriverLibrary(winpe_drivers_dir(get_config()))
 
 
+def get_backup_locations(prov: Provisioner = Depends(get_provisioner)):
+    """USB disks and `[paths] backup_dirs`: where image backups go."""
+    from pathlib import Path
+
+    from app.services.backups import BackupLocations
+    from app.services.imports import UsbDisks
+
+    paths = get_config().get("paths") or {}
+    return BackupLocations(UsbDisks(prov.zfs.runner), [Path(p) for p in paths.get("backup_dirs") or []])
+
+
+@lru_cache(maxsize=4)
+def _backup_runner(prov: Provisioner):
+    from app.db.session import get_sessionmaker
+    from app.services.backups import BackupRunner
+
+    return BackupRunner(get_sessionmaker(), prov)
+
+
+def get_backup_runner(prov: Provisioner = Depends(get_provisioner), locations=Depends(get_backup_locations)):
+    """Backup and restore jobs, one at a time, for the whole process."""
+    runner = _backup_runner(prov)
+    runner.open_location = locations.open
+    return runner
+
+
 def get_usb_disks(prov: Provisioner = Depends(get_provisioner)):
     """The server's USB disks that image files can be imported from."""
     from app.services.imports import UsbDisks

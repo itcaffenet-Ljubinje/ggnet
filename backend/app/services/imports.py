@@ -171,20 +171,40 @@ class UsbDisks:
             raise ValueError(f"{name} is not a USB file system that can be opened")
         return part
 
-    def mount(self, name: str) -> Path:
-        """Mount a USB file system read-only; its folder."""
+    def mount(self, name: str, writable: bool = False) -> Path:
+        """
+        Mount a USB file system, read-only unless `writable` (a backup is
+        written to it); its folder. One mounted read-only is mounted again
+        writable when asked to.
+        """
         part = self._find(name)
         if part["mounted"]:
-            return Path(part["mounted"])
+            if not writable or self._writable(Path(part["mounted"])):
+                return Path(part["mounted"])
+            self.unmount(name)
         target = self.mounts / name
         target.mkdir(parents=True, exist_ok=True)
-        cmd = (["ntfs-3g", "-o", "ro", part["path"], str(target)] if part["fstype"] == "ntfs"
-               else ["mount", "-o", "ro", part["path"], str(target)])
+        mode = "rw" if writable else "ro"
+        cmd = (["ntfs-3g", "-o", mode, part["path"], str(target)] if part["fstype"] == "ntfs"
+               else ["mount", "-o", mode, part["path"], str(target)])
         ok, _, err = self.runner.run(cmd)
         if not ok:
             raise RuntimeError(f"{part['path']} could not be opened: {err}")
-        logger.info("USB %s (%s) opened read-only at %s", part["path"], part["fstype"], target)
+        logger.info("USB %s (%s) opened %s at %s", part["path"], part["fstype"],
+                    "writable" if writable else "read-only", target)
         return target
+
+    @staticmethod
+    def _writable(folder: Path) -> bool:
+        """Whether `folder` is mounted read-write (/proc/mounts)."""
+        try:
+            for line in Path("/proc/mounts").read_text().splitlines():
+                fields = line.split()
+                if len(fields) > 3 and fields[1] == str(folder):
+                    return "rw" in fields[3].split(",")
+        except OSError:
+            pass
+        return False
 
     def unmount(self, name: str) -> None:
         part = self._find(name)

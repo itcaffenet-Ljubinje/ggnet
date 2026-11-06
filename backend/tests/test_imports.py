@@ -106,6 +106,39 @@ def test_usb_open_is_read_only_and_eject_unmounts(tmp_path):
         usb.mount("sda1")
 
 
+def test_a_backup_mounts_a_read_only_usb_disk_again_writable(tmp_path, monkeypatch):
+    class Runner:
+        def __init__(self):
+            self.calls, self.mounted = [], None
+
+        def run(self, cmd, timeout=None, quiet=False):
+            self.calls.append(cmd)
+            if cmd[0] in ("mount", "ntfs-3g"):
+                self.mounted = cmd[-1]
+            elif cmd[0] == "umount":
+                self.mounted = None
+            elif cmd[0] == "lsblk":
+                return True, json.dumps({"blockdevices": [
+                    {"name": "sdk", "tran": "usb", "type": "disk", "size": 1, "children": [
+                        {"name": "sdk1", "path": "/dev/sdk1", "fstype": "vfat", "type": "part", "size": 1,
+                         "mountpoint": self.mounted}]}]}), ""
+            return True, "", ""
+
+    r = Runner()
+    usb = UsbDisks(r, tmp_path)
+    usb.mount("sdk1")                                            # opened for an import: read-only
+    monkeypatch.setattr(UsbDisks, "_writable", staticmethod(lambda folder: False))
+    assert usb.mount("sdk1", writable=True) == tmp_path / "sdk1"
+    assert [c for c in r.calls if c[0] != "lsblk"] == [
+        ["mount", "-o", "ro", "/dev/sdk1", str(tmp_path / "sdk1")],
+        ["umount", str(tmp_path / "sdk1")],
+        ["mount", "-o", "rw", "/dev/sdk1", str(tmp_path / "sdk1")],
+    ]
+    monkeypatch.setattr(UsbDisks, "_writable", staticmethod(lambda folder: True))
+    usb.mount("sdk1", writable=True)                             # already writable: nothing to do
+    assert [c for c in r.calls if c[0] != "lsblk"][-1][2] == "rw" and len([c for c in r.calls if c[0] == "mount"]) == 2
+
+
 def test_qemu_progress_lines():
     assert qemu_percent("(42.17/100%)") == 42.17
     assert qemu_percent("Image resized.") is None

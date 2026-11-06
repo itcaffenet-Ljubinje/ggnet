@@ -652,6 +652,32 @@ td.td-select {
   animation: modalScale 0.18s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+.modal-content.modal-wide {
+  max-width: 860px;
+}
+
+.backup-location {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.backup-location label,
+.backup-footer label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+}
+
+.backup-footer {
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-top: 12px;
+}
+
 .modal-content form {
   display: flex;
   flex-direction: column;
