@@ -59,6 +59,15 @@ export function ImagesPage({ disks, machines, reload }: Props) {
   const usage = useImageUsage(disks);
   const [name, setName] = useState("");
   const [sizeGb, setSizeGb] = useState("100");
+  // The pool's free space, shown next to the size of a new image.
+  const [freeBytes, setFreeBytes] = useState<number | null>(null);
+  useEffect(() => {
+    api
+      .getStorage()
+      .then((s) => setFreeBytes(typeof s?.available_bytes === "number" ? s.available_bytes : null))
+      .catch(() => setFreeBytes(null));
+  }, [disks.length]);
+  const tooBig = freeBytes !== null && Number(sizeGb) * 1024 ** 3 > freeBytes;
   const [kind, setKind] = useState<ImageKind>("game");
   // Per draft disk: the machine picked to fill it on.
   const [editOn, setEditOn] = useState<Record<number, string>>({});
@@ -497,9 +506,17 @@ export function ImagesPage({ disks, machines, reload }: Props) {
             value={sizeGb}
             onChange={(e) => setSizeGb(e.target.value)}
             required
+            aria-invalid={tooBig}
+            aria-describedby="new-image-free"
           />
         </label>
-        <button type="submit" disabled={busy !== null}>
+        {freeBytes !== null && (
+          <span id="new-image-free" className={`small ${tooBig ? "error-text" : "muted"}`}>
+            {tooBig ? "More than the " : ""}
+            {formatBytes(freeBytes)} free on the pool
+          </span>
+        )}
+        <button type="submit" disabled={busy !== null || tooBig}>
           <Plus size={14} />
           {busy === "create" ? "Creating…" : "Create"}
         </button>

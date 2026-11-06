@@ -373,4 +373,19 @@ describe("ImagesPage", () => {
     ]);
     expect(reload).toHaveBeenCalled();
   });
+
+  it("shows the pool's free space next to a new image's size and stops one that does not fit", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        new Response(JSON.stringify(url.endsWith("/storage") ? { available_bytes: 500 * 1024 ** 3 } : [])),
+      ),
+    );
+    render(<ImagesPage disks={[]} machines={[]} reload={vi.fn()} />);
+    expect(await screen.findByText("500.0 GB free on the pool")).toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText("Size (GB)"));
+    await userEvent.type(screen.getByLabelText("Size (GB)"), "10000");
+    expect(screen.getByText(/More than the 500.0 GB free on the pool/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create" })).toBeDisabled();
+  });
 });

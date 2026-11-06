@@ -111,7 +111,8 @@ def test_create_disk_host_failure_is_502_and_not_saved(client, host):
     host.fail_on[("zfs", "create")] = "out of space"
     r = client.post("/api/v1/images", json={"name": "cs2", "size_gb": 10})
     assert r.status_code == 502
-    assert "out of space" in r.json()["detail"]["error"]
+    assert r.json()["detail"]["error"] == ("Creating the image cs2 failed: not enough free space on the pool "
+                                           "(ZFS: out of space)")
     assert client.get("/api/v1/images").json() == []
 
 
@@ -268,3 +269,22 @@ def test_the_images_table_reads_size_compression_and_versions(client, host):
     [u] = client.get("/api/v1/images/usage").json()
     assert u == {"image_id": d["id"], "used_bytes": 3 << 30, "volume_bytes": 10 << 30,
                  "compress_ratio": 1.65, "versions": 2}
+
+
+def test_an_image_bigger_than_the_free_space_is_refused_in_plain_words(client, host):
+    host.datasets["tank/ggnet/images"].setdefault("props", {})["avail"] = str(500 * 1024 ** 3)
+    r = client.post("/api/v1/images", json={"name": "game-test", "size_gb": 10000})
+    assert r.status_code == 502
+    assert r.json()["detail"]["error"] == ("Not enough space for a 10000 GB image: 500 GB is free on the pool. "
+                                           "Choose a smaller size; an image can be grown later (Edit).")
+    assert "tank/ggnet/images/game-test" not in host.datasets
+    assert client.post("/api/v1/images", json={"name": "game-test", "size_gb": 400}).status_code == 201
+
+
+def test_host_errors_are_shown_in_plain_words():
+    from app.services.provisioning import plain_error
+
+    assert plain_error("cannot create 'tank/ggnet/images/x': out of space") == (
+        "not enough free space on the pool (ZFS: out of space)")
+    assert plain_error("cannot destroy 'x': dataset is busy").startswith("it is in use right now")
+    assert plain_error("something new") == "something new"

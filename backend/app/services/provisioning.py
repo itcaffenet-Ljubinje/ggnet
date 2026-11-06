@@ -40,6 +40,30 @@ class ProvisioningError(Exception):
     """A host operation failed. The message is shown to the user."""
 
 
+GiB = 1024 ** 3
+
+# What the host's usual errors mean for the admin; the original stays in the log.
+PLAIN_ERRORS = (
+    ("out of space", "not enough free space on the pool"),
+    ("dataset is busy", "it is in use right now (a PC or a running job); try again in a moment"),
+    ("dataset already exists", "a disk with this name already exists on the server"),
+    ("has dependent clones", "PCs still run on it"),
+    ("snapshot has dependent clones", "PCs still run on it"),
+    ("dataset does not exist", "it is not on the server any more"),
+    ("pool I/O is currently suspended", "the pool has a disk problem (see Server)"),
+)
+
+
+def plain_error(detail: str) -> str:
+    """
+    A host error in words for the admin, with ZFS's own words after it
+    ("not enough free space on the pool (ZFS: out of space)"); an unknown
+    error as it is.
+    """
+    low = detail.lower()
+    return next((f"{plain} (ZFS: {raw})" for raw, plain in PLAIN_ERRORS if raw.lower() in low), detail)
+
+
 class PartialApplyError(ProvisioningError):
     """
     Apply Writebacks failed after some writebacks already became versions.
@@ -120,7 +144,7 @@ class Provisioner:
         detail = (runner or self.zfs.runner).last_error
         full = f"{msg}: {detail}" if detail else msg
         logger.error(full)
-        return ProvisioningError(full)
+        return ProvisioningError(f"{msg}: {plain_error(detail)}" if detail else msg)
 
     def _clear(self) -> None:
         self.zfs.runner.last_error = ""
@@ -263,8 +287,13 @@ class Provisioner:
             self._clear()
             if self.zfs.dataset_exists(path):
                 raise ProvisioningError(f"Zvol {path} already exists on the host")
+            free = self.zfs.available(self.zfs.layout.images)
+            if free is not None and size_gb * GiB > free:
+                raise ProvisioningError(
+                    f"Not enough space for a {size_gb} GB image: {free // GiB} GB is free on the pool. "
+                    "Choose a smaller size; an image can be grown later (Edit).")
             if not self.zfs.create_zvol(path, size_gb, **props):
-                raise self._fail(f"Creating zvol {path} failed")
+                raise self._fail(f"Creating the image {name} failed")
         return path
 
     def grow_disk(self, master: str, size_gb: int, published: bool, extend: bool = True
