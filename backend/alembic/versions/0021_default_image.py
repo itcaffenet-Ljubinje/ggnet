@@ -20,11 +20,11 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    with op.batch_alter_table('game_disks', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('is_default', sa.Boolean(), nullable=False, server_default=sa.false()))
+    # A plain ADD COLUMN: batch mode would rebuild game_disks, which machines
+    # and image_hardware reference (SQLite refuses with foreign keys on).
+    op.add_column('game_disks', sa.Column('is_default', sa.Boolean(), nullable=False, server_default=sa.false()))
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    with op.batch_alter_table('game_disks', schema=None) as batch_op:
-        batch_op.drop_column('is_default')
+    op.drop_column('game_disks', 'is_default')     # SQLite 3.35+

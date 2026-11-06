@@ -30,6 +30,30 @@ def test_downgrade_and_upgrade_again(db_url):
     engine.dispose()
 
 
+def test_0021_keeps_disks_that_pcs_and_cards_point_to(db_url):
+    """A database in use: game_disks is referenced, so it must not be rebuilt (foreign keys on)."""
+    cfg = alembic_config(db_url)
+    command.downgrade(cfg, "0020")
+    engine = make_engine(db_url)
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO game_disks (id, name, zvol_path, size_gb, kind, snapshot, created_at) "
+                          "VALUES (1, 'win11', 'tank/ggnet/images/win11', 80, 'os', 'base', CURRENT_TIMESTAMP)"))
+        conn.execute(text("INSERT INTO machines (name, mode, initiator_iqn, game_disk_id, os_disk_id, status, "
+                          "created_at, updated_at) VALUES ('pc01', 'boot', 'iqn.x:pc01', 1, 1, 'idle', "
+                          "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"))
+        conn.execute(text("INSERT INTO image_hardware (disk_id, nic, instance, name, snapshot, added_at) "
+                          "VALUES (1, 'VEN_8086&DEV_15BC', '3&1&0&FE', 'I219', 'base', CURRENT_TIMESTAMP)"))
+    engine.dispose()
+    command.upgrade(cfg, "head")
+    engine = make_engine(db_url)
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT name, is_default FROM game_disks")).all() == [("win11", 0)]
+        assert conn.execute(text("SELECT count(*) FROM machines")).scalar() == 1
+    engine.dispose()
+    command.downgrade(cfg, "0020")
+    command.upgrade(cfg, "head")
+
+
 def test_foreign_keys_enforced(db_url):
     """SQLite must actually check foreign keys."""
     engine = make_engine(db_url)
