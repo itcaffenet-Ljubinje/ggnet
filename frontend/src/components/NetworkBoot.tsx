@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Download, Lock, RefreshCw, RotateCw, Save } from "lucide-react";
 
-import { api, type BootSettings, type BootSettingsOut, type GameDisk, type PxeStatus } from "../api";
+import { api, type BootSettings, type BootSettingsOut, type Image, type PxeStatus } from "../api";
 import { useAsyncAction } from "../useAsyncAction";
 import { ErrorBanner } from "./ErrorBanner";
 
@@ -24,7 +24,7 @@ export function NetworkBoot() {
   const [mokEnroll, setMokEnroll] = useState(false);
   const [mokPassword, setMokPassword] = useState("ggnet");
   const [newPcName, setNewPcName] = useState("pc-{nn}");
-  const [defaultGame, setDefaultGame] = useState<GameDisk | null>(null);
+  const [defaultGame, setDefaultGame] = useState<Image | null>(null);
   const [done, setDone] = useState(false);
 
   function show(s: BootSettingsOut) {
@@ -196,16 +196,16 @@ export function NetworkBoot() {
               />
             </label>
             <p className="small">
-              Game disk:{" "}
+              Game image:{" "}
               {defaultGame ? (
                 <span className="strong">{defaultGame.name}</span>
               ) : (
                 <span className="warn-text">none, register new PCs by hand</span>
               )}{" "}
               <span className="muted">
-                (the default game disk: Images → ⋮ → Make default). While Add new hardware is open on an image, a PC
+                (the default game image: Images → ⋮ → Make default). While Add new hardware is open on an image, a PC
                 ggNet does not know yet that boots from the network is registered with this name (the first free
-                number) and the default game disk, in Boot Mode on that image, and goes straight through the wizard.
+                number) and the default game image, in Boot Mode on that image, and goes straight through the wizard.
               </span>
             </p>
           </div>

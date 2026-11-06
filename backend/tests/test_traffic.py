@@ -46,9 +46,9 @@ def test_traffic_endpoint(client, host):
     monitor = TrafficMonitor(clock)
     app.dependency_overrides[get_traffic_monitor] = lambda: monitor
     try:
-        d = client.post("/api/v1/game-disks", json={"name": "cs2", "size_gb": 10}).json()
-        client.post(f"/api/v1/game-disks/{d['id']}/publish")
-        m = client.post("/api/v1/machines", json={"name": "pc01", "game_disk_id": d["id"]}).json()
+        d = client.post("/api/v1/images", json={"name": "cs2", "size_gb": 10}).json()
+        client.post(f"/api/v1/images/{d['id']}/publish")
+        m = client.post("/api/v1/machines", json={"name": "pc01", "game_image_id": d["id"]}).json()
         client.post("/api/v1/machines", json={"name": "pc02"})          # no disk: not listed
 
         host.traffic[IQN] = (1200, 40)
@@ -66,8 +66,8 @@ def test_traffic_endpoint(client, host):
 
 
 def test_unreadable_counters_are_skipped(client, host):
-    d = client.post("/api/v1/game-disks", json={"name": "cs2", "size_gb": 10}).json()
-    client.post(f"/api/v1/game-disks/{d['id']}/publish")
-    client.post("/api/v1/machines", json={"name": "pc01", "game_disk_id": d["id"]})
+    d = client.post("/api/v1/images", json={"name": "cs2", "size_gb": 10}).json()
+    client.post(f"/api/v1/images/{d['id']}/publish")
+    client.post("/api/v1/machines", json={"name": "pc01", "game_image_id": d["id"]})
     host.fail_on[("cat",)] = "Permission denied"
     assert client.get("/api/v1/machines/traffic").json() == []

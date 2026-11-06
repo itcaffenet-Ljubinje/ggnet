@@ -2,7 +2,7 @@
 Per-machine iSCSI traffic (the Sent, Received and Speed columns).
 
 LIO counts the megabytes each initiator reads (Sent: server → PC) and writes
-(Received: the PC's writeback) on its game disk. The counters live as long
+(Received: the PC's writeback) on its game image. The counters live as long
 as the ACL, so they restart at every new clone; a counter that goes down is
 taken as such a restart. Speed is the change between two reads of the
 counters (the UI asks every few seconds), so it has a resolution of 1 MB per

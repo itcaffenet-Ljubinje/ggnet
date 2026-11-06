@@ -124,7 +124,7 @@ describe("DiskDetails", () => {
     const versions = await screen.findByRole("table", { name: "Versions of cs2" });
     await userEvent.click(within(versions).getAllByRole("button", { name: "Make active" })[0]);
     expect(actions(mock)).toEqual([
-      { url: "/api/v1/game-disks/1/active-snapshot", method: "PUT", body: { snapshot: "base" } },
+      { url: "/api/v1/images/1/active-snapshot", method: "PUT", body: { snapshot: "base" } },
     ]);
     expect(onChanged).toHaveBeenCalled();
   });
@@ -137,7 +137,7 @@ describe("DiskDetails", () => {
     const versions = await screen.findByRole("table", { name: "Versions of cs2" });
     await userEvent.click(within(versions).getAllByRole("button", { name: "Delete" })[1]);
     expect(actions(mock)).toEqual([
-      { url: "/api/v1/game-disks/1/snapshots/v1old", method: "DELETE", body: undefined },
+      { url: "/api/v1/images/1/snapshots/v1old", method: "DELETE", body: undefined },
     ]);
   });
 
@@ -170,7 +170,7 @@ describe("DiskDetails", () => {
     await userEvent.click(merge[2]);
     expect(confirm.mock.calls[0][0]).toContain("Deleted: @base, @v1old, @v1pin");
     expect(actions(mock)).toEqual([
-      { url: "/api/v1/game-disks/1/snapshots/v2/merge-into-base", method: "POST", body: undefined },
+      { url: "/api/v1/images/1/snapshots/v2/merge-into-base", method: "POST", body: undefined },
     ]);
   });
 
@@ -207,7 +207,7 @@ describe("DiskDetails", () => {
     await userEvent.click(within(versions).getByRole("button", { name: "Comment on @v2" }));
     expect(prompt.mock.calls[0][1]).toBe("AB 18.10. Warzone update");
     expect(actions(fetchMock)).toEqual([
-      { url: "/api/v1/game-disks/1/snapshots/v2/comment", method: "PUT", body: { comment: "new notes" } },
+      { url: "/api/v1/images/1/snapshots/v2/comment", method: "PUT", body: { comment: "new notes" } },
     ]);
   });
 
@@ -254,8 +254,8 @@ describe("DiskDetails", () => {
     await userEvent.click(within(versions).getByRole("button", { name: "Lock @v1old" }));
     await userEvent.click(within(versions).getByRole("button", { name: "Unlock @v1pin" }));
     expect(actions(mock)).toEqual([
-      { url: "/api/v1/game-disks/1/snapshots/v1old/lock", method: "PUT", body: { locked: true } },
-      { url: "/api/v1/game-disks/1/snapshots/v1pin/lock", method: "PUT", body: { locked: false } },
+      { url: "/api/v1/images/1/snapshots/v1old/lock", method: "PUT", body: { locked: true } },
+      { url: "/api/v1/images/1/snapshots/v1pin/lock", method: "PUT", body: { locked: false } },
     ]);
   });
 

@@ -54,7 +54,7 @@ const NUMBERS: { key: keyof RetentionSettings; label: string; min: number; max: 
     label: "Always keep newest versions",
     min: 1,
     max: 100,
-    hint: "…except the newest N versions of each game disk.",
+    hint: "…except the newest N versions of each game image.",
   },
   {
     key: "inactive_writeback_hours",

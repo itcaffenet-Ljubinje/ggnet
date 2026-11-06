@@ -1,9 +1,9 @@
 import { Cpu, Plus } from "lucide-react";
 
-import type { GameDisk } from "../api";
+import type { Image } from "../api";
 
 interface Props {
-  disk: GameDisk;
+  disk: Image;
   /** Open the Add new hardware wizard. */
   onAddHardware?: () => void;
 }

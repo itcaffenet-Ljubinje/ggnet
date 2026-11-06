@@ -68,8 +68,8 @@ class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
 
-class DiskKind(str, enum.Enum):
-    GAME = "game"    # game disk: Disk Mode D:, Boot Mode LUN 1
+class ImageKind(str, enum.Enum):
+    GAME = "game"    # game image: Disk Mode D:, Boot Mode LUN 1
     OS = "os"        # Windows system disk of Boot Mode machines (LUN 0)
 
 
@@ -80,7 +80,7 @@ def version_number(snapshot: str | None) -> int:
     return 1
 
 
-class GameDisk(Base):
+class Image(Base):
     """
     Master image (shared disk). `kind` says whether it holds games or a
     Boot Mode Windows install. Until `snapshot` is set the disk is a draft
@@ -88,17 +88,17 @@ class GameDisk(Base):
     is the name of the current snapshot (`base`, later `vN`).
 
     A draft is filled through one machine (`editor`): the draft zvol itself
-    is mapped as that machine's game disk until editing is finished.
+    is mapped as that machine's game image until editing is finished.
     """
 
-    __tablename__ = "game_disks"
+    __tablename__ = "images"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(32), unique=True)
     zvol_path: Mapped[str] = mapped_column(String(255), unique=True)
     size_gb: Mapped[int] = mapped_column(Integer)
-    kind: Mapped[DiskKind] = mapped_column(
-        _str_enum(DiskKind), default=DiskKind.GAME, server_default=DiskKind.GAME.value
+    kind: Mapped[ImageKind] = mapped_column(
+        _str_enum(ImageKind), default=ImageKind.GAME, server_default=ImageKind.GAME.value
     )
     snapshot: Mapped[str | None] = mapped_column(String(64), default=None)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now)
@@ -107,15 +107,15 @@ class GameDisk(Base):
     copy_source: Mapped[str | None] = mapped_column(String(255), default=None)
     copy_percent: Mapped[int | None] = mapped_column(Integer, default=None)
     copy_error: Mapped[str | None] = mapped_column(String(500), default=None)
-    # The default of its kind: new PCs get the default OS image and game disk
+    # The default of its kind: new PCs get the default OS image and game image
     # (the New PC template, the Machines and Discovered forms). One per kind.
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa_false())
 
     machines: Mapped[list["Machine"]] = relationship(
-        back_populates="game_disk", foreign_keys="Machine.game_disk_id"
+        back_populates="game_image", foreign_keys="Machine.game_image_id"
     )
     editor: Mapped["Machine | None"] = relationship(
-        back_populates="editing_disk", foreign_keys="Machine.editing_disk_id"
+        back_populates="editing_image", foreign_keys="Machine.editing_image_id"
     )
     # OS image: the network cards Add new hardware installed in it.
     hardware: Mapped[list["ImageHardware"]] = relationship(
@@ -151,14 +151,14 @@ class GameDisk(Base):
 
 
 class MachineMode(str, enum.Enum):
-    DISK = "disk"    # local Windows on C:, game disk over iSCSI
-    BOOT = "boot"    # diskless UEFI PXE boot: OS disk (LUN 0) + game disk (LUN 1)
+    DISK = "disk"    # local Windows on C:, game image over iSCSI
+    BOOT = "boot"    # diskless UEFI PXE boot: OS image (LUN 0) + game image (LUN 1)
 
 
 class MachineStatus(str, enum.Enum):
     IDLE = "idle"                  # no disk assigned
     PROVISIONED = "provisioned"    # clone exists and is mapped on the shared target
-    EDITING = "editing"            # a draft master is mapped as its game disk
+    EDITING = "editing"            # a draft master is mapped as its game image
     ERROR = "error"                # a host operation failed; see last_error
 
 
@@ -171,17 +171,17 @@ class ImageHardware(Base):
     """
 
     __tablename__ = "image_hardware"
-    __table_args__ = (UniqueConstraint("disk_id", "nic", "instance", name="uq_image_hardware_card"),)
+    __table_args__ = (UniqueConstraint("image_id", "nic", "instance", name="uq_image_hardware_card"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    disk_id: Mapped[int] = mapped_column(ForeignKey("game_disks.id", ondelete="CASCADE"))
+    image_id: Mapped[int] = mapped_column(ForeignKey("images.id", ondelete="CASCADE"))
     nic: Mapped[str] = mapped_column(String(64))           # VEN_8086&DEV_15BC&SUBSYS_86721043&REV_10
     instance: Mapped[str] = mapped_column(String(64))      # 3&11583659&0&FE
     name: Mapped[str] = mapped_column(String(255))         # Intel(R) Ethernet Connection (2) I219-V
     snapshot: Mapped[str | None] = mapped_column(String(64), default=None)   # the version it came with
     added_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now)
 
-    disk: Mapped[GameDisk] = relationship(back_populates="hardware")
+    disk: Mapped[Image] = relationship(back_populates="hardware")
 
 
 class Machine(Base):
@@ -203,32 +203,32 @@ class Machine(Base):
     initiator_iqn: Mapped[str] = mapped_column(String(223), unique=True)
     mac: Mapped[str | None] = mapped_column(String(17), unique=True, default=None)
 
-    game_disk_id: Mapped[int | None] = mapped_column(
-        ForeignKey("game_disks.id", ondelete="RESTRICT"), default=None, index=True
+    game_image_id: Mapped[int | None] = mapped_column(
+        ForeignKey("images.id", ondelete="RESTRICT"), default=None, index=True
     )
-    game_disk: Mapped[GameDisk | None] = relationship(
-        back_populates="machines", foreign_keys=[game_disk_id]
+    game_image: Mapped[Image | None] = relationship(
+        back_populates="machines", foreign_keys=[game_image_id]
     )
     # The draft master this machine is filling (status `editing`); at most
     # one editor per disk.
-    editing_disk_id: Mapped[int | None] = mapped_column(
-        ForeignKey("game_disks.id", ondelete="RESTRICT"), default=None, unique=True
+    editing_image_id: Mapped[int | None] = mapped_column(
+        ForeignKey("images.id", ondelete="RESTRICT"), default=None, unique=True
     )
-    editing_disk: Mapped[GameDisk | None] = relationship(
-        back_populates="editor", foreign_keys=[editing_disk_id]
+    editing_image: Mapped[Image | None] = relationship(
+        back_populates="editor", foreign_keys=[editing_image_id]
     )
 
     # Boot Mode: the OS image (kind `os`) and this machine's writeback of it.
     # It follows the image's active version (no pin yet) and is discarded
     # together with the game writeback.
-    os_disk_id: Mapped[int | None] = mapped_column(
-        ForeignKey("game_disks.id", ondelete="RESTRICT"), default=None, index=True
+    os_image_id: Mapped[int | None] = mapped_column(
+        ForeignKey("images.id", ondelete="RESTRICT"), default=None, index=True
     )
-    os_disk: Mapped[GameDisk | None] = relationship(foreign_keys=[os_disk_id])
+    os_image: Mapped[Image | None] = relationship(foreign_keys=[os_image_id])
     os_clone_zvol: Mapped[str | None] = mapped_column(String(255), default=None)
     os_clone_snapshot: Mapped[str | None] = mapped_column(String(320), default=None)
 
-    # Game disk letter on the PC (Disk Mode; Boot Mode is always D:).
+    # Game image letter on the PC (Disk Mode; Boot Mode is always D:).
     drive_letter: Mapped[str] = mapped_column(String(1), default="D", server_default="D")
 
     status: Mapped[MachineStatus] = mapped_column(
@@ -241,7 +241,7 @@ class Machine(Base):
     iscsi_target_iqn: Mapped[str | None] = mapped_column(String(223), default=None)
 
     # Snapshot pin (machine settings → version): the version of the
-    # game disk this machine runs instead of the active one; None follows it.
+    # game image this machine runs instead of the active one; None follows it.
     pinned_snapshot: Mapped[str | None] = mapped_column(String(64), default=None)
 
     # Writeback lifecycle: the server discards the writeback
@@ -250,7 +250,7 @@ class Machine(Base):
     # The client wrote (was connected) since the clone was made; a clean
     # clone is never discarded again.
     writeback_dirty: Mapped[bool] = mapped_column(Boolean, default=False)
-    # Bytes the PC has written into its writebacks (OS and game disk), as
+    # Bytes the PC has written into its writebacks (OS and game image), as
     # ZFS last measured them (app.services.writebacks.measure); None = not yet.
     writeback_bytes: Mapped[int | None] = mapped_column(BigInteger, default=None)
     # Over the size warning of Settings → Retention (never for a kept writeback).
@@ -307,18 +307,18 @@ class Machine(Base):
     @property
     def target_snapshot_path(self) -> str | None:
         """The version this machine is cloned from: its pin, else the disk's active one."""
-        if self.game_disk is None or not self.game_disk.published:
+        if self.game_image is None or not self.game_image.published:
             return None
         if self.pinned_snapshot:
-            return f"{self.game_disk.zvol_path}@{self.pinned_snapshot}"
-        return self.game_disk.snapshot_path
+            return f"{self.game_image.zvol_path}@{self.pinned_snapshot}"
+        return self.game_image.snapshot_path
 
     @property
     def os_snapshot_path(self) -> str | None:
         """The OS version a Boot Mode machine is cloned from: the image's active one."""
-        if self.mode is not MachineMode.BOOT or self.os_disk is None:
+        if self.mode is not MachineMode.BOOT or self.os_image is None:
             return None
-        return self.os_disk.snapshot_path
+        return self.os_image.snapshot_path
 
     @property
     def outdated(self) -> bool:

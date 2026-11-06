@@ -11,13 +11,13 @@ internal static class Samples
     public static AgentConfig Config(string? target = Target, string status = "provisioned") => new(
         MachineId: 1, Name: "pc01", Mode: "disk", Status: status,
         InitiatorIqn: ExpectedIqn, IscsiTargetIqn: target,
-        PortalIp: "192.168.0.10", PortalPort: 3260, GameDisk: target is null ? null : "cs2");
+        PortalIp: "192.168.0.10", PortalPort: 3260, GameImage: target is null ? null : "cs2");
 
     public const string ConfigJson = """
         {"machine_id": 1, "name": "pc01", "mode": "disk", "status": "provisioned",
          "initiator_iqn": "iqn.1991-05.com.microsoft:pc01",
          "iscsi_target_iqn": "iqn.2025-05.net.ggnet:client-pc01",
-         "portal_ip": "192.168.0.10", "portal_port": 3260, "game_disk": "cs2"}
+         "portal_ip": "192.168.0.10", "portal_port": 3260, "game_image": "cs2"}
         """;
 }
 

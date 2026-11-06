@@ -30,7 +30,7 @@ from typing import Any, Callable, Mapping
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import AppSetting, GameDisk, Machine, MachineMode, MachineStatus
+from app.db.models import AppSetting, Image, Machine, MachineMode, MachineStatus
 from app.services.provisioning import Provisioner, ProvisioningError
 from app.services.writebacks import discard
 
@@ -119,7 +119,7 @@ def plan(db: Session, prov: Provisioner, s: RetentionSettings, now: datetime | N
     now = now or _now()
     actions: list[Action] = []
 
-    for disk in db.scalars(select(GameDisk).where(GameDisk.snapshot.is_not(None)).order_by(GameDisk.name)):
+    for disk in db.scalars(select(Image).where(Image.snapshot.is_not(None)).order_by(Image.name)):
         versions = prov.snapshots(disk.zvol_path)   # oldest first
         pinned = {m.pinned_snapshot for m in disk.machines if m.pinned_snapshot}
         newest = {v["name"] for v in versions[-s.keep_newest_snapshots:]} if s.keep_newest_snapshots else set()
@@ -140,7 +140,7 @@ def plan(db: Session, prov: Provisioner, s: RetentionSettings, now: datetime | N
     for m in keepers:
         # Only a writeback with changes, of a PC known to be off since a known time.
         if not (m.writeback_dirty and m.session_active is False and m.session_changed_at
-                and m.game_disk is not None and m.game_disk.published):
+                and m.game_image is not None and m.game_image.published):
             continue
         off = now - m.session_changed_at
         if off >= timedelta(hours=s.inactive_writeback_hours):
@@ -164,7 +164,7 @@ def run(db: Session, prov: Provisioner, s: RetentionSettings, dry_run: bool,
         try:
             if a.kind == "snapshot":
                 disk_name, _, version = a.target.partition("@")
-                disk = db.scalar(select(GameDisk).where(GameDisk.name == disk_name))
+                disk = db.scalar(select(Image).where(Image.name == disk_name))
                 # Re-check: the disk or a pin may have changed since planning.
                 if disk is None or disk.snapshot == version or any(
                         m.pinned_snapshot == version for m in disk.machines):
@@ -174,7 +174,7 @@ def run(db: Session, prov: Provisioner, s: RetentionSettings, dry_run: bool,
                 a.done = True
             else:
                 m = db.scalar(select(Machine).where(Machine.name == a.target))
-                if m is None or not m.keep_writeback or m.game_disk is None:
+                if m is None or not m.keep_writeback or m.game_image is None:
                     a.error = "no longer applies; skipped"
                     continue
                 if prov.session_active(m.initiator_iqn, m.iscsi_target_iqn) is not False:

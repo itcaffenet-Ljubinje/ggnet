@@ -119,7 +119,7 @@ public class MokEnrollmentTests
 
     private void Config(string mode, bool key) => _server.Body = ConfigJson
         .Replace("\"mode\": \"disk\"", $"\"mode\": \"{mode}\"")
-        .Replace("\"game_disk\": \"cs2\"", "\"game_disk\": \"cs2\"" + (key
+        .Replace("\"game_image\": \"cs2\"", "\"game_image\": \"cs2\"" + (key
             ? $", \"secure_boot\": {{\"certificate\": \"{Convert.ToBase64String(Cert)}\", \"password\": \"ggnet\"}}"
             : ""));
 

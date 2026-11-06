@@ -33,7 +33,7 @@ const KEY = { subject: "CN = ggNet Secure Boot (pve)", fingerprint: "FA:23:CA:52
 function stubHost(boot: Record<string, unknown> = BOOT, pxe: PxeStatus = PXE) {
   const mock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
-    let body: unknown = url.endsWith("/game-disks") ? DISKS : url.endsWith("/pxe") || url.endsWith("/restart") ? pxe : boot;
+    let body: unknown = url.endsWith("/images") ? DISKS : url.endsWith("/pxe") || url.endsWith("/restart") ? pxe : boot;
     if (method === "PUT") body = { ...JSON.parse(init!.body as string), saved: true };
     return new Response(JSON.stringify(body), { status: 200 });
   });
@@ -165,7 +165,7 @@ describe("NetworkBoot", () => {
     expect(await screen.findByLabelText(/Prepare the Secure Boot key on PCs/)).toBeDisabled();
   });
 
-  it("saves the New PC name and shows the default game disk new PCs get", async () => {
+  it("saves the New PC name and shows the default game image new PCs get", async () => {
     const mock = stubHost();
     render(<NetworkBoot />);
     const name = await screen.findByLabelText("Name");

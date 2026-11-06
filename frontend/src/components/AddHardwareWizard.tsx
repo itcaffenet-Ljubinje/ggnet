@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Check, Cpu, Loader2, X } from "lucide-react";
 
-import { api, type AddHardwareStatus, type AddHardwareWizard as Wizard, type GameDisk } from "../api";
+import { api, type AddHardwareStatus, type AddHardwareWizard as Wizard, type Image } from "../api";
 
 const POLL_MS = 3000;
 
@@ -36,7 +36,7 @@ const JOB_STEPS: Record<string, string> = {
 };
 
 interface Props {
-  disk: GameDisk;
+  disk: Image;
   onClose: () => void;
   /** After a new version was made: reload the image. */
   onChanged?: () => Promise<void>;
@@ -147,7 +147,7 @@ export function AddHardwareWizard({ disk, onClose, onChanged }: Props) {
               <ul className="small">
                 <li>
                   The new PC is powered off. It is registered in Machines with {disk.name} as its OS image, or
-                  ggNet registers it when it boots, if Settings → Network boot → New PCs has a game disk.
+                  ggNet registers it when it boots, if Settings → Network boot → New PCs has a game image.
                 </li>
                 <li>In its BIOS: UEFI network boot (PXE) first, Secure Boot off for this run.</li>
                 <li>

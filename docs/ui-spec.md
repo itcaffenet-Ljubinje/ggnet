@@ -32,13 +32,13 @@ Status: **done** (backend and UI), **backend** (API exists, UI missing or partia
 | Item | Status |
 |---|---|
 | KPI cards: total, online, offline, writebacks / dirty | done |
-| Table (ggNet2 layout): status dot, name (opens Settings), mode pill, IP, MAC, disks (C: / D: in Boot Mode; letter, game disk, version in Disk Mode), writeback, network I/O, agent, icon actions | done |
+| Table (ggNet2 layout): status dot, name (opens Settings), mode pill, IP, MAC, disks (C: / D: in Boot Mode; letter, game image, version in Disk Mode), writeback, network I/O, agent, icon actions | done |
 | Search (name, IP, MAC, disk) and filters All / Online / Offline / Writeback with counts | done |
 | Boot state for Boot Mode PCs: booting (after iPXE), running, off | todo (`ipxe_at`, session state exist) |
 | Live traffic per PC (bps and totals) | backend |
 | Hardware drawer: CPU, GPU, RAM, board, NIC, link, agent, IP, MAC, iSCSI session | partial |
-| Settings per PC (dialog, tabs General / Disks / Network / Hardware): name and mode (also with disks, PC powered off), OS image, game disk, drive letter, version pin, Keep Writeback; MAC fixed | done |
-| Add a PC (dialog): name, **MAC (required)**, mode, OS image (Boot Mode), game disk. No IQN field | done |
+| Settings per PC (dialog, tabs General / Disks / Network / Hardware): name and mode (also with disks, PC powered off), OS image, game image, drive letter, version pin, Keep Writeback; MAC fixed | done |
+| Add a PC (dialog): name, **MAC (required)**, mode, OS image (Boot Mode), game image. No IQN field | done |
 | Discovery: PCs that knocked (PXE or agent) — Claim (name, mode, disks) and Ignore | done |
 | Per PC: Wake-on-LAN, Shutdown, Reboot | done |
 | Per PC: Keep Writeback, Discard Writeback, Pin version | done |
@@ -49,9 +49,9 @@ Status: **done** (backend and UI), **backend** (API exists, UI missing or partia
 | Zones (e.g. Main Arena, VIP) for filtering and bulk actions | todo |
 | Fixed IP per PC (as a DHCP reservation hint, not in Windows) | todo |
 | Add new hardware wizard (Images → ⋮): the first PC that boots the image reads its hardware in Windows PE (signed vendor NIC drivers from `winpe-drivers`), Windows installs the card in a temporary Proxmox VM, the image gets a new version; once per board type. The writeback never gets a card | done |
-| New PC template (Settings → Network boot → New PCs: name with {n}/{nn}; the default game disk): while Add new hardware is open on one image, an unknown PC that boots is registered on it in Boot Mode and taken by the wizard | done |
+| New PC template (Settings → Network boot → New PCs: name with {n}/{nn}; the default game image): while Add new hardware is open on one image, an unknown PC that boots is registered on it in Boot Mode and taken by the wizard | done |
 | Images table: Name, Type, Default, State, Size (on the pool, with versions), Volume, Compression, Versions, Machines; the ZFS path is on the Details page | done |
-| Make default (Images → ⋮): one default OS image and one default game disk; new PCs get them (New PC template, Add machine, New PCs claim) | done |
+| Make default (Images → ⋮): one default OS image and one default game image; new PCs get them (New PC template, Add machine, New PCs claim) | done |
 | Backup / Restore of images (local disk, another server, with all versions), Copy with all versions, Delete newer versions | todo |
 | Hardware scan with Secure Boot on: wimboot is served signed with the ggNet key (shim starts it like iPXE; Windows PE itself is Microsoft-signed) | done |
 | Settings → Hardware scan: Windows PE status (wimboot from the installer, pinned and checked; BCD, boot.sdi, boot.wim taken from a Windows ISO in Proxmox's ISO storage or the imports folder), network driver packages for Windows PE (upload a vendor's Winx64 driver folder; INF class Net, 64-bit models and its catalog are checked), and the PCs' boot network chips with the package that covers each. The wizard warns when Windows PE is not set up | done |
@@ -63,13 +63,13 @@ Status: **done** (backend and UI), **backend** (API exists, UI missing or partia
 
 | Item | Status |
 |---|---|
-| Game disks and OS images in separate sections; Create asks for the kind | done |
+| Game images and OS images in separate sections; Create asks for the kind | done |
 | Create: name, kind (game / OS), size | done |
 | Import: `.vhdx` / `.vhd` / `.raw` / `.qcow2` from a server folder or a USB disk; new GUIDs, boot-start iSCSI and NDIS NIC driver applied | todo (done by hand for `win11-vip05`) |
 | Upload from the browser with progress | todo |
 | Versions: list with size, date, PCs on each version; Make active, Rollback, Merge into base, Delete (active / pinned / in use protected) | done |
 | Comment on a version (who, when, what changed): asked at Apply Writebacks, editable per version, kept on the ZFS snapshot (`ggnet:comment`) | done |
-| Edit on a PC (draft game disk) and Finish Edit | done |
+| Edit on a PC (draft game image) and Finish Edit | done |
 | Writebacks: per PC, size, origin version, session | done |
 | Edit an OS image in the maintenance VM ("Local Drives") | todo |
 

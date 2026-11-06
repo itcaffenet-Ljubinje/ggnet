@@ -133,7 +133,7 @@ def _ipxe(client) -> str:
 
 
 def _wizard(client, pc) -> dict:
-    return client.get(f"/api/v1/game-disks/{pc['os_disk_id']}/add-hardware").json()
+    return client.get(f"/api/v1/images/{pc['os_image_id']}/add-hardware").json()
 
 
 def test_a_pc_whose_card_the_image_lacks_waits_for_add_new_hardware(client, pc):
@@ -145,11 +145,11 @@ def test_a_pc_whose_card_the_image_lacks_waits_for_add_new_hardware(client, pc):
 
 
 def test_the_wizard_scans_adds_and_boots_the_new_pc(client, prov, pc):
-    disk = pc["os_disk_id"]
-    r = client.post(f"/api/v1/game-disks/{disk}/add-hardware/wizard")
+    disk = pc["os_image_id"]
+    r = client.post(f"/api/v1/images/{disk}/add-hardware/wizard")
     assert r.status_code == 200, r.text
     assert r.json()["wizard"]["step"] == "waiting"
-    assert client.post(f"/api/v1/game-disks/{disk}/add-hardware/wizard").status_code == 409   # one at a time
+    assert client.post(f"/api/v1/images/{disk}/add-hardware/wizard").status_code == 409   # one at a time
 
     # 1. The new PC boots: its card's instance is unknown, so Windows PE with the scanner.
     script = _ipxe(client)
@@ -176,21 +176,21 @@ def test_the_wizard_scans_adds_and_boots_the_new_pc(client, prov, pc):
     script = _ipxe(client)
     assert "Adding the network card" in script and "chain --replace" in script
     assert prov.windows.started == [(I219, INSTANCE)]
-    assert client.get(f"/api/v1/game-disks/{disk}").json()["snapshot"] == "v2"
+    assert client.get(f"/api/v1/images/{disk}").json()["snapshot"] == "v2"
     assert _wizard(client, pc)["wizard"]["step"] == "rebooting"
 
     # The image now supports the card's model.
-    assert client.get(f"/api/v1/game-disks/{disk}").json()["nic_models"] == ["Intel(R) Ethernet Connection (2) I219-V"]
+    assert client.get(f"/api/v1/images/{disk}").json()["nic_models"] == ["Intel(R) Ethernet Connection (2) I219-V"]
 
     # 4. Then it boots the new version, and the wizard is done.
     assert "sanboot" in _ipxe(client)
     status = _wizard(client, pc)
     assert (status["wizard"]["step"], status["wizard"]["active"]) == ("done", False)
-    assert client.delete(f"/api/v1/game-disks/{disk}/add-hardware/wizard").json()["wizard"] is None
+    assert client.delete(f"/api/v1/images/{disk}/add-hardware/wizard").json()["wizard"] is None
 
 
 def test_the_wizard_takes_one_pc_at_a_time(client, pc):
-    client.post(f"/api/v1/game-disks/{pc['os_disk_id']}/add-hardware/wizard")
+    client.post(f"/api/v1/images/{pc['os_image_id']}/add-hardware/wizard")
     adder = client.app.dependency_overrides[deps.get_hardware_adder]()
     adder.wizard("tank/ggnet/images/win11").machine = "other-pc"
     script = _ipxe(client)
@@ -199,7 +199,7 @@ def test_the_wizard_takes_one_pc_at_a_time(client, pc):
 
 def test_without_windows_pe_the_wizard_says_so(client, pc, monkeypatch, tmp_path):
     monkeypatch.setattr(scan, "winpe_dir", lambda cfg: tmp_path / "nothing")
-    client.post(f"/api/v1/game-disks/{pc['os_disk_id']}/add-hardware/wizard")
+    client.post(f"/api/v1/images/{pc['os_image_id']}/add-hardware/wizard")
     script = _ipxe(client)
     assert "the hardware scan needs Windows PE" in script and script.rstrip().endswith("exit")
     wizard = _wizard(client, pc)["wizard"]
@@ -207,9 +207,9 @@ def test_without_windows_pe_the_wizard_says_so(client, pc, monkeypatch, tmp_path
 
 
 def test_closing_the_wizard_lets_the_pc_wait_again(client, pc):
-    disk = pc["os_disk_id"]
-    client.post(f"/api/v1/game-disks/{disk}/add-hardware/wizard")
-    assert client.delete(f"/api/v1/game-disks/{disk}/add-hardware/wizard").status_code == 200
+    disk = pc["os_image_id"]
+    client.post(f"/api/v1/images/{disk}/add-hardware/wizard")
+    assert client.delete(f"/api/v1/images/{disk}/add-hardware/wizard").status_code == 200
     assert "Waiting for Add new hardware" in _ipxe(client)
 
 
@@ -222,23 +222,23 @@ def test_a_scan_from_an_unknown_pc(client, pc):
 def test_the_wizard_takes_the_first_pc_that_boots_even_one_the_image_knows(client, prov, pc):
     prov.windows.installed = True                    # the image starts this PC's card already
     assert "sanboot" in _ipxe(client)                # without the wizard it just boots
-    client.post(f"/api/v1/game-disks/{pc['os_disk_id']}/add-hardware/wizard")
+    client.post(f"/api/v1/images/{pc['os_image_id']}/add-hardware/wizard")
     script = _ipxe(client)
     assert "wimboot" in script and "sanboot" not in script
     assert _wizard(client, pc)["wizard"]["machine"] == "vip-05"
 
 
 def test_a_new_os_image_has_no_network_card_and_a_copy_keeps_its_cards(client, prov, pc):
-    disk = pc["os_disk_id"]
-    assert client.get(f"/api/v1/game-disks/{disk}").json()["nic_models"] == []      # needs hardware
-    client.post(f"/api/v1/game-disks/{disk}/add-hardware/wizard")
+    disk = pc["os_image_id"]
+    assert client.get(f"/api/v1/images/{disk}").json()["nic_models"] == []      # needs hardware
+    client.post(f"/api/v1/images/{disk}/add-hardware/wizard")
     _ipxe(client)
     client.post("/api/v1/boot/scan", json={"mac": MAC, "devices": [_device(I219, INSTANCE)]})
     _ipxe(client)                                                                    # adds it: @v2
-    r = client.post(f"/api/v1/game-disks/{disk}/copy", json={"name": "copy-v2"})
+    r = client.post(f"/api/v1/images/{disk}/copy", json={"name": "copy-v2"})
     assert r.status_code == 201, r.text
     assert r.json()["nic_models"] == ["Intel(R) Ethernet Connection (2) I219-V"]
-    r = client.post(f"/api/v1/game-disks/{disk}/copy", json={"name": "copy-base", "snapshot": "base"})
+    r = client.post(f"/api/v1/images/{disk}/copy", json={"name": "copy-base", "snapshot": "base"})
     assert r.json()["nic_models"] == []                                              # @base had no card
 
 
@@ -262,22 +262,22 @@ def _new_pc_ipxe(client) -> str:
 
 
 def test_an_unknown_pc_is_registered_from_the_template_while_the_wizard_waits(client, pc):
-    game = client.get(f"/api/v1/machines/{pc['id']}").json()["game_disk_id"]
+    game = client.get(f"/api/v1/machines/{pc['id']}").json()["game_image_id"]
     assert client.put("/api/v1/settings/boot", json={"new_pc_name": "komp-{nn}"}).status_code == 200
-    r = client.put(f"/api/v1/game-disks/{game}/default", json={"default": True})
+    r = client.put(f"/api/v1/images/{game}/default", json={"default": True})
     assert r.status_code == 200 and r.json()["is_default"], r.text
     assert "not registered" in _new_pc_ipxe(client)                 # no wizard: it waits in New PCs
-    client.post(f"/api/v1/game-disks/{pc['os_disk_id']}/add-hardware/wizard")
+    client.post(f"/api/v1/images/{pc['os_image_id']}/add-hardware/wizard")
     script = _new_pc_ipxe(client)
     assert "wimboot" in script                                       # registered and taken by the wizard
     [new] = [m for m in client.get("/api/v1/machines").json() if m["mac"] == NEW_MAC]
-    assert (new["name"], new["mode"], new["os_disk_id"], new["game_disk_id"]) == (
-        "komp-01", "boot", pc["os_disk_id"], game)
+    assert (new["name"], new["mode"], new["os_image_id"], new["game_image_id"]) == (
+        "komp-01", "boot", pc["os_image_id"], game)
     assert _wizard(client, pc)["wizard"]["machine"] == "komp-01"
 
 
-def test_without_a_default_game_disk_an_unknown_pc_waits_in_new_pcs(client, pc):
-    client.post(f"/api/v1/game-disks/{pc['os_disk_id']}/add-hardware/wizard")
+def test_without_a_default_game_image_an_unknown_pc_waits_in_new_pcs(client, pc):
+    client.post(f"/api/v1/images/{pc['os_image_id']}/add-hardware/wizard")
     assert "not registered" in _new_pc_ipxe(client)
     assert not any(m["mac"] == NEW_MAC for m in client.get("/api/v1/machines").json())
 
@@ -297,54 +297,54 @@ def test_the_template_name_needs_a_number(client):
 # ── The card list follows the image's versions ───────────────────────
 
 def _add_i219(client, pc) -> None:
-    disk = pc["os_disk_id"]
-    client.post(f"/api/v1/game-disks/{disk}/add-hardware/wizard")
+    disk = pc["os_image_id"]
+    client.post(f"/api/v1/images/{disk}/add-hardware/wizard")
     _ipxe(client)
     client.post("/api/v1/boot/scan", json={"mac": MAC, "devices": [_device(I219, INSTANCE)]})
     _ipxe(client)                                          # the card is added: @v2, active
     _ipxe(client)                                          # the PC boots it: the wizard is done
-    client.delete(f"/api/v1/game-disks/{disk}/add-hardware/wizard")
+    client.delete(f"/api/v1/images/{disk}/add-hardware/wizard")
 
 
 def test_the_card_list_shows_only_what_the_active_version_has(client, pc):
-    disk = pc["os_disk_id"]
+    disk = pc["os_image_id"]
     _add_i219(client, pc)
     i219 = ["Intel(R) Ethernet Connection (2) I219-V"]
-    assert client.get(f"/api/v1/game-disks/{disk}").json()["nic_models"] == i219
-    client.put(f"/api/v1/game-disks/{disk}/active-snapshot", json={"snapshot": "base"})
-    assert client.get(f"/api/v1/game-disks/{disk}").json()["nic_models"] == []      # @base never had it
+    assert client.get(f"/api/v1/images/{disk}").json()["nic_models"] == i219
+    client.put(f"/api/v1/images/{disk}/active-snapshot", json={"snapshot": "base"})
+    assert client.get(f"/api/v1/images/{disk}").json()["nic_models"] == []      # @base never had it
 
 
 def test_deleting_the_version_a_card_came_with_removes_it_from_the_list(client, prov, pc):
-    disk = pc["os_disk_id"]
+    disk = pc["os_image_id"]
     _add_i219(client, pc)
-    client.put(f"/api/v1/game-disks/{disk}/active-snapshot", json={"snapshot": "base"})
+    client.put(f"/api/v1/images/{disk}/active-snapshot", json={"snapshot": "base"})
     _ipxe(client)                                          # the PC moves off @v2
-    r = client.delete(f"/api/v1/game-disks/{disk}/snapshots/v2")
+    r = client.delete(f"/api/v1/images/{disk}/snapshots/v2")
     assert r.status_code == 204, r.text
     _add_i219(client, pc)                                  # the next version is called v2 again
-    assert client.get(f"/api/v1/game-disks/{disk}").json()["nic_models"] == [
+    assert client.get(f"/api/v1/images/{disk}").json()["nic_models"] == [
         "Intel(R) Ethernet Connection (2) I219-V"]
 
 
 def test_merge_into_base_keeps_the_cards(client, pc):
-    disk = pc["os_disk_id"]
+    disk = pc["os_image_id"]
     _add_i219(client, pc)
     assert client.post(f"/api/v1/machines/{pc['id']}/reset").status_code == 200    # off @base
-    r = client.post(f"/api/v1/game-disks/{disk}/snapshots/v2/merge-into-base")
+    r = client.post(f"/api/v1/images/{disk}/snapshots/v2/merge-into-base")
     assert r.status_code == 200, r.text
     assert r.json()["snapshot"] == "base"
     assert r.json()["nic_models"] == ["Intel(R) Ethernet Connection (2) I219-V"]
 
 
 def test_check_network_cards_reads_them_from_the_image(client, prov, pc):
-    disk = pc["os_disk_id"]
-    r = client.post(f"/api/v1/game-disks/{disk}/check-hardware")
+    disk = pc["os_image_id"]
+    r = client.post(f"/api/v1/images/{disk}/check-hardware")
     assert r.status_code == 200, r.text
     assert r.json()["nic_models"] == []                       # the image has no card yet
     prov.windows.installed = True                             # e.g. an image made on that PC
-    assert client.post(f"/api/v1/game-disks/{disk}/check-hardware").json()["nic_models"] == [
+    assert client.post(f"/api/v1/images/{disk}/check-hardware").json()["nic_models"] == [
         "Intel(R) Ethernet Connection (2) I219-V"]
-    r = client.post(f"/api/v1/game-disks/{disk}/check-hardware")          # again: the same card, no clash
+    r = client.post(f"/api/v1/images/{disk}/check-hardware")          # again: the same card, no clash
     assert r.status_code == 200, r.text
     assert "tank/ggnet/writebacks/win11_ggnet_hw" not in prov.zfs.runner.datasets   # the clone is gone

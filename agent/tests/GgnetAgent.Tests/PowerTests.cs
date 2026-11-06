@@ -14,8 +14,8 @@ public class PowerTests
         NullLogger<AgentWorker>.Instance, clock ?? TimeProvider.System, () => TimeSpan.FromHours(1), null, _power);
 
     private void Answer(string? command) =>
-        _server.Body = Samples.ConfigJson.Replace("\"game_disk\": \"cs2\"",
-            command is null ? "\"game_disk\": \"cs2\"" : $"\"game_disk\": \"cs2\", \"command\": \"{command}\"");
+        _server.Body = Samples.ConfigJson.Replace("\"game_image\": \"cs2\"",
+            command is null ? "\"game_image\": \"cs2\"" : $"\"game_image\": \"cs2\", \"command\": \"{command}\"");
 
     [Theory]
     [InlineData("shutdown")]

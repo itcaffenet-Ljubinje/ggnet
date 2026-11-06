@@ -45,7 +45,7 @@ describe("AddHardwareWizard", () => {
     expect(await screen.findByText(/komp-11/)).toBeInTheDocument();          // waiting on screen already
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
     expect(await screen.findByText(/Power on the new PC now/)).toBeInTheDocument();
-    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/v1/game-disks/8/add-hardware/wizard"))).toBe(true);
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/v1/images/8/add-hardware/wizard"))).toBe(true);
 
     status = { ...status, wizard: wizard("adding"), job: null };
     await act(() => vi.advanceTimersByTimeAsync(3100));

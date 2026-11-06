@@ -18,8 +18,8 @@ def wol():
 
 @pytest.fixture
 def disk(client) -> dict:
-    d = client.post("/api/v1/game-disks", json={"name": "cs2", "size_gb": 10}).json()
-    return client.post(f"/api/v1/game-disks/{d['id']}/publish").json()
+    d = client.post("/api/v1/images", json={"name": "cs2", "size_gb": 10}).json()
+    return client.post(f"/api/v1/images/{d['id']}/publish").json()
 
 
 def _machines(client, *names, **body) -> list[dict]:
@@ -55,11 +55,11 @@ def test_shutdown_only_reaches_online_pcs(client):
 
 def test_assign_and_remove_a_disk_on_several(client, host, disk):
     ms = _machines(client, "pc01", "pc02", "pc03")
-    res = _bulk(client, [m["id"] for m in ms], "assign", game_disk_id=disk["id"])
+    res = _bulk(client, [m["id"] for m in ms], "assign", game_image_id=disk["id"])
     assert all(r["ok"] for r in res)
     assert {f"tank/ggnet/writebacks/pc0{i}" for i in (1, 2, 3)} <= set(host.datasets)
 
-    res = _bulk(client, [m["id"] for m in ms], "assign", game_disk_id=None)
+    res = _bulk(client, [m["id"] for m in ms], "assign", game_image_id=None)
     assert all(r["ok"] for r in res)
     assert not any(d.startswith("tank/ggnet/writebacks/pc") for d in host.datasets)
 
@@ -68,14 +68,14 @@ def test_one_host_failure_does_not_stop_the_others(client, host, disk):
     ms = _machines(client, "pc01", "pc02")
     host.fail_on[("zfs", "clone", "-o", "sync=disabled", "tank/ggnet/images/cs2@base",
                   "tank/ggnet/writebacks/pc01")] = "out of space"
-    res = _bulk(client, [m["id"] for m in ms], "assign", game_disk_id=disk["id"])
+    res = _bulk(client, [m["id"] for m in ms], "assign", game_image_id=disk["id"])
     assert [r["ok"] for r in res] == [False, True] and "out of space" in res[0]["error"]
     assert client.get(f"/api/v1/machines/{ms[0]['id']}").json()["status"] == "error"
     assert client.get(f"/api/v1/machines/{ms[1]['id']}").json()["status"] == "provisioned"
 
 
 def test_pin_drive_letter_and_stop_keeping(client, disk):
-    ms = _machines(client, "pc01", "pc02", game_disk_id=disk["id"])
+    ms = _machines(client, "pc01", "pc02", game_image_id=disk["id"])
     ids = [m["id"] for m in ms]
     assert all(r["ok"] for r in _bulk(client, ids, "pin", snapshot="base"))
     assert all(r["ok"] for r in _bulk(client, ids, "drive_letter", drive_letter="g"))

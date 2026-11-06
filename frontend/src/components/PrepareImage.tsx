@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { Monitor, Wand2, X } from "lucide-react";
 
-import type { GameDisk, PrepareOptions } from "../api";
+import type { Image, PrepareOptions } from "../api";
 
 interface Props {
-  disk: GameDisk;
+  disk: Image;
   busy: boolean;
   onClose: () => void;
   onPrepare: (options: PrepareOptions) => void;

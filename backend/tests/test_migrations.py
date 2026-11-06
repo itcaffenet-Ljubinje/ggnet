@@ -26,12 +26,12 @@ def test_downgrade_and_upgrade_again(db_url):
     engine = make_engine(db_url)
     assert set(inspect(engine).get_table_names()) == {"alembic_version"}
     command.upgrade(cfg, "head")
-    assert {"machines", "game_disks"} <= set(inspect(engine).get_table_names())
+    assert {"machines", "images"} <= set(inspect(engine).get_table_names())
     engine.dispose()
 
 
-def test_0021_keeps_disks_that_pcs_and_cards_point_to(db_url):
-    """A database in use: game_disks is referenced, so it must not be rebuilt (foreign keys on)."""
+def test_0021_0022_keep_images_that_pcs_and_cards_point_to(db_url):
+    """A database in use: PCs and cards point to the image table, so it is renamed with its rows."""
     cfg = alembic_config(db_url)
     command.downgrade(cfg, "0020")
     engine = make_engine(db_url)
@@ -47,10 +47,14 @@ def test_0021_keeps_disks_that_pcs_and_cards_point_to(db_url):
     command.upgrade(cfg, "head")
     engine = make_engine(db_url)
     with engine.connect() as conn:
-        assert conn.execute(text("SELECT name, is_default FROM game_disks")).all() == [("win11", 0)]
+        assert conn.execute(text("SELECT name, is_default FROM images")).all() == [("win11", 0)]
         assert conn.execute(text("SELECT count(*) FROM machines")).scalar() == 1
     engine.dispose()
     command.downgrade(cfg, "0020")
+    engine = make_engine(db_url)
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT game_disk_id FROM machines")).all() == [(1,)]
+    engine.dispose()
     command.upgrade(cfg, "head")
 
 
@@ -60,7 +64,7 @@ def test_foreign_keys_enforced(db_url):
     with engine.connect() as conn:
         with pytest.raises(Exception, match="FOREIGN KEY"):
             conn.execute(text(
-                "INSERT INTO machines (name, mode, initiator_iqn, game_disk_id, status, "
+                "INSERT INTO machines (name, mode, initiator_iqn, game_image_id, status, "
                 "created_at, updated_at) VALUES ('pc01', 'disk', 'iqn.x:pc01', 999, 'idle', "
                 "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
             ))

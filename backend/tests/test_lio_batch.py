@@ -53,7 +53,7 @@ def test_a_reset_is_two_batches_and_no_mapping_command(host, bprov):
 
 
 def test_boot_mode_disks_keep_their_lun_order(host, bprov):
-    bprov.create_disk("win11", 10, os_image=True)
+    bprov.create_disk("win11", 10, is_os=True)
     bprov.publish_disk("tank/ggnet/images/win11")
     bprov.provision("pc01", IQN, SNAP, "tank/ggnet/images/win11@base")
     assert host.visible(IQN) == ["/dev/zvol/tank/ggnet/writebacks/pc01-os", DEV]

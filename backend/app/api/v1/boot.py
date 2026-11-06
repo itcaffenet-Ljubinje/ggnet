@@ -7,7 +7,7 @@ answer is always a script, never an HTTP error, so a PC that ggNet does not
 boot falls through to its next boot device instead of stopping in iPXE:
 
   Boot Mode PC with its disks   sanboot from the shared target, LUN 0 (OS);
-                                Windows sees LUN 1 (game disk) on the same session
+                                Windows sees LUN 1 (game image) on the same session
   Boot Mode PC without disks    message, then exit
   Disk Mode PC                  exit (boot from the local disk)
   unknown MAC                   listed in Discovery (Machines → New PCs) and,
@@ -51,7 +51,7 @@ from app.api.deps import (
 from app.api.v1.errors import not_found
 from app.config import get_config
 from app.api.v1.schemas import _mac
-from app.db.models import DiscoverySource, DiskKind, GameDisk, Machine, MachineMode, MachineStatus
+from app.db.models import DiscoverySource, ImageKind, Image, Machine, MachineMode, MachineStatus
 from app.db.session import get_db
 from app.services import discovery, pxe, scan
 from app.services.toolchain import activate_when_done
@@ -145,14 +145,14 @@ def sanboot_script(m: Machine, portal_ip: str, portal_port: int, target_iqn: str
     the login. `gateway` (boot_gateway()) replaces the DHCP gateway in it.
     """
     host = f"[{portal_ip}]" if ":" in portal_ip else portal_ip
-    os_disk, game = m.os_disk, m.game_disk
+    os_image, game = m.os_image, m.game_image
     os_version = (m.os_clone_snapshot or "").partition("@")[2]
     game_version = (m.clone_snapshot or "").partition("@")[2]
     return _script(
         *([f"set netX/gateway {gateway}"] if gateway else []),
         f"set initiator-iqn {m.initiator_iqn}",
         f"set root-path iscsi:{host}::{portal_port}:0:{target_iqn}",
-        f"echo ggNet: booting {m.name} ({os_disk.name} {os_version}, {game.name} {game_version})",
+        f"echo ggNet: booting {m.name} ({os_image.name} {os_version}, {game.name} {game_version})",
         "sanboot ${root-path} || goto failed",
         ":failed",
         "echo Boot failed, retrying in 10 s",
@@ -229,7 +229,7 @@ def ipxe_script(
     if m.mode is not MachineMode.BOOT:
         return exit_script(f"ggNet: {m.name} is in Disk Mode. Booting from local disk.")
     if m.status is not MachineStatus.PROVISIONED or m.os_clone_zvol is None:
-        reason = m.last_error if m.status is MachineStatus.ERROR else "it has no OS image and game disk"
+        reason = m.last_error if m.status is MachineStatus.ERROR else "it has no OS image and game image"
         logger.warning("iPXE request from %s, which cannot boot: %s", m.name, reason)
         return exit_script(f"ggNet: {m.name} cannot boot from the network: {reason}")
 
@@ -272,7 +272,7 @@ def _new_hardware(request: Request, db: Session, prov: Provisioner, adder, drive
     is installed in a new version, and boots that. Other PCs boot as usual,
     or wait on screen while the image cannot start their card.
     """
-    disk = m.os_disk
+    disk = m.os_image
     if disk is None or prov.windows is None or nic is None or not NIC_ID_RE.match(nic):
         return None
     zvol = disk.zvol_path
@@ -304,7 +304,7 @@ def _new_hardware(request: Request, db: Session, prov: Provisioner, adder, drive
 def _wizard_step(request: Request, db: Session, prov: Provisioner, adder, drivers: scan.DriverLibrary,
                  wizard, m: Machine, nic: str, mac: str, again: str) -> PlainTextResponse | None:
     """The wizard's PC asks iPXE: scan it, add its card, or (new version made) let it boot."""
-    disk = m.os_disk
+    disk = m.os_image
     if wizard.step in ("waiting", "scanning"):
         folder = scan.winpe_dir(get_config())
         if scan.winpe_ready(folder) and _scanner().is_file():
@@ -351,19 +351,19 @@ def _register_new_pc(db: Session, prov: Provisioner, adder, mac: str) -> Machine
     """
     The New PC template: while Add new hardware is open (and waiting) on one
     OS image, an unknown PC that boots is registered on that image in Boot
-    Mode, with the template's name and the default game disk, so the wizard
+    Mode, with the template's name and the default game image, so the wizard
     takes it. None when no wizard waits, more than one does, or there is no
-    default game disk.
+    default game image.
     """
     from app.api.v1.machines import create_machine
     from app.api.v1.schemas import MachineCreate
 
     waiting = [w for w in adder.wizards.values() if w.active and w.machine is None and w.step == "waiting"]
     settings, _ = pxe.load_settings(db)
-    game = db.scalar(select(GameDisk).where(GameDisk.kind == DiskKind.GAME, GameDisk.is_default.is_(True)))
+    game = db.scalar(select(Image).where(Image.kind == ImageKind.GAME, Image.is_default.is_(True)))
     if len(waiting) != 1 or game is None or not game.published:
         if waiting:
-            logger.info("Unknown PC %s not registered: %s", mac, "no default game disk (Images -> Make default)"
+            logger.info("Unknown PC %s not registered: %s", mac, "no default game image (Images -> Make default)"
                         if game is None or not game.published else "Add new hardware is open on several images")
         return None
     taken = set(db.scalars(select(Machine.name)))
@@ -373,8 +373,8 @@ def _register_new_pc(db: Session, prov: Provisioner, adder, mac: str) -> Machine
         return None
     try:
         m = create_machine(MachineCreate(name=name, mode=MachineMode.BOOT, mac=mac,
-                                         game_disk_id=game.id,
-                                         os_disk_id=waiting[0].disk_id), db, prov)
+                                         game_image_id=game.id,
+                                         os_image_id=waiting[0].image_id), db, prov)
     except HTTPException as e:
         logger.warning("Unknown PC %s not registered as %s: %s", mac, name, e.detail)
         db.rollback()
@@ -493,11 +493,11 @@ def scan_report(body: ScanIn, db: Session = Depends(get_db), adder=Depends(get_h
     m.boot_nic = m.boot_nic or card.nic
     m.nic_instance = card.instance
     db.commit()
-    wizard = adder.wizard(m.os_disk.zvol_path) if m.os_disk else None
+    wizard = adder.wizard(m.os_image.zvol_path) if m.os_image else None
     if wizard is not None and wizard.active and wizard.machine == m.name:
         wizard.step, wizard.card = "collected", (card.nic, card.instance)
     logger.info("Hardware scan of %s (scanner %s): boot network card PCI\\%s\\%s; %d PCI devices",
                 m.name, body.scanner_version or "?", card.nic, card.instance, len(body.devices))
-    image = m.os_disk.name if m.os_disk else "its image"
+    image = m.os_image.name if m.os_image else "its image"
     return {"message": f"ggNet: network card PCI\\{card.nic}\\{card.instance} saved for {m.name}; "
                        f"it is added to {image} after the restart."}

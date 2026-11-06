@@ -106,7 +106,7 @@ def _os_disk(client) -> dict:
 
 def test_add_hardware_makes_a_new_active_version(client, host, adder, prov):
     disk = _os_disk(client)
-    r = client.post(f"/api/v1/game-disks/{disk['id']}/add-hardware",
+    r = client.post(f"/api/v1/images/{disk['id']}/add-hardware",
                     json={"cards": [{"nic": f"pci\\{I219.lower()}", "instance": "3&1&0&fe"}]})
     assert r.status_code == 202, r.text
     job = r.json()
@@ -116,41 +116,41 @@ def test_add_hardware_makes_a_new_active_version(client, host, adder, prov):
     assert adder.vm.booted == DEVICE
     [(device, _, _)] = prov.windows.prepared                  # the new driver marked for a network boot
     assert device == DEVICE
-    assert client.get(f"/api/v1/game-disks/{disk['id']}").json()["snapshot"] == "v2"
-    versions = client.get(f"/api/v1/game-disks/{disk['id']}/snapshots").json()
+    assert client.get(f"/api/v1/images/{disk['id']}").json()["snapshot"] == "v2"
+    versions = client.get(f"/api/v1/images/{disk['id']}/snapshots").json()
     assert versions[-1]["comment"] == f"ggNet: added PCI\\{I219}"
-    assert client.get(f"/api/v1/game-disks/{disk['id']}/add-hardware").json()["job"]["snapshot"] == "v2"
+    assert client.get(f"/api/v1/images/{disk['id']}/add-hardware").json()["job"]["snapshot"] == "v2"
 
 
 def test_a_failed_install_changes_nothing(client, host, adder, prov):
     disk = _os_disk(client)
     prov.windows.result = {"ok": False, "devices": [{"instance_id": "x", "ok": False, "error": "no driver"}]}
-    r = client.post(f"/api/v1/game-disks/{disk['id']}/add-hardware",
+    r = client.post(f"/api/v1/images/{disk['id']}/add-hardware",
                     json={"cards": [{"nic": I219, "instance": "3&1&0&FE"}]})
     job = r.json()
     assert "no driver" in job["error"] and job["snapshot"] is None and not job["running"]
-    assert client.get(f"/api/v1/game-disks/{disk['id']}").json()["snapshot"] == "base"
+    assert client.get(f"/api/v1/images/{disk['id']}").json()["snapshot"] == "base"
     assert not host.exists("tank/ggnet/writebacks/win11_ggnet_hwadd")
 
 
 def test_a_vm_failure_is_reported(client, host, adder):
     disk = _os_disk(client)
     adder.vm.problem = "Windows did not finish within 30 minutes"
-    job = client.post(f"/api/v1/game-disks/{disk['id']}/add-hardware",
+    job = client.post(f"/api/v1/images/{disk['id']}/add-hardware",
                       json={"cards": [{"nic": I219, "instance": "3&1&0&FE"}]}).json()
     assert job["error"] == "Windows did not finish within 30 minutes"
     assert not host.exists("tank/ggnet/writebacks/win11_ggnet_hwadd")
 
 
-def test_add_hardware_refuses_bad_cards_and_game_disks(client, host, adder):
+def test_add_hardware_refuses_bad_cards_and_game_images(client, host, adder):
     disk = _os_disk(client)
     for card in ({"nic": "VEN_8086&DEV_15BC", "instance": "3&1&0&FE"}, {"nic": I219, "instance": "a\\b"}):
-        assert client.post(f"/api/v1/game-disks/{disk['id']}/add-hardware", json={"cards": [card]}).status_code == 422
-    assert client.post(f"/api/v1/game-disks/{disk['id']}/add-hardware", json={"cards": []}).status_code == 422
+        assert client.post(f"/api/v1/images/{disk['id']}/add-hardware", json={"cards": [card]}).status_code == 422
+    assert client.post(f"/api/v1/images/{disk['id']}/add-hardware", json={"cards": []}).status_code == 422
     game = _disk(client, "cs2")
-    r = client.post(f"/api/v1/game-disks/{game['id']}/add-hardware",
+    r = client.post(f"/api/v1/images/{game['id']}/add-hardware",
                     json={"cards": [{"nic": I219, "instance": "3&1&0&FE"}]})
     assert r.status_code == 409
-    assert client.get(f"/api/v1/game-disks/{disk['id']}/add-hardware").json() == {
+    assert client.get(f"/api/v1/images/{disk['id']}/add-hardware").json() == {
         "wizard": None, "job": None, "waiting": [], "winpe_ready": False}     # no Windows PE in tests
-    assert client.post(f"/api/v1/game-disks/{disk['id']}/add-hardware/cancel").status_code == 409
+    assert client.post(f"/api/v1/images/{disk['id']}/add-hardware/cancel").status_code == 409

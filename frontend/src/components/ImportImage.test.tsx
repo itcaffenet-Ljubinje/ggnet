@@ -69,7 +69,7 @@ describe("ImportImage", () => {
     expect(onStarted).toHaveBeenCalled();
   });
 
-  it("opens a USB disk read-only, imports a game disk from it, and ejects it", async () => {
+  it("opens a USB disk read-only, imports a game image from it, and ejects it", async () => {
     const mock = stub();
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<ImportImage onClose={vi.fn()} onStarted={vi.fn().mockResolvedValue(undefined)} />);
@@ -81,7 +81,7 @@ describe("ImportImage", () => {
     await userEvent.click(screen.getByRole("button", { name: /^Import$/ }));
     const posts = calls(mock).filter((c) => c.method === "POST");
     expect(posts[0]).toEqual({ url: "/api/v1/imports/usb/sdj1/open", method: "POST", body: undefined });
-    expect(screen.queryByLabelText(/Prepare image/)).toBeNull();     // a game disk is not prepared
+    expect(screen.queryByLabelText(/Prepare image/)).toBeNull();     // a game image is not prepared
     expect(posts[1].body).toEqual({
       name: "games",
       kind: "game",

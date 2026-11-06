@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { GitBranch, HardDrive, Lock, LockOpen } from "lucide-react";
 
-import { api, applyWritebacksChecked, type ApplyChoice, type GameDisk, type Snapshot, type Writeback } from "../api";
+import { api, applyWritebacksChecked, type ApplyChoice, type Image, type Snapshot, type Writeback } from "../api";
 import { formatBytes } from "../format";
 import { useAsyncAction } from "../useAsyncAction";
 import { ErrorBanner } from "./ErrorBanner";
 import { UpdateBadge } from "./UpdateBadge";
 
 interface Props {
-  disk: GameDisk;
+  disk: Image;
   /** Reload disks and machines in the parent after an action. */
   onChanged: () => Promise<void>;
   /** Changes on every parent reload, so the lists follow the host. */
@@ -17,7 +17,7 @@ interface Props {
   summary?: (snapshots: Snapshot[], writebacks: Writeback[]) => ReactNode;
 }
 
-/** Versions (snapshots) and PC writebacks of one game disk, read live from ZFS. */
+/** Versions (snapshots) and PC writebacks of one game image, read live from ZFS. */
 export function DiskDetails({ disk, onChanged, refreshKey, summary }: Props) {
   const { busy, error, setError, run } = useAsyncAction();
   const [snapshots, setSnapshots] = useState<Snapshot[] | null>(null);

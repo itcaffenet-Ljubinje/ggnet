@@ -15,7 +15,7 @@ const OS_IMAGE = disk({ id: 3, name: "win11", kind: "os" });
 describe("MachinesPage", () => {
   it("offers only published disks", () => {
     render(<MachinesPage disks={DISKS} machines={[machine()]} reload={vi.fn()} />);
-    const select = screen.getByLabelText("Game disk for pc01");
+    const select = screen.getByLabelText("Game image for pc01");
     expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["None", "cs2"]);
   });
 
@@ -28,21 +28,21 @@ describe("MachinesPage", () => {
     expect(screen.queryByLabelText(/IQN/i)).toBeNull();
     await userEvent.type(screen.getByLabelText("Name"), "pc01");
     await userEvent.type(screen.getByLabelText("MAC"), "10:ff:e0:66:be:3a");
-    await userEvent.selectOptions(screen.getByLabelText("Game disk"), "1");
+    await userEvent.selectOptions(screen.getByLabelText("Game image"), "1");
     await userEvent.click(screen.getByRole("button", { name: "Add" }));
 
     expect(actions(fetchMock)).toEqual([
       {
         url: "/api/v1/machines",
         method: "POST",
-        body: { name: "pc01", mode: "disk", mac: "10:ff:e0:66:be:3a", game_disk_id: 1, os_disk_id: null },
+        body: { name: "pc01", mode: "disk", mac: "10:ff:e0:66:be:3a", game_image_id: 1, os_image_id: null },
       },
     ]);
     expect(reload).toHaveBeenCalled();
     expect(screen.queryByRole("dialog", { name: "Add machine" })).toBeNull();
   });
 
-  it("a new machine starts with the default OS image and game disk", async () => {
+  it("a new machine starts with the default OS image and game image", async () => {
     const fetchMock = stubFetch(201, machine({ mode: "boot" }));
     const disks = [disk(), disk({ id: 4, name: "valorant", is_default: true }), { ...OS_IMAGE, is_default: true },
       disk({ id: 5, name: "win10", kind: "os" })];
@@ -53,7 +53,7 @@ describe("MachinesPage", () => {
     await userEvent.type(screen.getByLabelText("MAC"), "18:c0:4d:4f:ab:a8");
     await userEvent.selectOptions(screen.getByLabelText("Mode"), "boot");
     await userEvent.click(screen.getByRole("button", { name: "Add" }));
-    expect(actions(fetchMock)[0].body).toMatchObject({ mode: "boot", os_disk_id: 3, game_disk_id: 4 });
+    expect(actions(fetchMock)[0].body).toMatchObject({ mode: "boot", os_image_id: 3, game_image_id: 4 });
   });
 
   it("does not add a machine without a MAC", async () => {
@@ -66,7 +66,7 @@ describe("MachinesPage", () => {
     expect(actions(fetchMock)).toEqual([]);
   });
 
-  it("a boot mode machine gets an OS image and a game disk", async () => {
+  it("a boot mode machine gets an OS image and a game image", async () => {
     const fetchMock = stubFetch(201, machine({ mode: "boot" }));
     render(<MachinesPage disks={[...DISKS, OS_IMAGE]} machines={[]} reload={vi.fn()} />);
 
@@ -75,13 +75,13 @@ describe("MachinesPage", () => {
     await userEvent.type(screen.getByLabelText("Name"), "pc01");
     await userEvent.type(screen.getByLabelText("MAC"), "18:c0:4d:4f:ab:a8");
     await userEvent.selectOptions(screen.getByLabelText("Mode"), "boot");
-    // OS images are offered for the OS, not as game disks.
-    expect(screen.getByLabelText("Game disk")).not.toHaveTextContent("win11");
+    // OS images are offered for the OS, not as game images.
+    expect(screen.getByLabelText("Game image")).not.toHaveTextContent("win11");
     await userEvent.selectOptions(screen.getByLabelText("OS image"), "3");
-    await userEvent.selectOptions(screen.getByLabelText("Game disk"), "1");
+    await userEvent.selectOptions(screen.getByLabelText("Game image"), "1");
     await userEvent.click(screen.getByRole("button", { name: "Add" }));
 
-    expect(actions(fetchMock)[0].body).toMatchObject({ mode: "boot", os_disk_id: 3, game_disk_id: 1 });
+    expect(actions(fetchMock)[0].body).toMatchObject({ mode: "boot", os_image_id: 3, game_image_id: 1 });
   });
 
   it("assigns a disk to an idle machine without asking", async () => {
@@ -89,26 +89,26 @@ describe("MachinesPage", () => {
     const confirm = vi.spyOn(window, "confirm");
     render(<MachinesPage disks={DISKS} machines={[machine()]} reload={vi.fn()} />);
 
-    await userEvent.selectOptions(screen.getByLabelText("Game disk for pc01"), "1");
+    await userEvent.selectOptions(screen.getByLabelText("Game image for pc01"), "1");
     expect(confirm).not.toHaveBeenCalled();
     expect(actions(fetchMock)).toEqual([
-      { url: "/api/v1/machines/1/assign", method: "POST", body: { game_disk_id: 1 } },
+      { url: "/api/v1/machines/1/assign", method: "POST", body: { game_image_id: 1 } },
     ]);
   });
 
   it("asks before removing a disk and stops when cancelled", async () => {
     const fetchMock = stubFetch();
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-    const m = machine({ game_disk_id: 1, status: "provisioned" });
+    const m = machine({ game_image_id: 1, status: "provisioned" });
     render(<MachinesPage disks={DISKS} machines={[m]} reload={vi.fn()} />);
 
-    await userEvent.selectOptions(screen.getByLabelText("Game disk for pc01"), "");
+    await userEvent.selectOptions(screen.getByLabelText("Game image for pc01"), "");
     expect(confirm.mock.calls[0][0]).toContain("powered off");
     expect(actions(fetchMock)).toEqual([]);
   });
 
   it("has no manual reset; writebacks are discarded by the server", () => {
-    const m = machine({ game_disk_id: 1, status: "provisioned" });
+    const m = machine({ game_image_id: 1, status: "provisioned" });
     render(<MachinesPage disks={DISKS} machines={[m]} reload={vi.fn()} />);
     expect(screen.queryByRole("button", { name: "Reset" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Apply writebacks" })).not.toBeInTheDocument();
@@ -116,7 +116,7 @@ describe("MachinesPage", () => {
 
   it("says whether the writeback is clean, in use, pending reset or kept", () => {
     const pc = (id: number, overrides: Partial<Machine>) =>
-      machine({ id, name: `pc0${id}`, game_disk_id: 1, status: "provisioned", ...overrides });
+      machine({ id, name: `pc0${id}`, game_image_id: 1, status: "provisioned", ...overrides });
     render(
       <MachinesPage
         disks={DISKS}
@@ -140,7 +140,7 @@ describe("MachinesPage", () => {
     const now = Date.now();
     const iso = (ms: number) => new Date(now - ms).toISOString();
     const pc = (id: number, overrides: Partial<Machine>) =>
-      machine({ id, name: `pc0${id}`, mode: "boot", game_disk_id: 1, status: "provisioned",
+      machine({ id, name: `pc0${id}`, mode: "boot", game_image_id: 1, status: "provisioned",
                 writeback_dirty: true, session_active: false, ...overrides });
     render(
       <MachinesPage
@@ -159,7 +159,7 @@ describe("MachinesPage", () => {
 
   it("shows how much a PC wrote and flags a large writeback", () => {
     const pc = (id: number, overrides: Partial<Machine>) =>
-      machine({ id, name: `pc0${id}`, game_disk_id: 1, status: "provisioned", ...overrides });
+      machine({ id, name: `pc0${id}`, game_image_id: 1, status: "provisioned", ...overrides });
     render(
       <MachinesPage
         disks={DISKS}
@@ -180,7 +180,7 @@ describe("MachinesPage", () => {
   it("turns keep writeback on without asking", async () => {
     const fetchMock = stubFetch(200, machine());
     const confirm = vi.spyOn(window, "confirm");
-    const m = machine({ game_disk_id: 1, status: "provisioned" });
+    const m = machine({ game_image_id: 1, status: "provisioned" });
     render(<MachinesPage disks={DISKS} machines={[m]} reload={vi.fn()} />);
 
     await userEvent.click(screen.getByLabelText("Keep writeback of pc01"));
@@ -193,7 +193,7 @@ describe("MachinesPage", () => {
   it("asks before turning keep writeback off", async () => {
     const fetchMock = stubFetch();
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-    const m = machine({ game_disk_id: 1, status: "provisioned", keep_writeback: true });
+    const m = machine({ game_image_id: 1, status: "provisioned", keep_writeback: true });
     render(<MachinesPage disks={DISKS} machines={[m]} reload={vi.fn()} />);
 
     await userEvent.click(screen.getByLabelText("Keep writeback of pc01"));
@@ -205,7 +205,7 @@ describe("MachinesPage", () => {
     const fetchMock = stubFetch(200, machine());
     vi.spyOn(window, "confirm").mockReturnValue(true);
     vi.spyOn(window, "prompt").mockReturnValue("");
-    const m = machine({ game_disk_id: 1, status: "provisioned", keep_writeback: true });
+    const m = machine({ game_image_id: 1, status: "provisioned", keep_writeback: true });
     render(<MachinesPage disks={DISKS} machines={[m]} reload={vi.fn()} />);
 
     await userEvent.click(screen.getByRole("button", { name: "Apply writebacks" }));
@@ -218,7 +218,7 @@ describe("MachinesPage", () => {
     const fetchMock = stubFetch(200, machine());
     vi.spyOn(window, "confirm").mockReturnValue(true);
     vi.spyOn(window, "prompt").mockReturnValue(null);
-    const m = machine({ game_disk_id: 1, status: "provisioned", keep_writeback: true });
+    const m = machine({ game_image_id: 1, status: "provisioned", keep_writeback: true });
     render(<MachinesPage disks={DISKS} machines={[m]} reload={vi.fn()} />);
     await userEvent.click(screen.getByRole("button", { name: "Apply writebacks" }));
     expect(actions(fetchMock)).toEqual([]);
@@ -230,8 +230,8 @@ describe("MachinesPage", () => {
     vi.spyOn(window, "prompt").mockReturnValue("  AB drivers  ");
     const m = machine({
       mode: "boot",
-      game_disk_id: 1,
-      os_disk_id: 3,
+      game_image_id: 1,
+      os_image_id: 3,
       status: "provisioned",
       keep_writeback: true,
     });
@@ -262,7 +262,7 @@ describe("MachinesPage", () => {
     vi.stubGlobal("fetch", fetchMock);
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     vi.spyOn(window, "prompt").mockReturnValue("");
-    const m = machine({ mode: "boot", game_disk_id: 1, os_disk_id: 3, status: "provisioned", keep_writeback: true });
+    const m = machine({ mode: "boot", game_image_id: 1, os_image_id: 3, status: "provisioned", keep_writeback: true });
     render(<MachinesPage disks={[...DISKS, OS_IMAGE]} machines={[m]} reload={vi.fn()} />);
 
     await userEvent.selectOptions(screen.getByLabelText("What to apply from pc01"), "os");
@@ -276,11 +276,11 @@ describe("MachinesPage", () => {
     ]);
   });
 
-  it("shows the boot mode PC's OS image and game disk with their versions", () => {
+  it("shows the boot mode PC's OS image and game image with their versions", () => {
     const m = machine({
       mode: "boot",
-      game_disk_id: 1,
-      os_disk_id: 3,
+      game_image_id: 1,
+      os_image_id: 3,
       status: "provisioned",
       clone_snapshot: "tank/ggnet/images/cs2@v2",
       os_clone_snapshot: "tank/ggnet/images/win11@base",
@@ -311,7 +311,7 @@ describe("MachinesPage", () => {
 
   it("cannot apply while the PC is connected", () => {
     const m = machine({
-      game_disk_id: 1,
+      game_image_id: 1,
       status: "provisioned",
       keep_writeback: true,
       session_active: true,
@@ -322,7 +322,7 @@ describe("MachinesPage", () => {
 
   it("shows status and last error", () => {
     const m = machine({
-      game_disk_id: 1,
+      game_image_id: 1,
       status: "error",
       last_error: "Resetting clone failed: dataset is busy",
     });
@@ -334,7 +334,7 @@ describe("MachinesPage", () => {
   it("shows the image status", () => {
     const disks = [disk({ snapshot: "v2" })];
     const on = (overrides: Partial<Machine>) =>
-      machine({ game_disk_id: 1, status: "provisioned", clone_snapshot: "tank/ggnet/images/cs2@v2", ...overrides });
+      machine({ game_image_id: 1, status: "provisioned", clone_snapshot: "tank/ggnet/images/cs2@v2", ...overrides });
     render(
       <MachinesPage
         disks={disks}
@@ -362,7 +362,7 @@ describe("MachinesPage", () => {
       return new Response(JSON.stringify(body), { status: 200 });
     });
     vi.stubGlobal("fetch", mock);
-    const m = machine({ game_disk_id: 1, status: "provisioned", clone_snapshot: "tank/ggnet/images/cs2@base" });
+    const m = machine({ game_image_id: 1, status: "provisioned", clone_snapshot: "tank/ggnet/images/cs2@base" });
     render(<MachinesPage disks={DISKS} machines={[m]} reload={vi.fn().mockResolvedValue(undefined)} />);
 
     const select = screen.getByLabelText("Version for pc01");
@@ -384,7 +384,7 @@ describe("MachinesPage", () => {
     stubFetch(502, { detail: { error: "Creating the iSCSI target failed", machine_id: 1 } });
     render(<MachinesPage disks={DISKS} machines={[machine()]} reload={vi.fn()} />);
 
-    await userEvent.selectOptions(screen.getByLabelText("Game disk for pc01"), "1");
+    await userEvent.selectOptions(screen.getByLabelText("Game image for pc01"), "1");
     expect(await screen.findByRole("alert")).toHaveTextContent("Creating the iSCSI target failed");
   });
 
@@ -413,7 +413,7 @@ describe("MachinesPage", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<MachinesPage disks={[]} machines={[machine()]} reload={vi.fn().mockResolvedValue(undefined)} />);
 
-    await userEvent.selectOptions(screen.getByLabelText("Game disk letter for all Disk Mode PCs"), "F");
+    await userEvent.selectOptions(screen.getByLabelText("Game image letter for all Disk Mode PCs"), "F");
     await userEvent.click(screen.getByRole("button", { name: "Apply to all" }));
     expect(actions(fetchMock)).toEqual([
       { url: "/api/v1/machines/drive-letter", method: "PUT", body: { drive_letter: "F" } },
@@ -490,7 +490,7 @@ describe("MachinesPage", () => {
 
   it("finds machines by name, IP, MAC or disk", async () => {
     const machines = [
-      machine({ id: 1, name: "pc01", mac: "aa:bb:cc:dd:ee:01", game_disk_id: 1, status: "provisioned" }),
+      machine({ id: 1, name: "pc01", mac: "aa:bb:cc:dd:ee:01", game_image_id: 1, status: "provisioned" }),
       machine({ id: 2, name: "vip05", mac: "10:ff:e0:66:be:3a", reported_ip: "192.168.0.25" }),
     ];
     render(<MachinesPage disks={DISKS} machines={machines} reload={vi.fn()} />);
@@ -511,7 +511,7 @@ describe("MachinesPage", () => {
   it("filters online, offline and writeback PCs, with counts", async () => {
     const machines = [
       machine({ id: 1, name: "pc01", last_seen_at: new Date().toISOString() }),
-      machine({ id: 2, name: "pc02", game_disk_id: 1, status: "provisioned", keep_writeback: true }),
+      machine({ id: 2, name: "pc02", game_image_id: 1, status: "provisioned", keep_writeback: true }),
     ];
     render(<MachinesPage disks={DISKS} machines={machines} reload={vi.fn()} />);
 
@@ -565,9 +565,9 @@ describe("MachinesPage", () => {
 
   describe("bulk", () => {
     const three = [
-      machine({ id: 1, name: "pc01", game_disk_id: 1 }),
-      machine({ id: 2, name: "pc02", initiator_iqn: "iqn.x:pc02", game_disk_id: 1 }),
-      machine({ id: 3, name: "pc03", initiator_iqn: "iqn.x:pc03", game_disk_id: 2 }),
+      machine({ id: 1, name: "pc01", game_image_id: 1 }),
+      machine({ id: 2, name: "pc02", initiator_iqn: "iqn.x:pc02", game_image_id: 1 }),
+      machine({ id: 3, name: "pc03", initiator_iqn: "iqn.x:pc03", game_image_id: 2 }),
     ];
 
     it("shows the bar only with a selection, and select all picks every PC", async () => {
@@ -575,7 +575,7 @@ describe("MachinesPage", () => {
       expect(screen.queryByLabelText("Bulk actions")).toBeNull();
       await userEvent.click(screen.getByLabelText("Select all machines"));
       expect(screen.getByLabelText("Bulk actions")).toHaveTextContent("3 of 3 selected");
-      // Different game disks: no shared version to pin.
+      // Different game images: no shared version to pin.
       expect(screen.queryByLabelText("Version for selected")).toBeNull();
       await userEvent.click(screen.getByLabelText("Clear selection"));
       expect(screen.queryByLabelText("Bulk actions")).toBeNull();
@@ -621,14 +621,14 @@ describe("MachinesPage", () => {
       await userEvent.click(screen.getByLabelText("Select pc02"));
       const bar = screen.getByLabelText("Bulk actions");
 
-      await userEvent.selectOptions(within(bar).getByLabelText("Game disk for selected"), "none");
+      await userEvent.selectOptions(within(bar).getByLabelText("Game image for selected"), "none");
       await userEvent.click(within(bar).getAllByRole("button", { name: "Apply" })[0]);
       await within(bar).findByRole("option", { name: "Pin @base" });
       await userEvent.selectOptions(within(bar).getByLabelText("Version for selected"), "base");
       await userEvent.click(within(bar).getAllByRole("button", { name: "Apply" })[1]);
 
       expect(actions(fetchMock)).toEqual([
-        { url: "/api/v1/machines/bulk", method: "POST", body: { machine_ids: [1, 2], action: "assign", game_disk_id: null } },
+        { url: "/api/v1/machines/bulk", method: "POST", body: { machine_ids: [1, 2], action: "assign", game_image_id: null } },
         { url: "/api/v1/machines/bulk", method: "POST", body: { machine_ids: [1, 2], action: "pin", snapshot: "base" } },
       ]);
     });

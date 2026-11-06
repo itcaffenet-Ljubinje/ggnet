@@ -15,7 +15,7 @@ public sealed record Heartbeat(
     string? InitiatorIqn,
     bool IscsiConnected,
     DateTimeOffset? BootedAt = null,
-    string? DriveLetter = null,    // the letter the game disk got, while connected
+    string? DriveLetter = null,    // the letter the game image got, while connected
     Inventory? Inventory = null,   // network and hardware, refreshed every few minutes
     bool Stopping = false,         // last beat as the service stops (Windows shutting down)
     string? Mok = null);           // the ggNet Secure Boot key: MokState, once asked for
@@ -30,8 +30,8 @@ public sealed record AgentConfig(
     string? IscsiTargetIqn,
     string PortalIp,
     int PortalPort,
-    string? GameDisk,
-    string? DriveLetter = null,    // the letter the game disk should get (set per machine in the UI)
+    string? GameImage,
+    string? DriveLetter = null,    // the letter the game image should get (set per machine in the UI)
     string? Command = null,        // "shutdown" | "reboot", sent once
     SecureBootKey? SecureBoot = null);   // set while the server asks PCs to enroll its key
 

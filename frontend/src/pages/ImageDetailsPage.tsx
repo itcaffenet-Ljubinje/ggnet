@@ -1,13 +1,13 @@
 import type { ReactNode } from "react";
 import { ArrowLeft, Gamepad2, GitBranch, HardDrive, Layers, Monitor } from "lucide-react";
 
-import { isImport, needsHardware, type GameDisk, type Machine, type Snapshot, type Writeback } from "../api";
+import { isImport, needsHardware, type Image, type Machine, type Snapshot, type Writeback } from "../api";
 import { DiskDetails } from "../components/DiskDetails";
 import { HardwarePanel } from "../components/HardwarePanel";
 import { formatBytes } from "../format";
 
 interface Props {
-  disk: GameDisk;
+  disk: Image;
   machines: Machine[];
   reload: () => Promise<void>;
   onBack: () => void;
@@ -31,7 +31,7 @@ export function ImageDetailsPage({ disk, machines, reload, onBack, menu, onAddHa
       <div className="details-header">
         <KindIcon size={22} className={`kind-icon ${disk.kind === "os" ? "kind-os" : "kind-game"}`} aria-hidden />
         <h2>{disk.name}</h2>
-        <span className="badge">{disk.kind === "os" ? "OS image" : "Game disk"}</span>
+        <span className="badge">{disk.kind === "os" ? "OS image" : "Game image"}</span>
         {disk.copy_source && !disk.copy_error ? (
           <span className="badge badge-editing">
             {isImport(disk.copy_source) ? "Importing" : "Copying"} {disk.copy_percent ?? 0}%
@@ -77,7 +77,7 @@ export function ImageDetailsPage({ disk, machines, reload, onBack, menu, onAddHa
   );
 }
 
-function Summary({ disk, snapshots, writebacks }: { disk: GameDisk; snapshots: Snapshot[]; writebacks: Writeback[] }) {
+function Summary({ disk, snapshots, writebacks }: { disk: Image; snapshots: Snapshot[]; writebacks: Writeback[] }) {
   const latest = snapshots[snapshots.length - 1];
   const versionsBytes = snapshots.reduce((sum, s) => sum + s.used_bytes, 0);
   const writtenBytes = writebacks.reduce((sum, w) => sum + w.used_bytes, 0);

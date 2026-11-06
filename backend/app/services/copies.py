@@ -1,6 +1,6 @@
 """
 Copy of an image: one version of a master becomes a new, independent master
-(ZFSManager.copy_snapshot), in the background because a large game disk takes
+(ZFSManager.copy_snapshot), in the background because a large game image takes
 a long time.
 
 The new disk is in the database from the start with `copy_source` set and
@@ -24,7 +24,7 @@ from typing import Callable
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.db.models import GameDisk
+from app.db.models import Image
 from app.services.provisioning import Provisioner
 
 logger = logging.getLogger("ggnet.copies")
@@ -40,29 +40,29 @@ class DiskCopier:
         self.background = background     # tests run the copy in the request
         self._threads: dict[int, threading.Thread] = {}
 
-    def start(self, disk_id: int) -> None:
+    def start(self, image_id: int) -> None:
         if not self.background:
-            self.run(disk_id)
+            self.run(image_id)
             return
-        t = threading.Thread(target=self.run, args=(disk_id,), name=f"ggnet-copy-{disk_id}", daemon=True)
-        self._threads[disk_id] = t
+        t = threading.Thread(target=self.run, args=(image_id,), name=f"ggnet-copy-{image_id}", daemon=True)
+        self._threads[image_id] = t
         t.start()
 
-    def running(self, disk_id: int) -> bool:
-        t = self._threads.get(disk_id)
+    def running(self, image_id: int) -> bool:
+        t = self._threads.get(image_id)
         return t is not None and t.is_alive()
 
-    def run(self, disk_id: int) -> None:
+    def run(self, image_id: int) -> None:
         with self.make_session() as db:
-            disk = db.get(GameDisk, disk_id)
+            disk = db.get(Image, image_id)
             if disk is None or not disk.copying:
                 return
             source, target = disk.copy_source, disk.zvol_path
         logger.info("Copying %s to %s", source, target)
         started = time.monotonic()
-        ok = self.prov.copy_disk(source, target, self._progress(disk_id))
+        ok = self.prov.copy_disk(source, target, self._progress(image_id))
         with self.make_session() as db:
-            disk = db.get(GameDisk, disk_id)
+            disk = db.get(Image, image_id)
             if disk is None:
                 return
             if ok:
@@ -73,7 +73,7 @@ class DiskCopier:
                 disk.copy_error = (self.prov.zfs.runner.last_error or "the copy failed")[:500]
             db.commit()
 
-    def _progress(self, disk_id: int) -> Callable[[int, int], None]:
+    def _progress(self, image_id: int) -> Callable[[int, int], None]:
         last = [0.0, -1]
 
         def update(done: int, total: int) -> None:
@@ -83,7 +83,7 @@ class DiskCopier:
                 return
             last[0], last[1] = now, percent
             with self.make_session() as db:
-                disk = db.get(GameDisk, disk_id)
+                disk = db.get(Image, image_id)
                 if disk is not None and disk.copying:
                     disk.copy_percent = percent
                     db.commit()
@@ -94,8 +94,8 @@ class DiskCopier:
 def recover(make_session: sessionmaker[Session], prov: Provisioner) -> None:
     """Copies that were running when ggNet stopped: failed, partial zvol removed."""
     with make_session() as db:
-        for disk in db.scalars(select(GameDisk).where(GameDisk.copy_source.is_not(None),
-                                                      GameDisk.copy_error.is_(None))):
+        for disk in db.scalars(select(Image).where(Image.copy_source.is_not(None),
+                                                      Image.copy_error.is_(None))):
             disk.copy_error = "Interrupted: ggNet stopped while it ran. Remove this disk and start again."
             disk.copy_percent = None
             if prov.zfs.dataset_exists(disk.zvol_path) and not prov.zfs.destroy(disk.zvol_path, recursive=True):

@@ -1,8 +1,8 @@
-import type { GameDisk, Machine } from "../api";
+import type { Image, Machine } from "../api";
 
 interface Props {
   machine: Machine;
-  disk: GameDisk | undefined;
+  disk: Image | undefined;
 }
 
 /** The version part of "pool/ggnet/images/cs2@v2". */

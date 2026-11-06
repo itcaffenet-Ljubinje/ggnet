@@ -34,12 +34,12 @@ def make_session(db_url):
 
 @pytest.fixture
 def disk(client) -> dict:
-    d = client.post("/api/v1/game-disks", json={"name": "cs2", "size_gb": 10}).json()
-    return client.post(f"/api/v1/game-disks/{d['id']}/publish").json()
+    d = client.post("/api/v1/images", json={"name": "cs2", "size_gb": 10}).json()
+    return client.post(f"/api/v1/images/{d['id']}/publish").json()
 
 
 def _machine(client, disk, name="pc01") -> dict:
-    r = client.post("/api/v1/machines", json={"name": name, "game_disk_id": disk["id"]})
+    r = client.post("/api/v1/machines", json={"name": name, "game_image_id": disk["id"]})
     assert r.status_code == 201, r.text
     return r.json()
 
@@ -250,7 +250,7 @@ def test_apply_writebacks_creates_next_version(client, host, disk):
     assert "tank/ggnet/writebacks/pc01@ggnet-apply" not in host.snapshots
     assert host.datasets["tank/ggnet/writebacks/pc01"]["origin"] == f"{MASTER}@v2"
     assert host.datasets["tank/ggnet/writebacks/pc01"]["props"]["sync"] == "standard"
-    assert client.get(f"/api/v1/game-disks/{disk['id']}").json()["snapshot"] == "v2"
+    assert client.get(f"/api/v1/images/{disk['id']}").json()["snapshot"] == "v2"
     assert _get(client, other)["outdated"] is True                 # moves on next reboot
     # The kept writeback itself became the master: read-only, no writeback sync,
     # same name; the old master head is gone and pc02 still runs on @base.
@@ -321,7 +321,7 @@ def test_apply_failure_rolls_back_and_maps_the_clone_again(client, host, disk, s
     assert f"{MASTER}_ggnet_old" not in host.datasets
     assert host.visible(_iqn("pc01")) == ["/dev/zvol/tank/ggnet/writebacks/pc01"]   # PC keeps its disk
     assert host.visible(_iqn("pc02")) == ["/dev/zvol/tank/ggnet/writebacks/pc02"]
-    assert client.get(f"/api/v1/game-disks/{disk['id']}").json()["snapshot"] == "base"
+    assert client.get(f"/api/v1/images/{disk['id']}").json()["snapshot"] == "base"
     assert _get(client, other)["outdated"] is False
 
 
@@ -354,9 +354,9 @@ def test_run_pipe_reports_the_consumer_error_when_the_producer_got_sigpipe():
 # ── Editing a draft master ────────────────────────────────────────────
 
 def test_watcher_tracks_editing_machine_but_never_discards(client, host, prov, make_session):
-    d = client.post("/api/v1/game-disks", json={"name": "draft", "size_gb": 10}).json()
+    d = client.post("/api/v1/images", json={"name": "draft", "size_gb": 10}).json()
     m = client.post("/api/v1/machines", json={"name": "pc01"}).json()
-    assert client.post(f"/api/v1/game-disks/{d['id']}/edit", json={"machine_id": m["id"]}).status_code == 200
+    assert client.post(f"/api/v1/images/{d['id']}/edit", json={"machine_id": m["id"]}).status_code == 200
     calls = len(host.calls)
 
     host.sessions.add(_iqn("pc01"))
@@ -375,7 +375,7 @@ def test_watcher_tracks_editing_machine_but_never_discards(client, host, prov, m
 # ── Images: versions and writebacks ───────────────────────────────────
 
 def _versions(client, disk) -> list[dict]:
-    r = client.get(f"/api/v1/game-disks/{disk['id']}/snapshots")
+    r = client.get(f"/api/v1/images/{disk['id']}/snapshots")
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -396,15 +396,15 @@ def test_snapshots_list_versions_with_sizes_and_users(client, host, disk):
 
 
 def test_draft_disk_has_no_versions(client):
-    d = client.post("/api/v1/game-disks", json={"name": "draft", "size_gb": 10}).json()
-    assert client.get(f"/api/v1/game-disks/{d['id']}/snapshots").json() == []
+    d = client.post("/api/v1/images", json={"name": "draft", "size_gb": 10}).json()
+    assert client.get(f"/api/v1/images/{d['id']}/snapshots").json() == []
 
 
 def test_make_an_older_version_active(client, host, disk):
     m = _keeper(client, disk)
     other = _machine(client, disk, "pc02")
     client.post(f"/api/v1/machines/{m['id']}/apply-writebacks")
-    url = f"/api/v1/game-disks/{disk['id']}/active-snapshot"
+    url = f"/api/v1/images/{disk['id']}/active-snapshot"
 
     r = client.put(url, json={"snapshot": "base"})
     assert r.status_code == 200 and r.json()["snapshot"] == "base"
@@ -418,7 +418,7 @@ def test_delete_a_version(client, host, disk):
     m = _keeper(client, disk)
     other = _machine(client, disk, "pc02")
     client.post(f"/api/v1/machines/{m['id']}/apply-writebacks")
-    url = f"/api/v1/game-disks/{disk['id']}/snapshots"
+    url = f"/api/v1/images/{disk['id']}/snapshots"
 
     r = client.delete(f"{url}/v2")
     assert r.status_code == 409 and "active version" in r.text
@@ -437,7 +437,7 @@ def test_delete_version_failure_keeps_the_hold(client, host, disk):
     m = _keeper(client, disk)
     client.post(f"/api/v1/machines/{m['id']}/apply-writebacks")
     host.fail_on[("zfs", "destroy", f"{MASTER}@base")] = "dataset is busy"
-    r = client.delete(f"/api/v1/game-disks/{disk['id']}/snapshots/base")
+    r = client.delete(f"/api/v1/images/{disk['id']}/snapshots/base")
     assert r.status_code == 502 and "dataset is busy" in r.text
     assert host.snapshots[f"{MASTER}@base"] == {"ggnet:protected"}
 
@@ -445,7 +445,7 @@ def test_delete_version_failure_keeps_the_hold(client, host, disk):
 # ── Merge into base ───────────────────────────────────────────────────
 
 def _merge(client, disk, name):
-    return client.post(f"/api/v1/game-disks/{disk['id']}/snapshots/{name}/merge-into-base")
+    return client.post(f"/api/v1/images/{disk['id']}/snapshots/{name}/merge-into-base")
 
 
 def test_merge_newest_version_into_base(client, host, disk):
@@ -499,11 +499,11 @@ def test_merge_refusals(client, host, disk):
     assert _merge(client, disk, "base").status_code == 409
 
     client.post(f"/api/v1/machines/{other['id']}/discard-writeback")   # pc02 moves to @v2
-    client.put(f"/api/v1/game-disks/{disk['id']}/active-snapshot", json={"snapshot": "base"})
+    client.put(f"/api/v1/images/{disk['id']}/active-snapshot", json={"snapshot": "base"})
     r = _merge(client, disk, "v2")
     assert r.status_code == 409 and "active version" in r.text
 
-    client.put(f"/api/v1/game-disks/{disk['id']}/active-snapshot", json={"snapshot": "v2"})
+    client.put(f"/api/v1/images/{disk['id']}/active-snapshot", json={"snapshot": "v2"})
     client.put(f"/api/v1/machines/{other['id']}/pin", json={"snapshot": "base"})
     r = _merge(client, disk, "v2")
     assert r.status_code == 409 and "pinned on pc02" in r.text
@@ -517,7 +517,7 @@ def test_merge_failure_can_be_run_again(client, host, disk):
     r = _merge(client, disk, "v2")
     assert r.status_code == 502 and "suspended" in r.text
     assert f"{MASTER}@base" not in host.snapshots                       # deleted before the rename
-    assert client.get(f"/api/v1/game-disks/{disk['id']}").json()["snapshot"] == "v2"
+    assert client.get(f"/api/v1/images/{disk['id']}").json()["snapshot"] == "v2"
 
     del host.fail_on[("zfs", "rename", f"{MASTER}@v2")]
     r = _merge(client, disk, "v2")
@@ -532,7 +532,7 @@ def test_writebacks_of_a_disk(client, host, disk):
     host.sizes["tank/ggnet/writebacks/pc02"] = (5 << 20, 1 << 30)
     host.add_dataset("tank/ggnet/writebacks/stray", origin=f"{MASTER}@base")   # no machine record
 
-    r = client.get(f"/api/v1/game-disks/{disk['id']}/writebacks")
+    r = client.get(f"/api/v1/images/{disk['id']}/writebacks")
     assert r.status_code == 200, r.text
     rows = {w["machine_name"]: w for w in r.json()}
     assert set(rows) == {"pc01", "pc02", "stray"}
@@ -617,7 +617,7 @@ def test_pinned_version_is_listed_and_cannot_be_deleted(client, host, disk):
 
     base = _versions(client, disk)[0]
     assert (base["machines"], base["pinned"]) == ([], ["pc02"])
-    r = client.delete(f"/api/v1/game-disks/{disk['id']}/snapshots/base")
+    r = client.delete(f"/api/v1/images/{disk['id']}/snapshots/base")
     assert r.status_code == 409 and "pinned on pc02" in r.text
     assert f"{MASTER}@base" in host.snapshots
 
@@ -629,21 +629,21 @@ def test_switching_the_disk_or_applying_clears_the_pin(client, host, disk):
     assert r.json()["pinned_snapshot"] is None and r.json()["clone_snapshot"] == f"{MASTER}@v3"
 
     client.put(f"/api/v1/machines/{other['id']}/pin", json={"snapshot": "base"})
-    r = client.post(f"/api/v1/machines/{other['id']}/assign", json={"game_disk_id": None})
+    r = client.post(f"/api/v1/machines/{other['id']}/assign", json={"game_image_id": None})
     assert r.json()["pinned_snapshot"] is None
 
 
 def test_writebacks_show_the_pin(client, disk):
     _, other = _two_versions(client, disk)
     client.put(f"/api/v1/machines/{other['id']}/pin", json={"snapshot": "base"})
-    rows = {w["machine_name"]: w for w in client.get(f"/api/v1/game-disks/{disk['id']}/writebacks").json()}
+    rows = {w["machine_name"]: w for w in client.get(f"/api/v1/images/{disk['id']}/writebacks").json()}
     assert (rows["pc02"]["pinned_snapshot"], rows["pc02"]["outdated"]) == ("base", False)
 
 
 # ── Version comments ──────────────────────────────────────────────────
 
 def _by_name(client, disk) -> dict:
-    return {v["name"]: v for v in client.get(f"/api/v1/game-disks/{disk['id']}/snapshots").json()}
+    return {v["name"]: v for v in client.get(f"/api/v1/images/{disk['id']}/snapshots").json()}
 
 
 def test_apply_writebacks_puts_the_comment_on_the_new_version(client, host, disk):
@@ -657,7 +657,7 @@ def test_apply_writebacks_puts_the_comment_on_the_new_version(client, host, disk
 
 
 def test_a_comment_can_be_set_changed_and_removed(client, host, disk):
-    url = f"/api/v1/game-disks/{disk['id']}/snapshots/base/comment"
+    url = f"/api/v1/images/{disk['id']}/snapshots/base/comment"
     r = client.put(url, json={"comment": "first install"})
     assert r.status_code == 200, r.text
     assert (r.json()["name"], r.json()["comment"]) == ("base", "first install")
@@ -666,7 +666,7 @@ def test_a_comment_can_be_set_changed_and_removed(client, host, disk):
 
 
 def test_a_bad_comment_or_version_is_refused(client, disk):
-    base = f"/api/v1/game-disks/{disk['id']}/snapshots"
+    base = f"/api/v1/images/{disk['id']}/snapshots"
     assert client.put(f"{base}/base/comment", json={"comment": "two\nlines"}).status_code == 422
     assert client.put(f"{base}/base/comment", json={"comment": "x" * 201}).status_code == 422
     assert client.put(f"{base}/v9/comment", json={"comment": "nope"}).status_code == 404
@@ -676,7 +676,7 @@ def test_the_comment_stays_when_the_version_is_merged_into_base(client, host, di
     m = _keeper(client, disk)
     client.post(f"/api/v1/machines/{m['id']}/apply-writebacks", json={"comment": "v2 notes"})
     client.put(f"/api/v1/machines/{m['id']}/keep-writeback", json={"enabled": False})
-    r = client.post(f"/api/v1/game-disks/{disk['id']}/snapshots/v2/merge-into-base")
+    r = client.post(f"/api/v1/images/{disk['id']}/snapshots/v2/merge-into-base")
     assert r.status_code == 200, r.text
     assert _by_name(client, disk)["base"]["comment"] == "v2 notes"
 
@@ -687,8 +687,8 @@ def test_a_locked_version_cannot_be_deleted_or_merged_away(client, host, disk):
     m = _keeper(client, disk)
     client.post(f"/api/v1/machines/{m['id']}/apply-writebacks", json={})
     client.put(f"/api/v1/machines/{m['id']}/keep-writeback", json={"enabled": False})
-    client.put(f"/api/v1/game-disks/{disk['id']}/active-snapshot", json={"snapshot": "v2"})
-    base = f"/api/v1/game-disks/{disk['id']}/snapshots"
+    client.put(f"/api/v1/images/{disk['id']}/active-snapshot", json={"snapshot": "v2"})
+    base = f"/api/v1/images/{disk['id']}/snapshots"
     r = client.put(f"{base}/base/lock", json={"locked": True})
     assert (r.status_code, r.json()["locked"]) == (200, True)
     assert _by_name(client, disk)["v2"]["locked"] is False

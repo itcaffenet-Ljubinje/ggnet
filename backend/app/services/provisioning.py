@@ -1,5 +1,5 @@
 """
-Provisioner: host operations for game disks and machines, always in the
+Provisioner: host operations for game images and machines, always in the
 order the rules require. It knows nothing about the database: it takes
 values and returns a result, or raises ProvisioningError with the reason.
 
@@ -248,17 +248,17 @@ class Provisioner:
                 if self.zfs.dataset_exists(spare) and not self.zfs.destroy(spare, recursive=True):
                     logger.warning("Could not remove the spare %s", spare)
 
-    # ── Game disk (master) ────────────────────────────────────────────
+    # ── Game image (master) ────────────────────────────────────────────
 
-    def create_disk(self, name: str, size_gb: int, os_image: bool = False) -> str:
+    def create_disk(self, name: str, size_gb: int, is_os: bool = False) -> str:
         """
         Empty zvol for a master (draft). Returns the ZFS path. An OS image
-        gets 16k blocks for Windows' small random I/O, a game disk 64k for
+        gets 16k blocks for Windows' small random I/O, a game image 64k for
         large game files read in one go; both lz4 and sync=standard (a
         master must survive a host crash). See docs/architecture.md, "Properties".
         """
         path = self.image_path(name)
-        props = dict(volblocksize="16k" if os_image else "64k", compression="lz4", sync="standard")
+        props = dict(volblocksize="16k" if is_os else "64k", compression="lz4", sync="standard")
         with self.lock:
             self._clear()
             if self.zfs.dataset_exists(path):
@@ -514,7 +514,7 @@ class Provisioner:
 
     def start_edit(self, machine_name: str, initiator_iqn: str, zvol_path: str) -> str:
         """
-        Map a DRAFT master as the machine's game disk so it can be filled on
+        Map a DRAFT master as the machine's game image so it can be filled on
         that PC. Returns the target IQN. The caller makes sure the disk is a
         draft and the machine has nothing else mapped.
         """
@@ -542,10 +542,10 @@ class Provisioner:
         os_snapshot_path: str | None = None, os_setup: OsSetup | None = None,
     ) -> ClientDisk:
         """
-        Clone of the game disk snapshot, exposed on the shared iSCSI target
+        Clone of the game image snapshot, exposed on the shared iSCSI target
         as mapped LUN 0 of an ACL for the machine's initiator IQN. With
         `os_snapshot_path` (Boot Mode) the OS image is cloned too and becomes
-        LUN 0, the game disk LUN 1; `os_setup` is written into the OS clone
+        LUN 0, the game image LUN 1; `os_setup` is written into the OS clone
         before it is mapped.
         """
         clones = [(snapshot_path, self.client_path(machine_name))]

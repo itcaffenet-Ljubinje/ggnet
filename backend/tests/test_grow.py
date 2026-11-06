@@ -1,4 +1,4 @@
-"""Growing a disk: PartitionGrower (scripted runner) and POST /game-disks/{id}/grow (FakeHost)."""
+"""Growing a disk: PartitionGrower (scripted runner) and POST /images/{id}/grow (FakeHost)."""
 
 from __future__ import annotations
 
@@ -119,14 +119,14 @@ class FakeGrower:
 
 
 def _disk(client, publish=True) -> dict:
-    d = client.post("/api/v1/game-disks", json={"name": "cs2", "size_gb": 100}).json()
-    return client.post(f"/api/v1/game-disks/{d['id']}/publish").json() if publish else d
+    d = client.post("/api/v1/images", json={"name": "cs2", "size_gb": 100}).json()
+    return client.post(f"/api/v1/images/{d['id']}/publish").json() if publish else d
 
 
 def test_growing_a_published_disk_makes_a_new_active_version(client, host, prov):
     prov.grower = FakeGrower(GrowResult(True, "done"))
     d = _disk(client)
-    r = client.post(f"/api/v1/game-disks/{d['id']}/grow", json={"size_gb": 200})
+    r = client.post(f"/api/v1/images/{d['id']}/grow", json={"size_gb": 200})
     assert r.status_code == 200, r.text
     body = r.json()
     assert (body["version"], body["extended"], body["disk"]["size_gb"], body["disk"]["snapshot"]) == \
@@ -142,7 +142,7 @@ def test_growing_a_published_disk_makes_a_new_active_version(client, host, prov)
 def test_an_os_image_grows_and_says_to_extend_c_in_windows(client, prov):
     prov.grower = FakeGrower(GrowResult(False, "the last partition is not a data partition"))
     d = _disk(client)
-    r = client.post(f"/api/v1/game-disks/{d['id']}/grow", json={"size_gb": 150})
+    r = client.post(f"/api/v1/images/{d['id']}/grow", json={"size_gb": 150})
     assert r.status_code == 200, r.text
     assert r.json()["extended"] is False and "Extend Volume" in r.json()["note"]
 
@@ -150,13 +150,13 @@ def test_an_os_image_grows_and_says_to_extend_c_in_windows(client, prov):
 def test_extend_off_only_grows_the_zvol(client, prov):
     prov.grower = FakeGrower(GrowResult(True, "done"))
     d = _disk(client)
-    r = client.post(f"/api/v1/game-disks/{d['id']}/grow", json={"size_gb": 150, "extend": False})
+    r = client.post(f"/api/v1/images/{d['id']}/grow", json={"size_gb": 150, "extend": False})
     assert r.status_code == 200 and prov.grower.devices == []
 
 
 def test_a_draft_grows_in_place(client, host):
     d = _disk(client, publish=False)
-    r = client.post(f"/api/v1/game-disks/{d['id']}/grow", json={"size_gb": 150})
+    r = client.post(f"/api/v1/images/{d['id']}/grow", json={"size_gb": 150})
     assert r.status_code == 200, r.text
     assert (r.json()["version"], r.json()["disk"]["size_gb"]) == (None, 150)
     assert ["zfs", "set", "volsize=150G", MASTER] in host.calls
@@ -164,7 +164,7 @@ def test_a_draft_grows_in_place(client, host):
 
 def test_a_disk_never_shrinks_and_follows_the_newest_version(client, host):
     d = _disk(client)
-    url = f"/api/v1/game-disks/{d['id']}/grow"
+    url = f"/api/v1/images/{d['id']}/grow"
     assert client.post(url, json={"size_gb": 100}).status_code == 409
     assert client.post(url, json={"size_gb": 50}).status_code == 409
     assert client.post(url, json={"size_gb": 99999}).status_code == 422
@@ -177,8 +177,8 @@ def test_a_failed_resize_changes_nothing(client, host, prov):
     prov.grower = FakeGrower(GrowResult(True, "done"))
     host.fail_on[("zfs", "set", "volsize=200G")] = "out of space"
     d = _disk(client)
-    r = client.post(f"/api/v1/game-disks/{d['id']}/grow", json={"size_gb": 200})
+    r = client.post(f"/api/v1/images/{d['id']}/grow", json={"size_gb": 200})
     assert r.status_code == 502
-    after = client.get(f"/api/v1/game-disks/{d['id']}").json()
+    after = client.get(f"/api/v1/images/{d['id']}").json()
     assert (after["size_gb"], after["snapshot"]) == (100, "base")
     assert "tank/ggnet/writebacks/cs2_ggnet_grow" not in host.datasets

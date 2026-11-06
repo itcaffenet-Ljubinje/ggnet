@@ -57,7 +57,7 @@ export function AgentState({ machine: m, now = Date.now() }: Props) {
         </span>
       )}
       {online && m.link_speed_mbps !== null && m.link_speed_mbps < SLOW_LINK_MBPS && (
-        <span className="badge badge-warn" title="Below 1 Gbit/s: games load slowly from the game disk">
+        <span className="badge badge-warn" title="Below 1 Gbit/s: games load slowly from the game image">
           Link {formatLink(m.link_speed_mbps)}
         </span>
       )}

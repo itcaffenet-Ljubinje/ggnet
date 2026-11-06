@@ -27,7 +27,7 @@ import {
   type BulkKind,
   type BulkResult,
   type Discovered,
-  type GameDisk,
+  type Image,
   type Machine,
   type MachineMode,
   type MachineTraffic,
@@ -42,7 +42,7 @@ import { formatBytes, formatRate } from "../format";
 import { useAsyncAction } from "../useAsyncAction";
 
 interface Props {
-  disks: GameDisk[];
+  disks: Image[];
   machines: Machine[];
   /** Sent / Received / Speed per machine id, read live from LIO. */
   traffic?: Record<number, MachineTraffic>;
@@ -52,9 +52,9 @@ interface Props {
 }
 
 const CLIENT_OFF = "The client PC must be powered off or disconnected.";
-// Game disk letters; A-C are floppy and system drives.
+// Game image letters; A-C are floppy and system drives.
 const LETTERS = "DEFGHIJKLMNOPQRSTUVWXYZ".split("");
-const MOVES_NOW = "Running PCs move the game disk within a minute; close games on them first.";
+const MOVES_NOW = "Running PCs move the game image within a minute; close games on them first.";
 
 type Filter = "all" | "online" | "offline" | "writeback";
 const hasWriteback = (m: Machine) => m.keep_writeback || m.writeback_dirty || m.status === "editing";
@@ -93,11 +93,11 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
     });
     await reload();
   }
-  // Versions of each game disk in use, for the pin drop-down.
+  // Versions of each game image in use, for the pin drop-down.
   const [versions, setVersions] = useState<Record<number, string[]>>({});
 
   const published = disks.filter((d) => d.published && d.kind !== "os");
-  const inUse = published.filter((d) => machines.some((m) => m.game_disk_id === d.id));
+  const inUse = published.filter((d) => machines.some((m) => m.game_image_id === d.id));
   // Re-read when a disk gets a new version (Apply Writebacks, Make active).
   const versionKey = inUse.map((d) => `${d.id}@${d.snapshot}`).join(",");
 
@@ -132,18 +132,18 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
     if (filter === "offline" && isOnline(m)) return false;
     if (filter === "writeback" && !hasWriteback(m)) return false;
     if (!needle) return true;
-    return [m.name, m.mac, m.reported_ip, diskName(m.game_disk_id), diskName(m.os_disk_id ?? null)].some((v) =>
+    return [m.name, m.mac, m.reported_ip, diskName(m.game_image_id), diskName(m.os_image_id ?? null)].some((v) =>
       v?.toLowerCase().includes(needle),
     );
   });
 
   async function assign(m: Machine, value: string) {
     const target = value ? Number(value) : null;
-    if (target === m.game_disk_id && m.status === "provisioned") return;
-    if (m.game_disk_id !== null || m.status !== "idle") {
+    if (target === m.game_image_id && m.status === "provisioned") return;
+    if (m.game_image_id !== null || m.status !== "idle") {
       const msg =
         target === null
-          ? `Remove the game disk from ${m.name}? Everything the client wrote is lost.`
+          ? `Remove the game image from ${m.name}? Everything the client wrote is lost.`
           : `Switch ${m.name} to "${diskName(target)}"? Everything the client wrote is lost.`;
       if (!window.confirm(`${msg}\n\n${CLIENT_OFF}`)) return;
     }
@@ -152,7 +152,7 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
   }
 
   async function setLetter(m: Machine, letter: string) {
-    if (m.iscsi_connected && !window.confirm(`Move the game disk of ${m.name} to ${letter}:?\n\n${MOVES_NOW}`)) {
+    if (m.iscsi_connected && !window.confirm(`Move the game image of ${m.name} to ${letter}:?\n\n${MOVES_NOW}`)) {
       return;
     }
     await run(`letter-${m.id}`, () => api.updateMachine(m.id, { drive_letter: letter }));
@@ -160,7 +160,7 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
   }
 
   async function setLetterAll() {
-    if (!window.confirm(`Set the game disk letter of every Disk Mode PC to ${allLetter}:?\n\n${MOVES_NOW}`)) {
+    if (!window.confirm(`Set the game image letter of every Disk Mode PC to ${allLetter}:?\n\n${MOVES_NOW}`)) {
       return;
     }
     await run("letter-all", () => api.setDriveLetterAll(allLetter));
@@ -198,8 +198,8 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
   async function apply(m: Machine) {
     const what: ApplyKey = m.mode === "boot" ? (applyWhat[m.id] ?? "both") : "game";
     const targets = [
-      ...(what !== "game" ? [`the OS image "${diskName(m.os_disk_id ?? null)}"`] : []),
-      ...(what !== "os" ? [`the game disk "${diskName(m.game_disk_id)}"`] : []),
+      ...(what !== "game" ? [`the OS image "${diskName(m.os_image_id ?? null)}"`] : []),
+      ...(what !== "os" ? [`the game image "${diskName(m.game_image_id)}"`] : []),
     ];
     const kept =
       m.mode === "boot" && what !== "both"
@@ -282,8 +282,8 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
           {machines.some((m) => m.mode === "disk") && (
             <div className="bulk-disk-assign">
               <select
-                aria-label="Game disk letter for all Disk Mode PCs"
-                title="Game disk letter for all Disk Mode PCs"
+                aria-label="Game image letter for all Disk Mode PCs"
+                title="Game image letter for all Disk Mode PCs"
                 value={allLetter}
                 onChange={(e) => setAllLetter(e.target.value)}
               >
@@ -402,7 +402,7 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
 
                     <td>
                       {m.status === "editing" ? (
-                        <span className="badge badge-warn">Editing {diskName(m.editing_disk_id)}</span>
+                        <span className="badge badge-warn">Editing {diskName(m.editing_image_id)}</span>
                       ) : m.mode === "boot" ? (
                         <BootDisks machine={m} diskName={diskName} />
                       ) : (
@@ -422,9 +422,9 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
                               ))}
                             </select>
                             <select
-                              aria-label={`Game disk for ${m.name}`}
-                              className={m.game_disk_id ? "disk-select assigned" : "disk-select"}
-                              value={m.game_disk_id ?? ""}
+                              aria-label={`Game image for ${m.name}`}
+                              className={m.game_image_id ? "disk-select assigned" : "disk-select"}
+                              value={m.game_image_id ?? ""}
                               onChange={(e) => assign(m, e.target.value)}
                               disabled={busy !== null}
                             >
@@ -439,12 +439,12 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
                           {m.reported_drive_letter && m.reported_drive_letter !== m.drive_letter && (
                             <span
                               className="badge badge-warn"
-                              title={`${m.drive_letter}: is taken on this PC, so the game disk got ${m.reported_drive_letter}:`}
+                              title={`${m.drive_letter}: is taken on this PC, so the game image got ${m.reported_drive_letter}:`}
                             >
                               Got {m.reported_drive_letter}:
                             </span>
                           )}
-                          {m.game_disk_id !== null && (
+                          {m.game_image_id !== null && (
                             <div className="image-version">
                               <select
                                 aria-label={`Version for ${m.name}`}
@@ -453,9 +453,9 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
                                 disabled={busy !== null}
                               >
                                 <option value="">
-                                  Follow active (@{disks.find((d) => d.id === m.game_disk_id)?.snapshot})
+                                  Follow active (@{disks.find((d) => d.id === m.game_image_id)?.snapshot})
                                 </option>
-                                {(versions[m.game_disk_id] ?? (m.pinned_snapshot ? [m.pinned_snapshot] : [])).map(
+                                {(versions[m.game_image_id] ?? (m.pinned_snapshot ? [m.pinned_snapshot] : [])).map(
                                   (v) => (
                                     <option key={v} value={v}>
                                       Pin @{v}
@@ -463,7 +463,7 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
                                   ),
                                 )}
                               </select>
-                              <ImageStatus machine={m} disk={disks.find((d) => d.id === m.game_disk_id)} />
+                              <ImageStatus machine={m} disk={disks.find((d) => d.id === m.game_image_id)} />
                             </div>
                           )}
                         </div>
@@ -610,7 +610,7 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
                           onClick={() => remove(m)}
                           disabled={busy !== null || m.status === "editing"}
                           aria-label={`Delete ${m.name}`}
-                          title={m.status === "editing" ? "Finish editing the game disk first" : "Delete"}
+                          title={m.status === "editing" ? "Finish editing the game image first" : "Delete"}
                         >
                           <Trash2 size={14} />
                         </button>
@@ -635,7 +635,7 @@ const FILTERS: [Filter, string][] = [
 ];
 
 interface AddMachineProps {
-  disks: GameDisk[];
+  disks: Image[];
   busy: boolean;
   run: ReturnType<typeof useAsyncAction>["run"];
   reload: () => Promise<void>;
@@ -647,11 +647,11 @@ function AddMachine({ disks, busy, run, reload, onClose }: AddMachineProps) {
   const [name, setName] = useState("");
   const [mac, setMac] = useState("");
   const [mode, setMode] = useState<MachineMode>("disk");
-  const gameDisks = disks.filter((d) => d.published && d.kind !== "os");
+  const gameImages = disks.filter((d) => d.published && d.kind !== "os");
   const osImages = disks.filter((d) => d.published && d.kind === "os");
   // New PCs get the default images (Images → Make default).
-  const [diskId, setDiskId] = useState(preselectDisk(gameDisks));
-  const [osDiskId, setOsDiskId] = useState(preselectDisk(osImages));
+  const [imageId, setImageId] = useState(preselectDisk(gameImages));
+  const [osImageId, setOsImageId] = useState(preselectDisk(osImages));
 
   async function create(e: FormEvent) {
     e.preventDefault();
@@ -660,8 +660,8 @@ function AddMachine({ disks, busy, run, reload, onClose }: AddMachineProps) {
         name: name.trim(),
         mode,
         mac: mac.trim(),
-        game_disk_id: diskId ? Number(diskId) : null,
-        os_disk_id: mode === "boot" && osDiskId ? Number(osDiskId) : null,
+        game_image_id: imageId ? Number(imageId) : null,
+        os_image_id: mode === "boot" && osImageId ? Number(osImageId) : null,
       }),
     );
     await reload();
@@ -714,7 +714,7 @@ function AddMachine({ disks, busy, run, reload, onClose }: AddMachineProps) {
             {mode === "boot" && (
               <div className="form-group">
                 <label htmlFor="add-os">OS image</label>
-                <select id="add-os" value={osDiskId} onChange={(e) => setOsDiskId(e.target.value)} required>
+                <select id="add-os" value={osImageId} onChange={(e) => setOsImageId(e.target.value)} required>
                   <option value="">Choose…</option>
                   {osImages.map((d) => (
                     <option key={d.id} value={d.id}>
@@ -726,15 +726,15 @@ function AddMachine({ disks, busy, run, reload, onClose }: AddMachineProps) {
               </div>
             )}
             <div className="form-group">
-              <label htmlFor="add-disk">Game disk</label>
+              <label htmlFor="add-disk">Game image</label>
               <select
                 id="add-disk"
-                value={diskId}
-                onChange={(e) => setDiskId(e.target.value)}
+                value={imageId}
+                onChange={(e) => setImageId(e.target.value)}
                 required={mode === "boot"}
               >
                 <option value="">None</option>
-                {gameDisks.map((d) => (
+                {gameImages.map((d) => (
                   <option key={d.id} value={d.id}>
                     {d.name}
                   </option>
@@ -782,7 +782,7 @@ function TrafficCell({ traffic: t }: { traffic: MachineTraffic | undefined }) {
 interface BulkDockProps {
   machines: Machine[];
   total: number;
-  disks: GameDisk[];
+  disks: Image[];
   versions: Record<number, string[]>;
   busy: boolean;
   run: (label: string, action: BulkKind, extra?: Parameters<typeof api.bulk>[2], confirmText?: string) => void;
@@ -798,9 +798,9 @@ function BulkDock({ machines, total, disks, versions, busy, run, all, select, cl
   const [version, setVersion] = useState("");
   const [letter, setLetter] = useState("D");
   const n = machines.length;
-  // A version can be pinned on several PCs only when they share a game disk.
-  const diskIds = new Set(machines.map((m) => m.game_disk_id));
-  const shared = diskIds.size === 1 ? [...diskIds][0] : null;
+  // A version can be pinned on several PCs only when they share a game image.
+  const imageIds = new Set(machines.map((m) => m.game_image_id));
+  const shared = imageIds.size === 1 ? [...imageIds][0] : null;
   const sharedVersions = shared !== null ? (versions[shared] ?? []) : [];
 
   return (
@@ -858,8 +858,8 @@ function BulkDock({ machines, total, disks, versions, busy, run, all, select, cl
         </button>
 
         <div className="bulk-disk-assign">
-          <select aria-label="Game disk for selected" value={disk} onChange={(e) => setDisk(e.target.value)}>
-            <option value="">Game disk…</option>
+          <select aria-label="Game image for selected" value={disk} onChange={(e) => setDisk(e.target.value)}>
+            <option value="">Game image…</option>
             <option value="none">None (remove)</option>
             {disks.map((d) => (
               <option key={d.id} value={d.id}>
@@ -873,10 +873,10 @@ function BulkDock({ machines, total, disks, versions, busy, run, all, select, cl
             disabled={busy || !disk}
             onClick={() =>
               run(
-                "Game disk",
+                "Game image",
                 "assign",
-                { game_disk_id: disk === "none" ? null : Number(disk) },
-                `Set the game disk of ${n} PC(s)? Everything they wrote is lost. ${CLIENT_OFF}`,
+                { game_image_id: disk === "none" ? null : Number(disk) },
+                `Set the game image of ${n} PC(s)? Everything they wrote is lost. ${CLIENT_OFF}`,
               )
             }
           >
@@ -1015,19 +1015,19 @@ function SecureBootIcon({ machine: m }: { machine: Machine }) {
   );
 }
 
-/** Boot Mode: the OS image (C:) and game disk (D:) a PC runs, with their versions. */
+/** Boot Mode: the OS image (C:) and game image (D:) a PC runs, with their versions. */
 function BootDisks({ machine: m, diskName }: { machine: Machine; diskName: (id: number | null) => string }) {
   const version = (snap: string | null | undefined) => (snap ? `@${snap.split("@")[1]}` : "");
   return (
     <div className="disk-cell">
       <div className="disk-line">
         <span className="drive-os">C:</span>
-        <span className="code-badge">{diskName(m.os_disk_id ?? null)}</span>
+        <span className="code-badge">{diskName(m.os_image_id ?? null)}</span>
         <span className="muted small">{version(m.os_clone_snapshot)}</span>
       </div>
       <div className="disk-line">
         <span className="drive-game">D:</span>
-        <span className="code-badge">{diskName(m.game_disk_id)}</span>
+        <span className="code-badge">{diskName(m.game_image_id)}</span>
         <span className="muted small">{version(m.clone_snapshot)}</span>
       </div>
     </div>
