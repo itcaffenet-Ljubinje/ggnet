@@ -19,7 +19,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.api.deps import get_disk_copier, get_hardware_adder, get_provisioner
+from app.api.deps import get_disk_copier, get_hardware_adder, get_provisioner, get_update_checker
 from app.api.v1.errors import conflict, host_failed, not_found
 from app.api.v1.schemas import (
     ActiveSnapshot,
@@ -35,6 +35,7 @@ from app.api.v1.schemas import (
     GameDiskOut,
     GameDiskRename,
     HardwareOut,
+    ImageUpdateOut,
     NicSupportOut,
     PrepareImage,
     SnapshotComment,
@@ -73,6 +74,22 @@ def _get(db: Session, disk_id: int) -> GameDisk:
 @router.get("", response_model=list[GameDiskOut])
 def list_disks(db: Session = Depends(get_db)):
     return db.scalars(select(GameDisk).order_by(GameDisk.name)).all()
+
+
+@router.get("/updates", response_model=list[ImageUpdateOut])
+def image_updates(db: Session = Depends(get_db), checker=Depends(get_update_checker)):
+    """
+    Whether each OS image's active version has an unfinished Windows update
+    (app.services.update_check); a version not checked yet is checked in the
+    background ("checking").
+    """
+    out = []
+    for disk in db.scalars(select(GameDisk).where(GameDisk.kind == DiskKind.OS).order_by(GameDisk.name)):
+        if not disk.published:
+            continue
+        state, signs, error = checker.state(disk.zvol_path, disk.snapshot)
+        out.append(ImageUpdateOut(disk_id=disk.id, snapshot=disk.snapshot, state=state, signs=signs, error=error))
+    return out
 
 
 @router.get("/{disk_id}", response_model=GameDiskOut)
@@ -561,6 +578,7 @@ def list_snapshots(
             pinned=sorted(m.name for m in disk.machines if m.pinned_snapshot == v["name"]),
             comment=v.get("comment"),
             locked=bool(v.get("locked")),
+            update=v.get("update") if disk.kind is DiskKind.OS else None,
         )
         for v in _versions(prov, disk)
     ]

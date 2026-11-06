@@ -77,6 +77,22 @@ logger = logging.getLogger("ggnet.windows")
 DEFAULT_RUN_DIR = Path("/run/ggnet/windows")
 HIVE = ("Windows", "System32", "config", "SYSTEM")
 SOFTWARE_HIVE = ("Windows", "System32", "config", "SOFTWARE")
+# A Windows update installed but not finished: Windows finishes it at the next
+# boot ("Working on updates", TiWorker). In an image version every PC would
+# redo it on every boot, as its writeback is reset. Each sign: (name, where).
+PENDING_XML = ("Windows", "WinSxS", "pending.xml")
+UPDATE_KEYS = (
+    ("RebootPending", "\\Microsoft\\Windows\\CurrentVersion\\Component Based Servicing"),
+    ("PackagesPending", "\\Microsoft\\Windows\\CurrentVersion\\Component Based Servicing"),
+    ("RebootRequired", "\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update"),
+)
+# The names of a hive key's subkeys (hivexregedit would export the whole tree);
+# a missing key prints a tab, which no key name has.
+_HIVE_CHILDREN = (
+    "use Win::Hivex; my $h = Win::Hivex->open($ARGV[0]); my $n = $h->root;"
+    " for my $p (grep { length } split /\\\\/, $ARGV[1]) { $n = $h->node_get_child($n, $p) or do { print \"\\t\"; exit 0 }; }"
+    " print $h->node_name($_), \"\\n\" for $h->node_children($n);"
+)
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,14}$")
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 _CURRENT_RE = re.compile(r'^"Current"=dword:([0-9a-fA-F]{8})\s*$', re.M)
@@ -822,6 +838,51 @@ class WindowsSetup:
             problem = self._on_windows(device, "nic-list", work, readonly=True)
         except Exception as e:
             logger.exception("Listing the network cards of %s failed", device)
+            return f"unexpected error: {e}"
+        return problem or found
+
+    def hive_children(self, hive: Path, key: str) -> list[str] | None:
+        """The subkeys of `key` in a hive file; [] when the key is missing, None when unreadable."""
+        ok, out, _ = self._run(["perl", "-e", _HIVE_CHILDREN, str(hive), key], quiet=True)
+        if not ok:
+            return None
+        return [line for line in out.splitlines() if line and "\t" not in line]
+
+    def update_signs(self, root: Path) -> list[str] | str:
+        """
+        Signs of an unfinished Windows update in the mounted Windows at `root`
+        (PENDING_XML, UPDATE_KEYS); [] when there is none, a string when the
+        SOFTWARE hive cannot be read.
+        """
+        signs = ["pending.xml"] if _find(root, PENDING_XML) is not None else []
+        software = _find(root, SOFTWARE_HIVE)
+        if software is None:
+            return "no SOFTWARE hive in the image"
+        children: dict[str, list[str] | None] = {}
+        for name, key in UPDATE_KEYS:
+            if key not in children:
+                children[key] = self.hive_children(software, key)
+            if children[key] is None:
+                return f"the SOFTWARE hive cannot be read ({key})"
+            if any(c.lower() == name.lower() for c in children[key] or []):
+                signs.append(name)
+        return signs
+
+    def pending_update(self, device: str) -> list[str] | str:
+        """update_signs() of the Windows on `device`, or why it cannot be read. Mounted read-only."""
+        found: list[str] = []
+
+        def work(root: Path, hive: Path) -> str | None:
+            signs = self.update_signs(root)
+            if isinstance(signs, str):
+                return signs
+            found.extend(signs)
+            return None
+
+        try:
+            problem = self._on_windows(device, "update-check", work, readonly=True)
+        except Exception as e:
+            logger.exception("Checking %s for an unfinished Windows update failed", device)
             return f"unexpected error: {e}"
         return problem or found
 

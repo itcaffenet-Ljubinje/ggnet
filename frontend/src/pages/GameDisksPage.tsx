@@ -32,6 +32,7 @@ import { EditImage } from "../components/EditImage";
 import { ImportImage } from "../components/ImportImage";
 import { AddHardwareWizard } from "../components/AddHardwareWizard";
 import { PrepareImage } from "../components/PrepareImage";
+import { UpdateBadge, useImageUpdates } from "../components/UpdateBadge";
 import { ErrorBanner } from "../components/ErrorBanner";
 import { useAsyncAction } from "../useAsyncAction";
 import { ImageDetailsPage } from "./ImageDetailsPage";
@@ -47,6 +48,7 @@ interface Props {
 
 export function GameDisksPage({ disks, machines, reload }: Props) {
   const { busy, error, setError, run } = useAsyncAction();
+  const updates = useImageUpdates(disks);
   const [name, setName] = useState("");
   const [sizeGb, setSizeGb] = useState("100");
   const [kind, setKind] = useState<DiskKind>("game");
@@ -342,7 +344,12 @@ export function GameDisksPage({ disks, machines, reload }: Props) {
                             Needs hardware
                           </span>
                         ) : d.published ? (
-                          <span className="badge badge-provisioned">Published @{d.snapshot}</span>
+                          <>
+                            <span className="badge badge-provisioned">Published @{d.snapshot}</span>
+                            {updates[d.id]?.state === "pending" && updates[d.id].snapshot === d.snapshot && (
+                              <> <UpdateBadge signs={updates[d.id].signs} /></>
+                            )}
+                          </>
                         ) : d.editor_id !== null ? (
                           <span className="badge badge-editing">
                             Editing on {machine(d.editor_id)?.name ?? `#${d.editor_id}`}

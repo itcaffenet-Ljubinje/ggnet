@@ -56,6 +56,18 @@ def get_hardware_adder(prov: Provisioner = Depends(get_provisioner)):
     return _hardware_adder(prov)
 
 
+@lru_cache(maxsize=4)
+def _update_checker(prov: Provisioner):
+    from app.services.update_check import UpdateChecker
+
+    return UpdateChecker(prov)
+
+
+def get_update_checker(prov: Provisioner = Depends(get_provisioner)):
+    """Checks OS image versions for an unfinished Windows update in the background."""
+    return _update_checker(prov)
+
+
 @lru_cache(maxsize=1)
 def get_driver_library():
     """Signed network driver packages for the hardware scan's Windows PE ([paths] winpe_drivers)."""

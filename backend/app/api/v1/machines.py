@@ -626,6 +626,22 @@ def apply_writebacks(
     if session:
         conflict(f"'{machine.name}' is still connected; shut it down first")
 
+    # An unfinished Windows update would be redone by every PC at every boot.
+    update: list[str] | None = None
+    if boot and body.os:
+        found = prov.writeback_update(machine.os_clone_zvol)
+        if isinstance(found, str):
+            logger.warning("Cannot check '%s' for an unfinished Windows update: %s", machine.name, found)
+        else:
+            update = found
+        if update and not body.ignore_update:
+            raise HTTPException(409, detail={
+                "error": f"Windows on '{machine.name}' has not finished an update ({', '.join(update)}). "
+                         "Start the PC once more and let Windows finish it, shut it down, then apply; "
+                         "otherwise every PC redoes the update at every boot.",
+                "update_pending": update,
+            })
+
     applies = [WritebackApply(clone, disk.zvol_path, disk.snapshot) for disk, clone in targets]
     try:
         news = prov.apply_writebacks(machine.name, machine.initiator_iqn, applies,
@@ -639,6 +655,8 @@ def apply_writebacks(
         host_failed(str(e), machine_id=machine.id)
     for (disk, _), new in zip(targets, news):
         disk.snapshot = new
+        if update is not None and disk.kind is DiskKind.OS:
+            prov.zfs.set_snapshot_update(f"{disk.zvol_path}@{new}", update)
         if body.comment:
             try:
                 prov.set_comment(disk.zvol_path, new, body.comment)

@@ -36,6 +36,10 @@ COMMENT_PROP = "ggnet:comment"
 COMMENT_MAX = 200
 # A locked version is never deleted, by retention or by hand, until unlocked.
 LOCK_PROP = "ggnet:locked"
+# An OS image version's unfinished Windows update, checked once per version
+# (a version never changes): "none", or the signs found, comma-separated
+# (app.windows_setup.update_signs). Unset: not checked yet.
+UPDATE_PROP = "ggnet:update"
 
 # Datasets under root_dataset that ggNet creates and manages.
 _CHILD_KEYS = ("images", "writebacks", "snapshots", "iscsi_targets", "imports")
@@ -69,6 +73,16 @@ class ZFSLayout:
         if missing:
             raise ValueError(f"[storage] is missing: {', '.join(missing)}")
         return cls(**{k: str(storage[k]) for k in keys if storage.get(k)})
+
+
+_UPDATE_RE = re.compile(r"^[A-Za-z.]{1,40}(,[A-Za-z.]{1,40}){0,9}$")
+
+
+def update_state(value: str) -> list[str] | None:
+    """UPDATE_PROP's value as signs: [] for "none", None when unset ("-", "")."""
+    if value in ("", "-"):
+        return None
+    return [] if value == "none" else [v for v in value.split(",") if v]
 
 
 def valid_comment(comment: str) -> bool:
@@ -679,14 +693,14 @@ class ZFSManager:
         """
         Snapshots of one master, oldest first: name (after '@'), creation
         (Unix time), used and referenced (bytes), the clones made from it and
-        its comment (None when unset) and whether it is locked. None if they
-        cannot be listed.
+        its comment (None when unset), whether it is locked and its unfinished
+        Windows update (update_state()). None if they cannot be listed.
         """
         if not self._is_managed(dataset, allow_snapshot=False):
             return None
         ok, out, _ = self._run([
             "zfs", "list", "-H", "-p", "-t", "snapshot",
-            "-o", f"name,creation,used,refer,clones,{COMMENT_PROP},{LOCK_PROP}",
+            "-o", f"name,creation,used,refer,clones,{COMMENT_PROP},{LOCK_PROP},{UPDATE_PROP}",
             "-s", "createtxg", "-d", "1", dataset,
         ])
         if not ok:
@@ -694,7 +708,7 @@ class ZFSManager:
         snaps = []
         for line in out.splitlines():
             parts = line.split("\t")
-            if len(parts) != 7 or "@" not in parts[0]:
+            if len(parts) != 8 or "@" not in parts[0]:
                 continue
             snaps.append({
                 "name": parts[0].partition("@")[2],
@@ -704,6 +718,7 @@ class ZFSManager:
                 "clones": [c for c in parts[4].split(",") if c and c != "-"],
                 "comment": None if parts[5] in ("", "-") else parts[5],
                 "locked": parts[6] == "on",
+                "update": update_state(parts[7]),
             })
         return snaps
 
@@ -717,6 +732,22 @@ class ZFSManager:
         if not ok:
             logger.error("Setting the comment of %s failed: %s", snapshot, err)
         return ok
+
+    def set_snapshot_update(self, snapshot: str, signs: list[str]) -> bool:
+        """Record a version's unfinished Windows update (no signs: none)."""
+        value = ",".join(signs) or "none"
+        if "@" not in snapshot or not self._is_managed(snapshot) or not _UPDATE_RE.match(value):
+            return False
+        ok, _, err = self._run(["zfs", "set", f"{UPDATE_PROP}={value}", snapshot])
+        if not ok:
+            logger.error("Recording the update state of %s failed: %s", snapshot, err)
+        return ok
+
+    def snapshot_update(self, snapshot: str) -> list[str] | None:
+        """A version's update_state(); None when not checked yet or unreadable."""
+        if "@" not in snapshot:
+            return None
+        return update_state(self.get_property(snapshot, UPDATE_PROP))
 
     def set_snapshot_lock(self, snapshot: str, locked: bool) -> bool:
         """Lock a version against deletion, or unlock it."""

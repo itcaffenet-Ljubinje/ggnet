@@ -483,6 +483,12 @@ class FakeWindows:
         # Installed under another board's instance only: that PC needs Add new hardware.
         return {(n, i): "missing" if i == "6&95d5d6a&0&0000020A" else known.get(n, "missing") for n, i in nics}
 
+    update: list[str] = []
+
+    def pending_update(self, device):
+        self.update_checked = getattr(self, "update_checked", []) + [device]
+        return list(self.update)
+
     def prepare_image(self, device, prep, label="image"):
         # Whether the clone was already made a version when it was prepared.
         promoted = any(c[:2] == ["zfs", "promote"] for c in self.host.calls)
@@ -648,6 +654,37 @@ def test_applying_the_os_writeback_prepares_it_first(client, host, disks, window
     [(device, prep, promoted)] = windows.prepared
     assert device == f"/dev/zvol/{OS_CLONE}"
     assert promoted is False                   # prepared before it became the version
+
+
+def test_an_unfinished_windows_update_stops_apply_until_the_admin_overrides(client, host, disks, windows):
+    m = _boot_machine(client, disks)
+    client.put(f"/api/v1/machines/{m['id']}/keep-writeback", json={"enabled": True})
+    windows.update = ["pending.xml", "RebootPending"]
+    r = client.post(f"/api/v1/machines/{m['id']}/apply-writebacks", json={"os": True, "game": False})
+    assert r.status_code == 409
+    assert r.json()["detail"]["update_pending"] == ["pending.xml", "RebootPending"]
+    assert "Start the PC once more" in r.json()["detail"]["error"]
+    assert windows.update_checked == [f"/dev/zvol/{OS_CLONE}"]
+    assert getattr(windows, "prepared", []) == []                     # nothing applied
+
+    r = client.post(f"/api/v1/machines/{m['id']}/apply-writebacks",
+                    json={"os": True, "game": False, "ignore_update": True})
+    assert r.status_code == 200, r.text
+    assert host.snap_props["tank/ggnet/images/win11@v2"]["ggnet:update"] == "pending.xml,RebootPending"
+    updates = client.get("/api/v1/game-disks/updates").json()
+    assert [(u["snapshot"], u["state"], u["signs"]) for u in updates] == [
+        ("v2", "pending", ["pending.xml", "RebootPending"])]
+    versions = client.get(f"/api/v1/game-disks/{disks[0]['id']}/snapshots").json()
+    assert [v["update"] for v in versions] == [None, ["pending.xml", "RebootPending"]]
+
+
+def test_a_finished_update_is_recorded_on_the_new_version(client, host, disks, windows):
+    m = _boot_machine(client, disks)
+    client.put(f"/api/v1/machines/{m['id']}/keep-writeback", json={"enabled": True})
+    r = client.post(f"/api/v1/machines/{m['id']}/apply-writebacks", json={"os": True, "game": True})
+    assert r.status_code == 200, r.text
+    assert host.snap_props["tank/ggnet/images/win11@v2"]["ggnet:update"] == "none"
+    assert "ggnet:update" not in host.snap_props.get("tank/ggnet/images/cs2@v2", {})   # game disk
 
 
 def test_applying_only_the_game_writeback_prepares_nothing(client, host, disks, windows):

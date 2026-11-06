@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { GitBranch, HardDrive, Lock, LockOpen } from "lucide-react";
 
-import { api, type ApplyChoice, type GameDisk, type Snapshot, type Writeback } from "../api";
+import { api, applyWritebacksChecked, type ApplyChoice, type GameDisk, type Snapshot, type Writeback } from "../api";
 import { formatBytes } from "../format";
 import { useAsyncAction } from "../useAsyncAction";
 import { ErrorBanner } from "./ErrorBanner";
+import { UpdateBadge } from "./UpdateBadge";
 
 interface Props {
   disk: GameDisk;
@@ -113,7 +114,7 @@ export function DiskDetails({ disk, onChanged, refreshKey, summary }: Props) {
       ...(comment.trim() ? { comment: comment.trim() } : {}),
     };
     const id = w.machine_id;
-    act(`apply-${id}`, () => api.applyWritebacks(id, choice));
+    act(`apply-${id}`, () => applyWritebacksChecked(id, choice));
   }
 
   function discard(w: Writeback) {
@@ -169,6 +170,7 @@ export function DiskDetails({ disk, onChanged, refreshKey, summary }: Props) {
                       </span>
                     )}
                     {s.active && <span className="badge badge-provisioned">Active</span>}
+                    {s.update && s.update.length > 0 && <UpdateBadge signs={s.update} />}
                     {i === snapshots.length - 1 && (
                       <span className="badge badge-idle" title="The newest version: only PCs on it can apply writebacks">
                         Latest
