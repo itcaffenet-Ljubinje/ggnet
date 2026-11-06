@@ -212,6 +212,8 @@ export async function uploadDriverPackage(
 export interface ApplyChoice {
   os?: boolean;
   game?: boolean;
+  /** Apply the OS writeback although Windows has not finished an update in it. */
+  ignore_update?: boolean;
   /** Set on every version Apply Writebacks makes. */
   comment?: string;
 }
@@ -229,6 +231,24 @@ export interface Snapshot {
   comment?: string | null;
   /** Never deleted (automatically or by hand) until unlocked. */
   locked?: boolean;
+  /** OS images: signs of an unfinished Windows update ([]: none); null when not checked. */
+  update?: string[] | null;
+}
+
+/** Whether an OS image's active version has an unfinished Windows update. */
+export interface ImageUpdate {
+  disk_id: number;
+  snapshot: string;
+  state: "none" | "pending" | "checking" | "unknown";
+  signs: string[];
+  error: string | null;
+}
+
+/** The signs of an unfinished Windows update in an Apply Writebacks refusal (409). */
+export function updatePending(e: unknown): string[] | null {
+  if (!(e instanceof ApiError) || e.status !== 409) return null;
+  const detail = (e.data as { detail?: { update_pending?: unknown } } | null)?.detail;
+  return Array.isArray(detail?.update_pending) ? (detail.update_pending as string[]) : null;
 }
 
 /** A PC's writeback (clone) of a game disk. */
@@ -538,6 +558,8 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** The response body, e.g. {detail: {error, update_pending}}. */
+    readonly data: unknown = null,
   ) {
     super(message);
     this.name = "ApiError";
@@ -581,7 +603,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     // The session ended (expired, password changed, signed out elsewhere): show the sign-in.
     window.dispatchEvent(new Event(SIGNED_OUT));
   }
-  if (!res.ok) throw new ApiError(res.status, errorMessage(res.status, data));
+  if (!res.ok) throw new ApiError(res.status, errorMessage(res.status, data), data);
   return data as T;
 }
 
@@ -684,6 +706,7 @@ export const api = {
     request<GameDisk>("POST", `/v1/game-disks/${id}/snapshots/${encodeURIComponent(name)}/merge-into-base`),
   listWritebacks: (id: number) => request<Writeback[]>("GET", `/v1/game-disks/${id}/writebacks`),
 
+  getImageUpdates: () => request<ImageUpdate[]>("GET", "/v1/game-disks/updates"),
   getAgentPackage: () => request<AgentPackage>("GET", "/v1/agent/package"),
   getWinPe: () => request<WinPe>("GET", "/v1/winpe"),
   winPeFromIso: (path: string) => request<WinPe>("POST", "/v1/winpe/from-iso", { path }),
@@ -741,3 +764,19 @@ export const api = {
     request<Machine>("POST", `/v1/discovery/${id}/claim`, body),
   ignoreDiscovered: (id: number) => request<Discovered>("POST", `/v1/discovery/${id}/ignore`),
 };
+
+/**
+ * Apply Writebacks; when Windows has not finished an update in the OS
+ * writeback, the server refuses and the admin decides: restart the PC once
+ * more (recommended) or apply anyway. Null when the admin did not apply.
+ */
+export async function applyWritebacksChecked(id: number, choice?: ApplyChoice): Promise<Machine | null> {
+  try {
+    return await api.applyWritebacks(id, choice);
+  } catch (e) {
+    if (updatePending(e) === null) throw e;
+    const msg = `${(e as Error).message}\n\nApply anyway? Not recommended.`;
+    if (!window.confirm(msg)) return null;
+    return api.applyWritebacks(id, { ...choice, ignore_update: true });
+  }
+}

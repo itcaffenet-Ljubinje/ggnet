@@ -322,6 +322,18 @@ class SnapshotOut(BaseModel):
     pinned: list[str]         # PCs pinned to it (they move to it at their next reboot)
     comment: str | None = None   # who, when, what changed
     locked: bool = False         # never deleted (retention or by hand) until unlocked
+    # OS images: signs of an unfinished Windows update ([]: none); None: not checked.
+    update: list[str] | None = None
+
+
+class ImageUpdateOut(BaseModel):
+    """Whether an OS image's active version has an unfinished Windows update."""
+
+    disk_id: int
+    snapshot: str
+    state: str                   # none, pending, checking, unknown
+    signs: list[str] = []
+    error: str | None = None     # why it is unknown
 
 
 def _comment(v: str | None) -> str | None:
@@ -461,6 +473,8 @@ class ApplyWritebacks(BaseModel):
     os: bool = True
     game: bool = True
     comment: str | None = None   # set on every version this makes
+    # Apply the OS writeback even though Windows has not finished an update in it.
+    ignore_update: bool = False
 
     @field_validator("comment")
     @classmethod

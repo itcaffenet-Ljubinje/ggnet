@@ -21,6 +21,7 @@ import {
 
 import {
   api,
+  applyWritebacksChecked,
   type ApplyChoice,
   type BulkKind,
   type BulkResult,
@@ -216,7 +217,7 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
       ...(comment.trim() ? { comment: comment.trim() } : {}),
     };
     await run(`apply-${m.id}`, () =>
-      api.applyWritebacks(m.id, Object.keys(choice).length > 0 ? choice : undefined),
+      applyWritebacksChecked(m.id, Object.keys(choice).length > 0 ? choice : undefined),
     );
     await reload();
   }

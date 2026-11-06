@@ -236,6 +236,32 @@ describe("MachinesPage", () => {
     ]);
   });
 
+  it("asks before applying an OS writeback whose Windows update is unfinished", async () => {
+    const refused = {
+      detail: { error: "Windows on 'pc01' has not finished an update (pending.xml).", update_pending: ["pending.xml"] },
+    };
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) =>
+      JSON.parse(String(init?.body ?? "{}")).ignore_update
+        ? new Response(JSON.stringify(machine()), { status: 200 })
+        : new Response(JSON.stringify(refused), { status: 409 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.spyOn(window, "prompt").mockReturnValue("");
+    const m = machine({ mode: "boot", game_disk_id: 1, os_disk_id: 3, status: "provisioned", keep_writeback: true });
+    render(<MachinesPage disks={[...DISKS, OS_IMAGE]} machines={[m]} reload={vi.fn()} />);
+
+    await userEvent.selectOptions(screen.getByLabelText("What to apply from pc01"), "os");
+    await userEvent.click(screen.getByRole("button", { name: "Apply writebacks" }));
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(2));
+    expect(confirm.mock.calls[1][0]).toContain("has not finished an update");
+    expect(confirm.mock.calls[1][0]).toContain("Apply anyway?");
+    expect(actions(fetchMock).map((c) => c.body)).toEqual([
+      { os: true, game: false },
+      { os: true, game: false, ignore_update: true },
+    ]);
+  });
+
   it("shows the boot mode PC's OS image and game disk with their versions", () => {
     const m = machine({
       mode: "boot",

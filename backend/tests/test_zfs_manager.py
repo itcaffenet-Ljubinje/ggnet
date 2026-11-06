@@ -313,16 +313,30 @@ def test_list_clients_parses_output_and_skips_parent(zfs, runner):
 
 def test_snapshot_details_parses_bytes_clones_and_comment(zfs, runner):
     runner.on("zfs", "list", result=(True,
-        f"{MASTER}@base\t1760000000\t4096\t1073741824\t{CLIENT},tank/ggnet/writebacks/pc02\t-\ton\n"
-        f"{MASTER}@v2\t1760003600\t0\t2147483648\t-\tAB 18.10. Warzone update\t-", ""))
+        f"{MASTER}@base\t1760000000\t4096\t1073741824\t{CLIENT},tank/ggnet/writebacks/pc02\t-\ton\tnone\n"
+        f"{MASTER}@v2\t1760003600\t0\t2147483648\t-\tAB 18.10. Warzone update\t-\t-\n"
+        f"{MASTER}@v3\t1760007200\t0\t2147483648\t-\t-\t-\tpending.xml,RebootPending", ""))
     assert zfs.snapshot_details(MASTER) == [
         {"name": "base", "creation": 1760000000, "used": 4096, "referenced": 1073741824,
-         "clones": [CLIENT, "tank/ggnet/writebacks/pc02"], "comment": None, "locked": True},
+         "clones": [CLIENT, "tank/ggnet/writebacks/pc02"], "comment": None, "locked": True, "update": []},
         {"name": "v2", "creation": 1760003600, "used": 0, "referenced": 2147483648, "clones": [],
-         "comment": "AB 18.10. Warzone update", "locked": False},
+         "comment": "AB 18.10. Warzone update", "locked": False, "update": None},
+        {"name": "v3", "creation": 1760007200, "used": 0, "referenced": 2147483648, "clones": [],
+         "comment": None, "locked": False, "update": ["pending.xml", "RebootPending"]},
     ]
     assert runner.calls[0][-3:] == ["-d", "1", MASTER]
-    assert "name,creation,used,refer,clones,ggnet:comment,ggnet:locked" in runner.calls[0]
+    assert "name,creation,used,refer,clones,ggnet:comment,ggnet:locked,ggnet:update" in runner.calls[0]
+
+
+def test_snapshot_update_state_is_recorded(zfs, runner):
+    assert zfs.set_snapshot_update(f"{MASTER}@v2", [])
+    assert zfs.set_snapshot_update(f"{MASTER}@v3", ["pending.xml", "RebootPending"])
+    assert not zfs.set_snapshot_update(MASTER, [])
+    assert not zfs.set_snapshot_update(f"{MASTER}@v2", ["bad sign; rm"])
+    assert runner.calls == [
+        ["zfs", "set", "ggnet:update=none", f"{MASTER}@v2"],
+        ["zfs", "set", "ggnet:update=pending.xml,RebootPending", f"{MASTER}@v3"],
+    ]
 
 
 def test_snapshot_lock_set_and_removed(zfs, runner):

@@ -296,7 +296,7 @@ describe("GameDisksPage", () => {
     await userEvent.keyboard("{Escape}");
     await menu("win11", "Prepare image");
     const dialog = screen.getByRole("dialog", { name: "Prepare win11" });
-    expect(calls(fetchMock)).toEqual([]);                      // nothing until confirmed
+    expect(calls(fetchMock).filter((c) => c.method !== "GET")).toEqual([]);   // nothing until confirmed
     await userEvent.click(within(dialog).getByLabelText("Turn off Microsoft Defender"));
     await userEvent.click(within(dialog).getByLabelText(/Turn off background services/));   // on by default
     await userEvent.click(within(dialog).getByRole("button", { name: /Prepare image/ }));
@@ -315,9 +315,32 @@ describe("GameDisksPage", () => {
     const reload = vi.fn().mockResolvedValue(undefined);
     render(<GameDisksPage disks={[disk({ id: 3, name: "win11", kind: "os" })]} machines={[]} reload={reload} />);
     await menu("win11", "Check network cards");
-    expect(calls(fetchMock)).toEqual([{ url: "/api/v1/game-disks/3/check-hardware", method: "POST", body: undefined }]);
+    expect(calls(fetchMock).filter((c) => c.method !== "GET")).toEqual([
+      { url: "/api/v1/game-disks/3/check-hardware", method: "POST", body: undefined },
+    ]);
     expect(await screen.findByText(/win11@v2 has these network cards: Realtek PCIe GbE Family Controller/))
       .toBeInTheDocument();
     expect(reload).toHaveBeenCalled();
+  });
+
+  it("marks an OS image whose active version has an unfinished Windows update", async () => {
+    stubFetch(200, [
+      { disk_id: 3, snapshot: "v2", state: "pending", signs: ["pending.xml"], error: null },
+      { disk_id: 4, snapshot: "base", state: "none", signs: [], error: null },
+    ]);
+    render(
+      <GameDisksPage
+        disks={[
+          disk({ id: 3, name: "win11", kind: "os", snapshot: "v2", nic_models: ["Realtek PCIe GbE"] }),
+          disk({ id: 4, name: "win10", kind: "os", snapshot: "base", nic_models: ["Realtek PCIe GbE"] }),
+        ]}
+        machines={[]}
+        reload={vi.fn()}
+      />,
+    );
+    const badge = await screen.findByText("Update pending");
+    expect(badge.closest("tr")).toHaveTextContent("win11");
+    expect(badge.closest("span")).toHaveAttribute("title", expect.stringContaining("WinSxS\\pending.xml"));
+    expect(screen.getAllByText("Update pending")).toHaveLength(1);
   });
 });

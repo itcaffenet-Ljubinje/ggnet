@@ -148,6 +148,7 @@ class FakeHost:
             "origin": self.datasets.get(name, {}).get("origin") or "-",
             "ggnet:comment": self.snap_props.get(name, {}).get("ggnet:comment", "-"),
             "ggnet:locked": self.snap_props.get(name, {}).get("ggnet:locked", "-"),
+            "ggnet:update": self.snap_props.get(name, {}).get("ggnet:update", "-"),
         }
         return "\t".join(values[f] for f in fields)
 
@@ -235,6 +236,12 @@ class FakeHost:
                 self.datasets[name]["readonly"] = value == "on"
             self.datasets[name].setdefault("props", {})[key] = value
             return self._ok()
+
+        if sub == "get" and "@" in a[-1]:
+            name = a[-1]
+            if name not in self.snapshots:
+                return self._err(f"cannot open '{name}': dataset does not exist")
+            return self._ok(self.snap_props.get(name, {}).get(a[-2], "-"))
 
         if sub == "get":
             name = a[-1]

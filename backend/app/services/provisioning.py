@@ -341,6 +341,26 @@ class Provisioner:
         windows = self.windows
         return self._on_version(master, snapshot, "network card check", windows.list_nics)
 
+    def check_update(self, master: str, snapshot: str) -> list[str] | str:
+        """
+        WindowsSetup.pending_update() on one version of an OS image, recorded
+        on the version (ZFSManager.set_snapshot_update): it never changes.
+        """
+        if self.windows is None:
+            return "Windows setup is not available on this server"
+        windows = self.windows
+        found = self._on_version(master, snapshot, "update check", windows.pending_update)
+        if isinstance(found, list) and not self.zfs.set_snapshot_update(f"{master}@{snapshot}", found):
+            logger.warning("The update state of %s@%s could not be recorded", master, snapshot)
+        return found
+
+    def writeback_update(self, clone_zvol: str) -> list[str] | str:
+        """WindowsSetup.pending_update() on a PC's OS writeback (the PC is off)."""
+        if self.windows is None:
+            return "Windows setup is not available on this server"
+        with self.lock:
+            return self.windows.pending_update(self.zfs.zvol_device_path(clone_zvol))
+
     def import_disk(self, source: str, fmt: str, target: str, progress=None, cancel=None) -> bool:
         """
         Fill the new, empty master `target` from an image file and publish it
