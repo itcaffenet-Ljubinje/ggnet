@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -185,6 +186,12 @@ class UsbDisks:
         writable when asked to.
         """
         part = self._find(name)
+        if part["mounted"] and not self._alive(Path(part["mounted"])):
+            # ntfs-3g died (e.g. stopped with the ggNet service): the mount is
+            # left but unusable ("Transport endpoint is not connected").
+            self.runner.run(["umount", "-l", part["mounted"]])
+            logger.warning("USB %s: its mount had stopped working; mounting it again", part["path"])
+            part["mounted"] = None
         if part["mounted"]:
             if not writable or self._writable(Path(part["mounted"])):
                 return Path(part["mounted"])
@@ -200,6 +207,14 @@ class UsbDisks:
         logger.info("USB %s (%s) opened %s at %s", part["path"], part["fstype"],
                     "writable" if writable else "read-only", target)
         return target
+
+    @staticmethod
+    def _alive(folder: Path) -> bool:
+        try:
+            os.statvfs(folder)
+            return True
+        except OSError:
+            return False
 
     @staticmethod
     def _writable(folder: Path) -> bool:

@@ -141,6 +141,28 @@ def test_a_backup_mounts_a_read_only_usb_disk_again_writable(tmp_path, monkeypat
     assert [c for c in r.calls if c[0] != "lsblk"][-1][2] == "rw" and len([c for c in r.calls if c[0] == "mount"]) == 2
 
 
+def test_a_dead_usb_mount_is_mounted_again(tmp_path, monkeypatch):
+    class Runner:
+        calls: list = []
+
+        def run(self, cmd, timeout=None, quiet=False):
+            self.calls.append(cmd)
+            if cmd[0] == "lsblk":
+                return True, json.dumps({"blockdevices": [
+                    {"name": "sdj", "tran": "usb", "type": "disk", "size": 1, "children": [
+                        {"name": "sdj1", "path": "/dev/sdj1", "fstype": "ntfs", "type": "part", "size": 1,
+                         "mountpoint": str(tmp_path / "sdj1")}]}]}), ""
+            return True, "", ""
+
+    monkeypatch.setattr(UsbDisks, "_alive", staticmethod(lambda folder: False))    # ntfs-3g was stopped
+    r = Runner()
+    assert UsbDisks(r, tmp_path).mount("sdj1") == tmp_path / "sdj1"
+    assert [c for c in r.calls if c[0] != "lsblk"] == [
+        ["umount", "-l", str(tmp_path / "sdj1")],
+        ["ntfs-3g", "-o", "ro", "/dev/sdj1", str(tmp_path / "sdj1")],
+    ]
+
+
 def test_qemu_progress_lines():
     assert qemu_percent("(42.17/100%)") == 42.17
     assert qemu_percent("Image resized.") is None
