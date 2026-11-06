@@ -9,7 +9,7 @@ import {
   type FoundBackup,
   type Image,
 } from "../api";
-import { formatBytes } from "../format";
+import { formatBytes, formatDuration } from "../format";
 import { ErrorBanner } from "./ErrorBanner";
 
 type Tab = "backup" | "restore" | "history";
@@ -404,6 +404,8 @@ const STATUS: Record<BackupJob["status"], [string, string]> = {
 };
 
 function HistoryTab({ jobs, busy, cancel }: { jobs: BackupJob[]; busy: boolean; cancel: (id: number) => void }) {
+  // A running job stops once the disk took what it was writing: show that it was asked to.
+  const [cancelling, setCancelling] = useState<Set<number>>(new Set());
   if (jobs.length === 0) return <p className="small muted">No backup or restore yet.</p>;
   return (
     <table>
@@ -433,13 +435,22 @@ function HistoryTab({ jobs, busy, cancel }: { jobs: BackupJob[]; busy: boolean; 
                   {label}
                   {j.status === "running" && percent !== null ? ` ${percent}%` : ""}
                 </span>
+                {j.status === "running" && <Speed job={j} />}
                 {j.error && j.status === "failed" && <div className="small error-text">{j.error}</div>}
               </td>
               <td className="small">{j.total_bytes ? formatBytes(j.total_bytes) : "—"}</td>
               <td>
                 {(j.status === "queued" || j.status === "running") && (
-                  <button type="button" className="secondary small" disabled={busy} onClick={() => cancel(j.id)}>
-                    Cancel
+                  <button
+                    type="button"
+                    className="secondary small"
+                    disabled={busy || cancelling.has(j.id)}
+                    onClick={() => {
+                      setCancelling(new Set(cancelling).add(j.id));
+                      cancel(j.id);
+                    }}
+                  >
+                    {cancelling.has(j.id) ? "Cancelling…" : "Cancel"}
                   </button>
                 )}
               </td>
@@ -450,3 +461,18 @@ function HistoryTab({ jobs, busy, cancel }: { jobs: BackupJob[]; busy: boolean; 
     </table>
   );
 }
+
+/** "6.9 MB/s · 21 min left" from the bytes done since the job started. */
+function Speed({ job }: { job: BackupJob }) {
+  if (!job.started_at || !job.total_bytes || job.done_bytes <= 0) return null;
+  const seconds = (Date.now() - new Date(job.started_at).getTime()) / 1000;
+  if (seconds < 5) return null;
+  const rate = job.done_bytes / seconds;
+  const left = Math.max(0, (job.total_bytes - job.done_bytes) / rate);
+  return (
+    <div className="small muted">
+      {formatBytes(rate)}/s · {formatDuration(left * 1000)} left
+    </div>
+  );
+}
+

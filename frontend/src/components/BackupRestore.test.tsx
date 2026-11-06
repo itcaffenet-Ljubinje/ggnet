@@ -88,14 +88,17 @@ describe("BackupRestore", () => {
   });
 
   it("shows the history with progress and can cancel a running job", async () => {
-    const calls = stub(28 * 1024 ** 3, [JOB, { ...JOB, id: 2, status: "failed", error: "zfs send failed" }]);
+    const started = new Date(Date.now() - 600_000).toISOString();          // 3 GB in 10 min
+    const calls = stub(28 * 1024 ** 3, [{ ...JOB, started_at: started }, { ...JOB, id: 2, status: "failed", error: "zfs send failed" }]);
     render(<BackupRestore images={IMAGES} onClose={vi.fn()} onRestored={vi.fn()} />);
     await userEvent.click(screen.getByRole("tab", { name: "History" }));
     const rows = await screen.findAllByRole("row");
     expect(within(rows[1]).getByText("Running 33%")).toBeInTheDocument();
     expect(within(rows[2]).getByText("zfs send failed")).toBeInTheDocument();
+    expect(within(rows[1]).getByText(/^5\.1\d MB\/s · 2\d min left$/)).toBeInTheDocument();
     await userEvent.click(within(rows[1]).getByRole("button", { name: "Cancel" }));
     expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/jobs/1/cancel"))).toBe(true);
+    expect(await within(rows[1]).findByRole("button", { name: "Cancelling…" })).toBeDisabled();
   });
 
   it("lets the admin choose when there are several disks, and opens none before", async () => {

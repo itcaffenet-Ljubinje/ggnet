@@ -96,7 +96,8 @@ def _add_card(db_url, image_id):
 
 # ── Pieces ────────────────────────────────────────────────────────────
 
-def test_the_stream_is_written_in_parts_and_read_back_checked(tmp_path):
+def test_the_stream_is_written_in_parts_and_read_back_checked(tmp_path, monkeypatch):
+    monkeypatch.setattr(backups, "FLUSH_BYTES", 4)              # flushed between parts too
     writer = backups.PartWriter(tmp_path, part_bytes=10)
     for piece in (b"0123456", b"789abcdefghij", b"klmnopqrstuvwxyz"):
         writer.write(piece)

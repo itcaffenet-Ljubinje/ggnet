@@ -55,6 +55,10 @@ ROOT = "ggnet-backups"
 MANIFEST = "manifest.json"
 PART_BYTES = 1024 ** 3
 CHUNK = 4 * 1024 ** 2
+# Written data is flushed to the disk this often: the progress shows what is
+# really on the (often slow) USB disk, and a cancel never waits for a whole
+# part to be flushed.
+FLUSH_BYTES = 64 * 1024 ** 2
 PROGRESS_EVERY = 2.0
 # Free space kept on the backup disk besides the backup itself.
 SPARE_BYTES = 64 * 1024 ** 2
@@ -186,6 +190,7 @@ class PartWriter:
         self._file = None
         self._hash = None
         self._size = 0
+        self._unflushed = 0
 
     def _open(self) -> None:
         name = f"stream.{len(self.parts):03d}"
@@ -213,9 +218,15 @@ class PartWriter:
             self._hash.update(piece)
             self._size += len(piece)
             self.total += len(piece)
+            self._unflushed += len(piece)
             view = view[len(piece):]
             if self._size >= self.part_bytes:
                 self._close()
+                self._unflushed = 0
+            elif self._unflushed >= FLUSH_BYTES:
+                self._file.flush()
+                os.fdatasync(self._file.fileno())
+                self._unflushed = 0
 
     def finish(self) -> None:
         self._close()
