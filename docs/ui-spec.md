@@ -53,6 +53,7 @@ Status: **done** (backend and UI), **backend** (API exists, UI missing or partia
 | Images table: Name, Type, Default, State, Size (on the pool, with versions), Volume, Compression, Versions, Machines; the ZFS path is on the Details page | done |
 | Make default (Images → ⋮): one default OS image and one default game image; new PCs get them (New PC template, Add machine, New PCs claim) | done |
 | Backup / Restore (Images): an image with all its versions, comments and network cards to a USB disk or a backup folder (`zfs send -R -c` in 1 GiB parts with SHA-256, manifest.json last), free space checked first; restore always into a new image, parts checked as they are read; History tab, cancel, interrupted jobs cleaned up at start | done |
+| Notifications (header bell): Running tasks (backups, restores, copies, imports, Add new hardware, browser uploads) with progress, speed, time left and Cancel (`GET /api/v1/tasks`); Finished kept in the browser until Clear; a short notice when one ends. Browser uploads go on when the Import dialog is closed | done |
 | Backup to another server over SSH (key, incremental), scheduled backups, export of one version to VHDX/QCOW2 | todo |
 | Copy with all versions, Delete newer versions | todo |
 | Hardware scan with Secure Boot on: wimboot is served signed with the ggNet key (shim starts it like iPXE; Windows PE itself is Microsoft-signed) | done |

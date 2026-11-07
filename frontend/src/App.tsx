@@ -14,6 +14,7 @@ import {
 } from "./api";
 import { isOnline } from "./components/AgentState";
 import { SignIn } from "./components/SignIn";
+import { Notifications } from "./components/Notifications";
 import { ImagesPage } from "./pages/ImagesPage";
 import { MachinesPage } from "./pages/MachinesPage";
 import { ServerPage } from "./pages/ServerPage";
@@ -180,6 +181,8 @@ function Console({ user, onSignOut }: { user: User; onSignOut: () => void }) {
               <LogOut size={14} />
             </button>
           </div>
+
+          <Notifications onFinished={reload} />
 
           <div className="header-refresh-wrap">
             {lastUpdated && (

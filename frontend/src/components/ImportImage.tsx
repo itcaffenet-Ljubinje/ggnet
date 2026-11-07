@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { FolderOpen, HardDriveDownload, RefreshCw, Trash2, Upload, Usb, X } from "lucide-react";
 
-import { api, uploadImage, type ImageKind, type ImageFile, type ImportSources } from "../api";
+import { api, type ImageKind, type ImageFile, type ImportSources } from "../api";
+import { startUpload, useUploads } from "../uploads";
 import { formatBytes } from "../format";
 import { useAsyncAction } from "../useAsyncAction";
 import { ErrorBanner } from "./ErrorBanner";
@@ -45,7 +46,12 @@ export function ImportImage({ onClose, onStarted }: Props) {
   const [prepare, setPrepare] = useState(true);
   const [defenderOff, setDefenderOff] = useState(false);
   const [servicesOff, setServicesOff] = useState(true);
-  const [upload, setUpload] = useState<{ name: string; sent: number; total: number } | null>(null);
+  const uploads = useUploads();
+  const upload = uploads.find((u) => u.status === "running") ?? null;
+  const mounted = useRef(true);
+  useEffect(() => () => {
+    mounted.current = false;
+  }, []);
 
   const load = useCallback(async () => {
     await run("load", async () => setSources(await api.importSources()));
@@ -84,12 +90,12 @@ export function ImportImage({ onClose, onStarted }: Props) {
   }
 
   async function send(file: File) {
-    setUpload({ name: file.name, sent: 0, total: file.size });
+    // The upload goes on if this dialog is closed (Background tasks shows it).
     const ok = await run("upload", async () => {
-      const done = await uploadImage(file, (sent, total) => setUpload({ name: file.name, sent, total }));
-      choose(done);
+      const done = await startUpload(file);
+      if (mounted.current) choose(done);
     });
-    setUpload(null);
+    if (!mounted.current) return;
     if (ok) {
       setSource("folder");
       await load();

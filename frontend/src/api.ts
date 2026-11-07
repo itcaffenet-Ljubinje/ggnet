@@ -290,6 +290,24 @@ export interface BackupJob {
   finished_at: string | null;
 }
 
+/** A job running on the server (Background tasks panel). */
+export interface ServerTask {
+  id: string;
+  kind: "backup" | "restore" | "copy" | "import" | "hardware";
+  title: string;
+  detail: string | null;
+  status: "queued" | "running" | "done" | "failed" | "cancelled";
+  percent: number | null;
+  done_bytes: number | null;
+  total_bytes: number | null;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  /** POST here to stop it. */
+  cancel: string | null;
+  image_id: number | null;
+}
+
 /** An image's space on the pool, read live from ZFS (Images table). */
 export interface ImageUsage {
   image_id: number;
@@ -771,6 +789,9 @@ export const api = {
     request<Image>("POST", `/v1/images/${id}/snapshots/${encodeURIComponent(name)}/merge-into-base`),
   listWritebacks: (id: number) => request<Writeback[]>("GET", `/v1/images/${id}/writebacks`),
 
+  getTasks: () => request<ServerTask[]>("GET", "/v1/tasks"),
+  /** Stop a task by the cancel path the server gave (/api/v1/...). */
+  cancelTask: (path: string) => request<unknown>("POST", path.replace(/^\/api/, "")),
   backupLocations: () => request<BackupLocation[]>("GET", "/v1/backups/locations"),
   openBackupLocation: (id: string, writable: boolean) =>
     request<BackupLocationOpen>("POST", `/v1/backups/locations/${encodeURIComponent(id)}/open?writable=${writable}`),

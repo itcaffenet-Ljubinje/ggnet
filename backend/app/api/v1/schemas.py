@@ -1167,3 +1167,21 @@ class BackupJobOut(BaseModel):
     started_at: datetime | None
     finished_at: datetime | None
 
+
+class TaskOut(BaseModel):
+    """One job running on the server, for the web UI's Background tasks panel."""
+
+    id: str                       # backup-3, copy-7, import-7, hardware-4
+    kind: str                     # backup, restore, copy, import, hardware
+    title: str                    # "Backup of hw-test"
+    detail: str | None = None     # where, which step
+    status: str                   # queued, running, done, failed, cancelled
+    percent: int | None = None
+    done_bytes: int | None = None
+    total_bytes: int | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    error: str | None = None
+    cancel: str | None = None     # POST here to stop it
+    image_id: int | None = None
+
