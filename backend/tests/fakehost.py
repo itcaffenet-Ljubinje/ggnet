@@ -111,7 +111,18 @@ class FakeHost:
                 on_producer_line(f"size\t{self.copy_bytes}")
                 on_producer_line(f"00:00:01\t{self.copy_bytes // 2}\t{src}")
             self.add_dataset(dst)
-            self.snapshots[f"{dst}@{src.partition('@')[2]}"] = set()
+            if "-R" in producer:         # every version up to src, with their user properties
+                ds, _, last = src.partition("@")
+                for snap in list(self.snapshots):
+                    name, _, v = snap.partition("@")
+                    if name == ds:
+                        self.snapshots[f"{dst}@{v}"] = set()
+                        if snap in self.snap_props:
+                            self.snap_props[f"{dst}@{v}"] = dict(self.snap_props[snap])
+                    if snap == src:
+                        break
+            else:
+                self.snapshots[f"{dst}@{src.partition('@')[2]}"] = set()
             return self._ok()
         raise AssertionError(f"FakeHost does not simulate this pipe: {producer} | {consumer}")
 

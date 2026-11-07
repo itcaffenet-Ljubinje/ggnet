@@ -430,6 +430,10 @@ class Provisioner:
         """
         return self.zfs.copy_snapshot(snapshot, target, progress)
 
+    def copy_all_versions(self, newest: str, target: str, progress=None) -> bool:
+        """A copy of a master with every version (ZFSManager.copy_image). Without the lock."""
+        return self.zfs.copy_image(newest, target, progress)
+
     def publish_disk(self, zvol_path: str, snap_name: str = "base") -> str:
         """publish_master(): snapshot → hold → readonly."""
         with self.lock:

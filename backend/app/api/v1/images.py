@@ -55,7 +55,9 @@ from app.db.models import (
     version_number,
 )
 from app.db.session import get_db
+from app.services import retention
 from app.services.agent_package import default_package
+from app.services.copies import ALL_VERSIONS
 from app.services.os_setup import image_prep
 from app.services.provisioning import Provisioner, ProvisioningError
 from app.services.scan import nic_status
@@ -200,8 +202,11 @@ def copy_disk(
     """
     src = _get(db, image_id)
     _published(src)
+    versions = [v["name"] for v in _versions(prov, src)]
     snap = body.snapshot or src.snapshot
-    if snap not in {v["name"] for v in _versions(prov, src)}:
+    if body.all_versions:
+        snap = versions[-1] if versions else snap
+    if snap not in versions:
         not_found("Snapshot", f"{src.name}@{snap}")
     if db.scalar(select(Image).where(Image.name == body.name)):
         conflict(f"Image '{body.name}' already exists")
@@ -211,19 +216,26 @@ def copy_disk(
         conflict(f"'{body.name}' is still the zvol name of '{owner.name}' (renamed); choose another name")
     if prov.zfs.dataset_exists(path):
         conflict(f"Zvol {path} already exists on the host")
-    disk = Image(name=body.name, zvol_path=path, size_gb=src.size_gb, kind=src.kind,
-                    copy_source=f"{src.zvol_path}@{snap}", copy_percent=0)
-    # The copy knows the cards the copied version has.
-    # A copy's only version is @base, with the cards of the version it copies.
-    disk.hardware = [ImageHardware(nic=h.nic, instance=h.instance, name=h.name, snapshot="base")
-                     for h in src.hardware if version_number(h.snapshot) <= version_number(snap)]
+    if body.all_versions:
+        # Every version, under the same names, the same one active; the cards as they are.
+        disk = Image(name=body.name, zvol_path=path, size_gb=src.size_gb, kind=src.kind,
+                     copy_source=f"{ALL_VERSIONS}{src.zvol_path}@{snap}#{src.snapshot}", copy_percent=0)
+        disk.hardware = [ImageHardware(nic=h.nic, instance=h.instance, name=h.name, snapshot=h.snapshot)
+                         for h in src.hardware]
+    else:
+        disk = Image(name=body.name, zvol_path=path, size_gb=src.size_gb, kind=src.kind,
+                     copy_source=f"{src.zvol_path}@{snap}", copy_percent=0)
+        # A copy's only version is @base, with the cards of the version it copies.
+        disk.hardware = [ImageHardware(nic=h.nic, instance=h.instance, name=h.name, snapshot="base")
+                         for h in src.hardware if version_number(h.snapshot) <= version_number(snap)]
     db.add(disk)
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
         conflict(f"Image '{body.name}' already exists")
-    logger.info("Copy of %s@%s to '%s' started", src.name, snap, disk.name)
+    logger.info("Copy of %s%s to '%s' started", src.name,
+                " with all its versions" if body.all_versions else f"@{snap}", disk.name)
     copier.start(disk.id)
     db.refresh(disk)
     return disk
@@ -601,6 +613,8 @@ def list_snapshots(
     if not disk.published:
         return []
     by_clone = _machines_by_clone(db)
+    versions = _versions(prov, disk)
+    notes = retention.version_notes(disk, versions, retention.load_settings(db)[0])
     return [
         SnapshotOut(
             name=v["name"],
@@ -614,8 +628,9 @@ def list_snapshots(
             comment=v.get("comment"),
             locked=bool(v.get("locked")),
             update=v.get("update") if disk.kind is ImageKind.OS else None,
+            retention=notes.get(v["name"]),
         )
-        for v in _versions(prov, disk)
+        for v in versions
     ]
 
 
@@ -710,6 +725,54 @@ def delete_snapshot(
         host_failed(str(e))
     _keep_hardware(db, disk, [v["name"] for v in versions if v["name"] != name])
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{image_id}/snapshots/{name}/delete-newer", response_model=ImageOut)
+def make_active_and_delete_newer(
+    image_id: int,
+    name: str,
+    db: Session = Depends(get_db),
+    prov: Provisioner = Depends(get_provisioner),
+):
+    """
+    Go back to a version: it becomes active and every newer version is
+    deleted. Refused, before anything changes, while a newer version is
+    locked, pinned or still used by a PC.
+    """
+    disk = _get(db, image_id)
+    _published(disk)
+    versions = _versions(prov, disk)
+    names = [v["name"] for v in versions]
+    if name not in names:
+        not_found("Snapshot", f"{disk.name}@{name}")
+    newer = versions[names.index(name) + 1:]
+    if not newer:
+        conflict(f"{disk.name}@{name} is the newest version; nothing to delete")
+    locked = [f"@{v['name']}" for v in newer if v.get("locked")]
+    if locked:
+        conflict(f"{', '.join(locked)} of {disk.name} {'is' if len(locked) == 1 else 'are'} locked; unlock first")
+    pinned = sorted({m.name for m in disk.machines for v in newer if m.pinned_snapshot == v["name"]})
+    if pinned:
+        conflict(f"a newer version is pinned on {', '.join(pinned)}; unpin it first")
+    by_clone = _machines_by_clone(db)
+    users = sorted({by_clone[c].name if c in by_clone else c for v in newer for c in v["clones"]})
+    if users:
+        conflict(f"a newer version is still used by {', '.join(users)}; make @{name} active and delete the "
+                 "newer versions once they rebooted onto it")
+    disk.snapshot = name
+    db.commit()
+    kept = list(names)
+    for v in reversed(newer):
+        try:
+            prov.delete_snapshot(disk.zvol_path, v["name"])
+        except ProvisioningError as e:
+            _keep_hardware(db, disk, kept)
+            host_failed(f"@{name} is active, but deleting @{v['name']} failed: {e}")
+        kept.remove(v["name"])
+    _keep_hardware(db, disk, kept)
+    logger.info("'%s' went back to @%s; deleted %s", disk.name, name, ", ".join(f"@{v['name']}" for v in newer))
+    db.refresh(disk)
+    return disk
 
 
 @router.post("/{image_id}/prepare", response_model=ImageOut)

@@ -87,6 +87,29 @@ export function DiskDetails({ disk, onChanged, refreshKey, summary }: Props) {
     return null;
   }
 
+  /** Why the versions newer than `index` cannot be deleted, or null when they can. */
+  function newerBlocker(index: number): string | null {
+    const newer = snapshots!.slice(index + 1);
+    const locked = newer.filter((o) => o.locked).map((o) => `@${o.name}`);
+    if (locked.length > 0) return `Newer versions are locked (${locked.join(", ")}); unlock them first`;
+    const pinned = newer.flatMap((o) => o.pinned);
+    if (pinned.length > 0) return `Newer versions are pinned on ${pinned.join(", ")}; unpin them first`;
+    const users = [...new Set(newer.flatMap((o) => o.machines))];
+    if (users.length > 0) {
+      return `Newer versions are still used by ${users.join(", ")}; make this one active, and go back once they rebooted onto it`;
+    }
+    return null;
+  }
+
+  function goBack(s: Snapshot, index: number) {
+    const newer = snapshots!.slice(index + 1).map((o) => `@${o.name}`);
+    const msg =
+      `Go back to @${s.name} of "${disk.name}"?\n\n` +
+      `@${s.name} becomes active and ${newer.join(", ")} ${newer.length === 1 ? "is" : "are"} deleted. ` +
+      "This cannot be undone.";
+    if (window.confirm(msg)) act(`back-${s.name}`, () => api.deleteNewerSnapshots(disk.id, s.name));
+  }
+
   function mergeIntoBase(s: Snapshot, index: number) {
     const older = snapshots!.slice(0, index).map((o) => `@${o.name}`);
     const msg =
@@ -189,6 +212,11 @@ export function DiskDetails({ disk, onChanged, refreshKey, summary }: Props) {
                   </td>
                   <td>
                     {s.comment ? <span className="small">{s.comment}</span> : <span className="muted">—</span>}
+                    {s.retention && (
+                      <div className="small muted" title="Automatic removal (Settings → Retention)">
+                        Retention: {s.retention}
+                      </div>
+                    )}
                   </td>
                   <td className="actions">
                     <button
@@ -213,6 +241,16 @@ export function DiskDetails({ disk, onChanged, refreshKey, summary }: Props) {
                     {!s.active && (
                       <button type="button" onClick={() => makeActive(s)} disabled={busy !== null}>
                         {busy === `active-${s.name}` ? "Activating…" : "Make active"}
+                      </button>
+                    )}
+                    {i < snapshots.length - 1 && (
+                      <button
+                        type="button"
+                        onClick={() => goBack(s, i)}
+                        disabled={busy !== null || newerBlocker(i) !== null}
+                        title={newerBlocker(i) ?? `Make @${s.name} active and delete every newer version`}
+                      >
+                        {busy === `back-${s.name}` ? "Going back…" : "Go back here"}
                       </button>
                     )}
                     {i > 0 && (

@@ -237,6 +237,8 @@ export interface Snapshot {
   locked?: boolean;
   /** OS images: signs of an unfinished Windows update ([]: none); null when not checked. */
   update?: string[] | null;
+  /** What automatic removal (Settings → Retention) does with it, in words. */
+  retention?: string | null;
 }
 
 /** The disk a new PC gets from `list`: the default one, else the only one; "" when there is a choice. */
@@ -772,8 +774,13 @@ export const api = {
     request<AddHardwareJob>("POST", `/v1/images/${id}/add-hardware`, { cards }),
   cancelAddHardware: (id: number) =>
     request<AddHardwareJob | null>("POST", `/v1/images/${id}/add-hardware/cancel`),
-  copyDisk: (id: number, name: string, snapshot?: string) =>
-    request<Image>("POST", `/v1/images/${id}/copy`, snapshot ? { name, snapshot } : { name }),
+  /** A copy of one version (default: the active one), or of all versions. */
+  copyDisk: (id: number, name: string, snapshot?: string, allVersions = false) =>
+    request<Image>("POST", `/v1/images/${id}/copy`, {
+      name,
+      ...(snapshot ? { snapshot } : {}),
+      ...(allVersions ? { all_versions: true } : {}),
+    }),
   listSnapshots: (id: number) => request<Snapshot[]>("GET", `/v1/images/${id}/snapshots`),
   setActiveSnapshot: (id: number, snapshot: string) =>
     request<Image>("PUT", `/v1/images/${id}/active-snapshot`, { snapshot }),
@@ -785,6 +792,9 @@ export const api = {
     request<Snapshot>("PUT", `/v1/images/${id}/snapshots/${encodeURIComponent(name)}/lock`, { locked }),
   prepareImage: (id: number, options?: PrepareOptions) =>
     request<Image>("POST", `/v1/images/${id}/prepare`, options),
+  /** Make a version active and delete every newer one. */
+  deleteNewerSnapshots: (id: number, name: string) =>
+    request<Image>("POST", `/v1/images/${id}/snapshots/${encodeURIComponent(name)}/delete-newer`),
   mergeIntoBase: (id: number, name: string) =>
     request<Image>("POST", `/v1/images/${id}/snapshots/${encodeURIComponent(name)}/merge-into-base`),
   listWritebacks: (id: number) => request<Writeback[]>("GET", `/v1/images/${id}/writebacks`),
