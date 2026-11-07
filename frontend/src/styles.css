@@ -2909,3 +2909,44 @@ tr.row-warn td {
   color: var(--danger, #ef4444);
 }
 
+
+.tasks-btn {
+  position: relative;
+}
+
+.notify-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.tasks-section {
+  margin: 10px 0 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted-light);
+}
+
+.tasks-section-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.task-new {
+  border-color: var(--accent);
+}
+
+.ok-icon {
+  color: var(--success, #22c55e);
+}
+
+.error-icon {
+  color: var(--danger, #ef4444);
+}

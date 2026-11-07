@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ServerTask } from "../api";
 import { resetUploads, startUpload } from "../uploads";
-import { TasksPanel } from "./TasksPanel";
+import { Notifications } from "./Notifications";
 
 const BACKUP: ServerTask = {
   id: "backup-2", kind: "backup", title: "Backup of hw-test", detail: "USB Ultra USB 3.0 (vfat)", status: "running",
@@ -19,6 +19,7 @@ beforeEach(() => {
   tasks = [BACKUP];
   calls = [];
   resetUploads();
+  window.localStorage.clear();
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -30,35 +31,46 @@ beforeEach(() => {
 
 afterEach(() => vi.useRealTimers());
 
-describe("TasksPanel", () => {
+describe("Notifications", () => {
   it("counts what runs and lists it with its progress, and can cancel it", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    render(<TasksPanel />);
-    const button = await screen.findByRole("button", { name: "Background tasks: 1 running" });
-    await userEvent.click(button);
-    const panel = screen.getByRole("dialog", { name: "Background tasks" });
+    render(<Notifications />);
+    await userEvent.click(await screen.findByRole("button", { name: "Notifications: 1 running" }));
+    const panel = screen.getByRole("dialog", { name: "Notifications" });
+    expect(within(panel).getByText("Running")).toBeInTheDocument();
     expect(within(panel).getByText("Backup of hw-test")).toBeInTheDocument();
-    expect(within(panel).getByText("25%")).toBeInTheDocument();
     expect(within(panel).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "25");
     expect(within(panel).getByText(/3.00 GB of 12.0 GB/)).toBeInTheDocument();
     await userEvent.click(within(panel).getByRole("button", { name: "Cancel" }));
     expect(calls).toContainEqual({ method: "POST", url: "/api/v1/backups/jobs/2/cancel" });
   });
 
-  it("says when a task ends and reloads the page's data", async () => {
+  it("keeps what ended under Finished until Clear, and says when a task ends", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const onFinished = vi.fn();
-    render(<TasksPanel onFinished={onFinished} />);
-    await screen.findByRole("button", { name: "Background tasks: 1 running" });
-    tasks = [{ ...BACKUP, status: "done", percent: 100, cancel: null }];
+    const { unmount } = render(<Notifications onFinished={onFinished} />);
+    await screen.findByRole("button", { name: "Notifications: 1 running" });
+    tasks = [{ ...BACKUP, status: "done", percent: 100, cancel: null, finished_at: "2026-11-07T22:22:04Z" }];
     await act(() => vi.advanceTimersByTimeAsync(3100));
-    expect(await screen.findByText("Backup of hw-test: completed")).toBeInTheDocument();
+    expect(await screen.findByText("Backup of hw-test: completed")).toBeInTheDocument();     // the notice
     expect(onFinished).toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Background tasks" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Notifications: new" }));
+    const panel = screen.getByRole("dialog", { name: "Notifications" });
+    expect(within(panel).getByText("Finished")).toBeInTheDocument();
+    expect(within(panel).getByLabelText("Completed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Notifications" })).toBeInTheDocument();      // seen now
+
+    // Kept across a reload of the page, until Clear; the server's recent list does not bring it back.
+    unmount();
+    render(<Notifications />);
+    await userEvent.click(await screen.findByRole("button", { name: "Notifications" }));
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Clear" }));
+    await act(() => vi.advanceTimersByTimeAsync(15100));
+    expect(within(screen.getByRole("dialog")).getByText("Nothing yet.")).toBeInTheDocument();
   });
 
   it("shows a browser upload that goes on while the import dialog is closed", async () => {
-    let finish: (v: unknown) => void = () => {};
+    let finish: () => void = () => {};
     class FakeXhr {
       upload: { onprogress?: (e: { loaded: number; lengthComputable: boolean; total: number }) => void } = {};
       onload?: () => void;
@@ -73,18 +85,19 @@ describe("TasksPanel", () => {
     }
     vi.stubGlobal("XMLHttpRequest", FakeXhr);
     tasks = [];
-    render(<TasksPanel />);
-    let done: Promise<unknown>;
+    render(<Notifications />);
+    let done: Promise<unknown> = Promise.resolve();
     act(() => {
       done = startUpload(new File([new Uint8Array(100)], "win11.vhdx"));
     });
-    await userEvent.click(await screen.findByRole("button", { name: "Background tasks: 1 running" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Notifications: 1 running" }));
     expect(screen.getByText("Upload of win11.vhdx")).toBeInTheDocument();
     expect(screen.getByText("40%")).toBeInTheDocument();
     await act(async () => {
-      finish(undefined);
+      finish();
       await done;
     });
     expect(await screen.findByText("Upload of win11.vhdx: completed")).toBeInTheDocument();
+    expect(within(screen.getByRole("dialog")).getByText("Finished")).toBeInTheDocument();
   });
 });
