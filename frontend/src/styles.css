@@ -2781,3 +2781,131 @@ tr.row-warn td {
     transform: rotate(360deg);
   }
 }
+
+/* ── Background tasks (header) ── */
+.tasks-wrap {
+  position: relative;
+}
+
+.tasks-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tasks-btn.busy {
+  color: var(--accent);
+}
+
+.tasks-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  width: min(420px, calc(100vw - 32px));
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  padding: 12px;
+  z-index: 60;
+}
+
+.tasks-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.tasks-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.task {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.task .secondary {
+  align-self: flex-start;
+}
+
+.task-failed {
+  border-color: var(--danger, #ef4444);
+}
+
+.task-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.task-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.task-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+
+.task-bar.indeterminate .task-bar-fill {
+  width: 30%;
+  animation: taskSlide 1.2s ease-in-out infinite;
+}
+
+@keyframes taskSlide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(330%);
+  }
+}
+
+.toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 80;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  font-size: 13px;
+  animation: fadeIn 0.2s ease;
+}
+
+.toast-ok svg {
+  color: var(--success, #22c55e);
+}
+
+.toast-error svg {
+  color: var(--danger, #ef4444);
+}
+
