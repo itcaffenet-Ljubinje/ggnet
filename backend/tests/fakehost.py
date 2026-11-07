@@ -151,6 +151,7 @@ class FakeHost:
             "ggnet:update": self.snap_props.get(name, {}).get("ggnet:update", "-"),
             "volsize": str(self.datasets.get(name, {}).get("props", {}).get("volsize", 0)),
             "compressratio": str(self.datasets.get(name, {}).get("props", {}).get("compressratio", "1.00")),
+            "avail": str(self.datasets.get(name, {}).get("props", {}).get("avail", 1 << 50)),
         }
         return "\t".join(values[f] for f in fields)
 

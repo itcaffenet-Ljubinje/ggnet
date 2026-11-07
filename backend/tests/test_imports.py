@@ -73,6 +73,8 @@ def test_usb_partitions_offer_only_free_usb_file_systems():
         {"name": "sdm", "path": "/dev/sdm", "tran": "usb", "type": "disk", "size": 5, "children": [
             {"name": "sdm1", "path": "/dev/sdm1", "fstype": "ntfs", "type": "part", "size": 5},
             {"name": "sdm2", "path": "/dev/sdm2", "fstype": "LVM2_member", "type": "part", "size": 5}]},
+        {"name": "sdi", "path": "/dev/sdi", "tran": "usb", "type": "disk", "model": "Internal SD-CARD", "size": 8,
+         "children": [{"name": "sdi1", "path": "/dev/sdi1", "fstype": "vfat", "type": "part", "size": 8}]},
     ]}
     parts = usb_partitions(json.dumps(lsblk), Path("/run/ggnet/usb"))
     assert [(p["name"], p["fstype"], p["model"], p["mounted"]) for p in parts] == [
@@ -104,6 +106,61 @@ def test_usb_open_is_read_only_and_eject_unmounts(tmp_path):
     assert ["umount", str(tmp_path / "sdj1")] in r.calls
     with pytest.raises(ValueError):
         usb.mount("sda1")
+
+
+def test_a_backup_mounts_a_read_only_usb_disk_again_writable(tmp_path, monkeypatch):
+    class Runner:
+        def __init__(self):
+            self.calls, self.mounted = [], None
+
+        def run(self, cmd, timeout=None, quiet=False):
+            self.calls.append(cmd)
+            if cmd[0] in ("mount", "ntfs-3g"):
+                self.mounted = cmd[-1]
+            elif cmd[0] == "umount":
+                self.mounted = None
+            elif cmd[0] == "lsblk":
+                return True, json.dumps({"blockdevices": [
+                    {"name": "sdk", "tran": "usb", "type": "disk", "size": 1, "children": [
+                        {"name": "sdk1", "path": "/dev/sdk1", "fstype": "vfat", "type": "part", "size": 1,
+                         "mountpoint": self.mounted}]}]}), ""
+            return True, "", ""
+
+    r = Runner()
+    usb = UsbDisks(r, tmp_path)
+    usb.mount("sdk1")                                            # opened for an import: read-only
+    monkeypatch.setattr(UsbDisks, "_writable", staticmethod(lambda folder: False))
+    assert usb.mount("sdk1", writable=True) == tmp_path / "sdk1"
+    assert [c for c in r.calls if c[0] != "lsblk"] == [
+        ["mount", "-o", "ro", "/dev/sdk1", str(tmp_path / "sdk1")],
+        ["umount", str(tmp_path / "sdk1")],
+        ["mount", "-o", "rw", "/dev/sdk1", str(tmp_path / "sdk1")],
+    ]
+    monkeypatch.setattr(UsbDisks, "_writable", staticmethod(lambda folder: True))
+    usb.mount("sdk1", writable=True)                             # already writable: nothing to do
+    assert [c for c in r.calls if c[0] != "lsblk"][-1][2] == "rw" and len([c for c in r.calls if c[0] == "mount"]) == 2
+
+
+def test_a_dead_usb_mount_is_mounted_again(tmp_path, monkeypatch):
+    class Runner:
+        calls: list = []
+
+        def run(self, cmd, timeout=None, quiet=False):
+            self.calls.append(cmd)
+            if cmd[0] == "lsblk":
+                return True, json.dumps({"blockdevices": [
+                    {"name": "sdj", "tran": "usb", "type": "disk", "size": 1, "children": [
+                        {"name": "sdj1", "path": "/dev/sdj1", "fstype": "ntfs", "type": "part", "size": 1,
+                         "mountpoint": str(tmp_path / "sdj1")}]}]}), ""
+            return True, "", ""
+
+    monkeypatch.setattr(UsbDisks, "_alive", staticmethod(lambda folder: False))    # ntfs-3g was stopped
+    r = Runner()
+    assert UsbDisks(r, tmp_path).mount("sdj1") == tmp_path / "sdj1"
+    assert [c for c in r.calls if c[0] != "lsblk"] == [
+        ["umount", "-l", str(tmp_path / "sdj1")],
+        ["ntfs-3g", "-o", "ro", "/dev/sdj1", str(tmp_path / "sdj1")],
+    ]
 
 
 def test_qemu_progress_lines():

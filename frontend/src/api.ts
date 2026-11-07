@@ -42,6 +42,8 @@ export type ImageKind = "game" | "os";
 
 /** Whether a disk's copy_source is an image file being imported (a path), not a version being copied. */
 export const isImport = (source: string | null | undefined) => !!source && source.startsWith("/");
+/** A new image being restored from a backup (Images → Backup / Restore). */
+export const isRestore = (source: string | null | undefined) => !!source && source.startsWith("backup:");
 
 /** An image file that can be imported (Images → Import). */
 export interface ImageFile {
@@ -241,6 +243,51 @@ export interface Snapshot {
 export function preselectDisk(list: Image[]): string {
   const pick = list.find((d) => d.is_default) ?? (list.length === 1 ? list[0] : undefined);
   return pick ? String(pick.id) : "";
+}
+
+/** Images → Backup / Restore: a USB disk or a backup folder of the server. */
+export interface BackupLocation {
+  id: string;
+  kind: "usb" | "dir";
+  label: string;
+  size: number | null;
+  path: string | null;
+}
+
+export interface FoundBackup {
+  folder: string;
+  image: string;
+  kind: "os" | "game";
+  created_at: string;
+  versions: string[];
+  active: string | null;
+  bytes: number;
+  complete: boolean;
+  problem: string | null;
+}
+
+export interface BackupLocationOpen {
+  id: string;
+  path: string;
+  free_bytes: number;
+  backups: FoundBackup[];
+}
+
+export interface BackupJob {
+  id: number;
+  kind: "backup" | "restore";
+  image_id: number | null;
+  image_name: string;
+  location: string;
+  location_label: string;
+  folder: string | null;
+  status: "queued" | "running" | "done" | "failed" | "cancelled";
+  done_bytes: number;
+  total_bytes: number | null;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
 }
 
 /** An image's space on the pool, read live from ZFS (Images table). */
@@ -724,6 +771,19 @@ export const api = {
     request<Image>("POST", `/v1/images/${id}/snapshots/${encodeURIComponent(name)}/merge-into-base`),
   listWritebacks: (id: number) => request<Writeback[]>("GET", `/v1/images/${id}/writebacks`),
 
+  backupLocations: () => request<BackupLocation[]>("GET", "/v1/backups/locations"),
+  openBackupLocation: (id: string, writable: boolean) =>
+    request<BackupLocationOpen>("POST", `/v1/backups/locations/${encodeURIComponent(id)}/open?writable=${writable}`),
+  ejectBackupLocation: (id: string) =>
+    request<void>("POST", `/v1/backups/locations/${encodeURIComponent(id)}/eject`),
+  backupEstimate: (imageId: number) =>
+    request<{ image_id: number; bytes: number | null }>("GET", `/v1/backups/estimate?image_id=${imageId}`),
+  startBackup: (imageIds: number[], location: string) =>
+    request<BackupJob[]>("POST", "/v1/backups", { image_ids: imageIds, location }),
+  startRestore: (location: string, folder: string, name: string) =>
+    request<BackupJob>("POST", "/v1/backups/restore", { location, folder, name }),
+  backupJobs: () => request<BackupJob[]>("GET", "/v1/backups/jobs"),
+  cancelBackupJob: (id: number) => request<BackupJob>("POST", `/v1/backups/jobs/${id}/cancel`),
   getImageUsage: () => request<ImageUsage[]>("GET", "/v1/images/usage"),
   setDefaultDisk: (id: number, isDefault: boolean) =>
     request<Image>("PUT", `/v1/images/${id}/default`, { default: isDefault }),

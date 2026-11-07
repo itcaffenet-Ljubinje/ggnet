@@ -429,6 +429,9 @@ agent_dir = "$DATA_DIR/agent"
 winpe_dir = "$DATA_DIR/winpe"
 winpe_drivers = "$DATA_DIR/winpe-drivers"
 iso_dirs = ["/var/lib/vz/template/iso"]
+# Images -> Backup / Restore: besides USB disks, folders backups may go to
+# (a second disk or a NAS mounted on this server), e.g. ["/mnt/backup"].
+backup_dirs = []
 EOF
 chmod 640 "$CONF_FILE"
 

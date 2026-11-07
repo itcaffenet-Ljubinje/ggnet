@@ -607,6 +607,13 @@ class ZFSManager:
         used, avail = _int(parts[0]), _int(parts[1])
         return {"total": used + avail, "used": used, "available": avail}
 
+    def available(self, dataset: str) -> Optional[int]:
+        """Bytes that can still be written under `dataset` (its `avail`); None when unreadable."""
+        if not self._is_managed(dataset, allow_base=True, allow_snapshot=False):
+            return None
+        ok, out, _ = self._run(["zfs", "list", "-H", "-p", "-o", "avail", dataset])
+        return _int(out) if ok and out.strip().isdigit() else None
+
     def reserved_bytes(self) -> int:
         if not self.dataset_exists(self.reserved_path):
             return 0

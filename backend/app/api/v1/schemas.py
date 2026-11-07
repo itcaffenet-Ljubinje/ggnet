@@ -1100,3 +1100,70 @@ class MaintenanceRunOut(BaseModel):
 class MaintenanceOut(MaintenanceIn):
     next_window: datetime | None                      # when the next one starts, if enabled
     last_run: MaintenanceRunOut | None
+
+
+# ── Backup / Restore of images ────────────────────────────────────────
+
+class BackupLocationOut(BaseModel):
+    id: str                       # usb:<partition> or dir:<n>
+    kind: str                     # usb | dir
+    label: str
+    size: int | None = None
+    path: str | None = None       # mounted / existing folder
+
+
+class FoundBackupOut(BaseModel):
+    folder: str
+    image: str
+    kind: str                     # os | game
+    created_at: str
+    versions: list[str]
+    active: str | None
+    bytes: int
+    complete: bool
+    problem: str | None = None
+
+
+class BackupLocationOpenOut(BaseModel):
+    id: str
+    path: str
+    free_bytes: int
+    backups: list[FoundBackupOut]
+
+
+class BackupEstimateOut(BaseModel):
+    image_id: int
+    bytes: int | None             # None: ZFS could not tell
+
+
+class BackupStartIn(BaseModel):
+    image_ids: list[int]
+    location: str
+
+
+class RestoreIn(BaseModel):
+    location: str
+    folder: str
+    name: str                     # the new image's name
+
+    check_name = field_validator("name")(_disk_name)
+
+
+class BackupJobOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    kind: str
+    image_id: int | None
+    image_name: str
+    location: str
+    location_label: str
+    folder: str | None
+    status: str
+    done_bytes: int
+    total_bytes: int | None
+    error: str | None
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+

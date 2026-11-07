@@ -423,3 +423,29 @@ class Activity(Base):
     action: Mapped[str] = mapped_column(String(200))     # "POST /api/v1/machines/3/power"
     status_code: Mapped[int] = mapped_column(Integer)
     ip_address: Mapped[str | None] = mapped_column(String(45), default=None)
+
+
+class BackupJob(Base):
+    """
+    One backup of an image into a folder of a backup location, or one
+    restore of such a backup into a new image (app.services.backups). The
+    rows are the History tab of Images -> Backup / Restore.
+    """
+
+    __tablename__ = "backup_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16))                 # backup | restore
+    # Backup: the image backed up; restore: the new image (gone if it failed).
+    image_id: Mapped[int | None] = mapped_column(ForeignKey("images.id", ondelete="SET NULL"), default=None)
+    image_name: Mapped[str] = mapped_column(String(64))
+    location: Mapped[str] = mapped_column(String(128))            # usb:<partition> or dir:<n>
+    location_label: Mapped[str] = mapped_column(String(255), default="")
+    folder: Mapped[str | None] = mapped_column(String(512), default=None)
+    status: Mapped[str] = mapped_column(String(16), default="queued")   # queued running done failed cancelled
+    done_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    total_bytes: Mapped[int | None] = mapped_column(BigInteger, default=None)
+    error: Mapped[str | None] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now)
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), default=None)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), default=None)

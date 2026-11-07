@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -121,6 +122,11 @@ def inside(path: Path, folder: Path) -> bool:
 
 # ── USB disks ─────────────────────────────────────────────────────────
 
+# Storage built into the server that sits on an internal USB bus (HPE's
+# "Internal SD-CARD", Dell's "Internal Dual SD"): never offered as a USB disk.
+_INTERNAL = re.compile(r"\binternal\b", re.IGNORECASE)
+
+
 def usb_partitions(lsblk_json: str, mounts: Path = USB_MOUNTS) -> list[dict]:
     """
     File systems on USB disks that may be opened read-only: from
@@ -136,6 +142,8 @@ def usb_partitions(lsblk_json: str, mounts: Path = USB_MOUNTS) -> list[dict]:
     for disk in devices:
         if disk.get("tran") != "usb" or disk.get("type") != "disk":
             continue
+        if _INTERNAL.search(disk.get("model") or ""):
+            continue                     # the server's own SD card or module, on its internal USB bus
         parts = disk.get("children") or [disk]
         fstypes = {p.get("fstype") for p in parts} | {disk.get("fstype")}
         if fstypes & {"zfs_member", "LVM2_member", "linux_raid_member", "swap"}:
@@ -171,20 +179,54 @@ class UsbDisks:
             raise ValueError(f"{name} is not a USB file system that can be opened")
         return part
 
-    def mount(self, name: str) -> Path:
-        """Mount a USB file system read-only; its folder."""
+    def mount(self, name: str, writable: bool = False) -> Path:
+        """
+        Mount a USB file system, read-only unless `writable` (a backup is
+        written to it); its folder. One mounted read-only is mounted again
+        writable when asked to.
+        """
         part = self._find(name)
+        if part["mounted"] and not self._alive(Path(part["mounted"])):
+            # ntfs-3g died (e.g. stopped with the ggNet service): the mount is
+            # left but unusable ("Transport endpoint is not connected").
+            self.runner.run(["umount", "-l", part["mounted"]])
+            logger.warning("USB %s: its mount had stopped working; mounting it again", part["path"])
+            part["mounted"] = None
         if part["mounted"]:
-            return Path(part["mounted"])
+            if not writable or self._writable(Path(part["mounted"])):
+                return Path(part["mounted"])
+            self.unmount(name)
         target = self.mounts / name
         target.mkdir(parents=True, exist_ok=True)
-        cmd = (["ntfs-3g", "-o", "ro", part["path"], str(target)] if part["fstype"] == "ntfs"
-               else ["mount", "-o", "ro", part["path"], str(target)])
+        mode = "rw" if writable else "ro"
+        cmd = (["ntfs-3g", "-o", mode, part["path"], str(target)] if part["fstype"] == "ntfs"
+               else ["mount", "-o", mode, part["path"], str(target)])
         ok, _, err = self.runner.run(cmd)
         if not ok:
             raise RuntimeError(f"{part['path']} could not be opened: {err}")
-        logger.info("USB %s (%s) opened read-only at %s", part["path"], part["fstype"], target)
+        logger.info("USB %s (%s) opened %s at %s", part["path"], part["fstype"],
+                    "writable" if writable else "read-only", target)
         return target
+
+    @staticmethod
+    def _alive(folder: Path) -> bool:
+        try:
+            os.statvfs(folder)
+            return True
+        except OSError:
+            return False
+
+    @staticmethod
+    def _writable(folder: Path) -> bool:
+        """Whether `folder` is mounted read-write (/proc/mounts)."""
+        try:
+            for line in Path("/proc/mounts").read_text().splitlines():
+                fields = line.split()
+                if len(fields) > 3 and fields[1] == str(folder):
+                    return "rw" in fields[3].split(",")
+        except OSError:
+            pass
+        return False
 
     def unmount(self, name: str) -> None:
         part = self._find(name)

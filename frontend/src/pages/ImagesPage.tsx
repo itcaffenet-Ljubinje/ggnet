@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState, type FormEvent } from "react";
 import {
+  ArchiveRestore,
   CheckCircle2,
   Copy,
   Cpu,
@@ -23,6 +24,7 @@ import {
 import {
   api,
   isImport,
+  isRestore,
   needsHardware,
   type ImageKind,
   type Image,
@@ -32,6 +34,7 @@ import {
 } from "../api";
 import { formatBytes } from "../format";
 import { ActionMenu, type MenuAction } from "../components/ActionMenu";
+import { BackupRestore } from "../components/BackupRestore";
 import { EditImage } from "../components/EditImage";
 import { ImportImage } from "../components/ImportImage";
 import { AddHardwareWizard } from "../components/AddHardwareWizard";
@@ -56,6 +59,15 @@ export function ImagesPage({ disks, machines, reload }: Props) {
   const usage = useImageUsage(disks);
   const [name, setName] = useState("");
   const [sizeGb, setSizeGb] = useState("100");
+  // The pool's free space, shown next to the size of a new image.
+  const [freeBytes, setFreeBytes] = useState<number | null>(null);
+  useEffect(() => {
+    api
+      .getStorage()
+      .then((s) => setFreeBytes(typeof s?.available_bytes === "number" ? s.available_bytes : null))
+      .catch(() => setFreeBytes(null));
+  }, [disks.length]);
+  const tooBig = freeBytes !== null && Number(sizeGb) * 1024 ** 3 > freeBytes;
   const [kind, setKind] = useState<ImageKind>("game");
   // Per draft disk: the machine picked to fill it on.
   const [editOn, setEditOn] = useState<Record<number, string>>({});
@@ -69,6 +81,7 @@ export function ImagesPage({ disks, machines, reload }: Props) {
   // The OS image in the Add new hardware wizard.
   const [addingHardware, setAddingHardware] = useState<number | null>(null);
   const [importing, setImporting] = useState(false);
+  const [backingUp, setBackingUp] = useState(false);
 
   const assigned = (id: number) =>
     machines.filter((m) => m.game_image_id === id || m.os_image_id === id).length;
@@ -367,11 +380,12 @@ export function ImagesPage({ disks, machines, reload }: Props) {
                       <td>
                         {copying(d) ? (
                           <span className="badge badge-editing" title={`From ${d.copy_source}`}>
-                            {isImport(d.copy_source) ? "Importing" : "Copying"} {d.copy_percent ?? 0}%
+                            {isRestore(d.copy_source) ? "Restoring" : isImport(d.copy_source) ? "Importing" : "Copying"}{" "}
+                            {d.copy_percent ?? 0}%
                           </span>
                         ) : d.copy_error ? (
                           <span className="badge badge-error" title={d.copy_error}>
-                            {isImport(d.copy_source) ? "Import failed" : "Copy failed"}
+                            {isRestore(d.copy_source) ? "Restore failed" : isImport(d.copy_source) ? "Import failed" : "Copy failed"}
                           </span>
                         ) : needsHardware(d) ? (
                           <span className="badge badge-warn" title="No PC can boot it yet: run Add new hardware">
@@ -492,9 +506,17 @@ export function ImagesPage({ disks, machines, reload }: Props) {
             value={sizeGb}
             onChange={(e) => setSizeGb(e.target.value)}
             required
+            aria-invalid={tooBig}
+            aria-describedby="new-image-free"
           />
         </label>
-        <button type="submit" disabled={busy !== null}>
+        {freeBytes !== null && (
+          <span id="new-image-free" className={`small ${tooBig ? "error-text" : "muted"}`}>
+            {tooBig ? "More than the " : ""}
+            {formatBytes(freeBytes)} free on the pool
+          </span>
+        )}
+        <button type="submit" disabled={busy !== null || tooBig}>
           <Plus size={14} />
           {busy === "create" ? "Creating…" : "Create"}
         </button>
@@ -508,7 +530,17 @@ export function ImagesPage({ disks, machines, reload }: Props) {
           <HardDriveDownload size={14} />
           Import
         </button>
+        <button
+          type="button"
+          className="secondary"
+          onClick={() => setBackingUp(true)}
+          title="Back up images with all their versions to a USB disk, or restore one"
+        >
+          <ArchiveRestore size={14} />
+          Backup / Restore
+        </button>
       </form>
+      {backingUp && <BackupRestore images={disks} onClose={() => setBackingUp(false)} onRestored={reload} />}
       {importing && (
         <ImportImage
           onClose={() => setImporting(false)}
