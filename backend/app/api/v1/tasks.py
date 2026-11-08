@@ -57,7 +57,9 @@ def tasks(db: Session = Depends(get_db), adder=Depends(get_hardware_adder)):
         percent = min(100, int(100 * job.done_bytes / total)) if total else None
         out.append(TaskOut(
             id=f"backup-{job.id}", kind=job.kind,
-            title=f"{'Backup' if job.kind == 'backup' else 'Restore'} of {job.image_name}",
+            title=(f"Export of {job.image_name}@{job.snapshot} ({(job.format or '').upper()})"
+                   if job.kind == "export" else
+                   f"{'Backup' if job.kind == 'backup' else 'Restore'} of {job.image_name}"),
             detail=job.location_label, status=job.status,
             percent=100 if job.status == "done" else percent, done_bytes=job.done_bytes, total_bytes=total,
             started_at=_aware(job.started_at), finished_at=_aware(job.finished_at), error=job.error,

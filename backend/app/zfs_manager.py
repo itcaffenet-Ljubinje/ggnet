@@ -718,6 +718,13 @@ class ZFSManager:
 
     # ── Dataset properties ────────────────────────────────────────────
 
+    def get_bytes(self, dataset: str, prop: str) -> Optional[int]:
+        """A size property in bytes (`zfs get -p`); None when unreadable."""
+        if not self._is_managed(dataset, allow_base=True) or prop.startswith("-"):
+            return None
+        ok, out, _ = self._run(["zfs", "get", "-H", "-p", "-o", "value", prop, dataset])
+        return int(out) if ok and out.strip().isdigit() else None
+
     def get_property(self, dataset: str, prop: str) -> str:
         if not self._is_managed(dataset, allow_base=True) or prop.startswith("-"):
             return ""

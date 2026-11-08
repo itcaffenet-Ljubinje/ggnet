@@ -1108,11 +1108,12 @@ class MaintenanceOut(MaintenanceIn):
 # ── Backup / Restore of images ────────────────────────────────────────
 
 class BackupLocationOut(BaseModel):
-    id: str                       # usb:<partition> or dir:<n>
-    kind: str                     # usb | dir
+    id: str                       # usb:<partition>, dir:<n> or imports
+    kind: str                     # usb | dir | imports
     label: str
     size: int | None = None
     path: str | None = None       # mounted / existing folder
+    fstype: str | None = None     # a USB disk's file system (vfat takes no file over 4 GB)
 
 
 class FoundBackupOut(BaseModel):
@@ -1152,6 +1153,31 @@ class RestoreIn(BaseModel):
     check_name = field_validator("name")(_disk_name)
 
 
+class ExportIn(BaseModel):
+    """One version of an image into a VHDX or VHD file at a backup location."""
+
+    image_id: int
+    snapshot: str | None = None   # default: the active version
+    format: str = "vhdx"          # vhdx | vhd
+    location: str
+    file_name: str
+
+    @field_validator("format")
+    @classmethod
+    def _format(cls, v: str) -> str:
+        if v not in ("vhdx", "vhd"):
+            raise ValueError("format: vhdx or vhd")
+        return v
+
+    @field_validator("file_name")
+    @classmethod
+    def _file(cls, v: str) -> str:
+        v = v.strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._()-]{0,120}\.(vhdx|vhd)", v, re.IGNORECASE):
+            raise ValueError("file name: letters, digits, ' ._()-', ending in .vhdx or .vhd")
+        return v
+
+
 class BackupJobOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -1162,6 +1188,8 @@ class BackupJobOut(BaseModel):
     location: str
     location_label: str
     folder: str | None
+    snapshot: str | None = None
+    format: str | None = None
     status: str
     done_bytes: int
     total_bytes: int | None

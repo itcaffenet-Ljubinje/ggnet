@@ -45,7 +45,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.models import BackupJob, Image, ImageHardware, ImageKind
-from app.services.provisioning import Provisioner
+from app.services.provisioning import Provisioner, ProvisioningError
 
 logger = logging.getLogger("ggnet.backups")
 
@@ -63,6 +63,10 @@ PROGRESS_EVERY = 2.0
 # Free space kept on the backup disk besides the backup itself.
 SPARE_BYTES = 64 * 1024 ** 2
 BACKUP_SOURCE = "backup:"
+# Export formats and qemu-img's names for them; VHD holds at most 2040 GB.
+QEMU_FORMATS = {"vhdx": "vhdx", "vhd": "vpc"}
+VHD_MAX_BYTES = 2040 * 1024 ** 3
+FAT32_MAX_BYTES = 4 * 1024 ** 3 - 1
 
 _FOLDER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,80}-\d{8}-\d{6}$")
 _PART = re.compile(r"^stream\.\d{3,5}$")
@@ -331,6 +335,8 @@ class BackupRunner:
             try:
                 if kind == "backup":
                     self._backup(job_id, cancel)
+                elif kind == "export":
+                    self._export(job_id, cancel)
                 else:
                     self._restore(job_id, cancel)
                 status, error = "done", None
@@ -426,6 +432,40 @@ class BackupRunner:
             job.done_bytes = job.total_bytes = writer.total
             db.commit()
 
+    # ── export ──
+
+    def _export(self, job_id: int, cancel: threading.Event) -> None:
+        with self.make_session() as db:
+            job = db.get(BackupJob, job_id)
+            image = db.get(Image, job.image_id) if job.image_id else None
+            if image is None or not image.published:
+                raise BackupError("the image is gone or not published")
+            zvol, snapshot, fmt, out = image.zvol_path, job.snapshot, job.format, Path(job.folder)
+            location_id, total = job.location, job.total_bytes
+        location = self.open_location(location_id, True)
+        out = location / out.name                    # the file always lands in the location itself
+        if out.exists():
+            raise BackupError(f"{out.name} already exists there")
+        free = shutil.disk_usage(location).free
+        if total and total + SPARE_BYTES > free:
+            raise BackupError(f"not enough free space: the file can take up to {_gb(total)}, "
+                              f"{_gb(free)} is free there")
+        logger.info("Exporting %s@%s as %s to %s", zvol, snapshot, fmt, out)
+        update = self._progress(job_id)
+        try:
+            self.prov.export_version(zvol, snapshot, out, QEMU_FORMATS[fmt],
+                                     lambda percent: update(int((total or 0) * percent / 100)), cancel)
+        except ProvisioningError as e:
+            if cancel.is_set():
+                raise Cancelled("cancelled") from None
+            raise BackupError(str(e)) from None
+        os.sync()
+        with self.make_session() as db:
+            job = db.get(BackupJob, job_id)
+            job.folder, job.done_bytes = str(out), out.stat().st_size
+            job.total_bytes = job.done_bytes
+            db.commit()
+
     # ── restore ──
 
     def _restore(self, job_id: int, cancel: threading.Event) -> None:
@@ -490,23 +530,30 @@ class BackupLocations:
     (dir:<n>), e.g. a second disk or a NAS mounted on the server.
     """
 
-    def __init__(self, usb, dirs: list[Path]):
+    def __init__(self, usb, dirs: list[Path], imports: Path | None = None):
         self.usb = usb
         self.dirs = dirs
+        self.imports = imports          # the imports folder on the pool (exports only)
 
-    def list(self) -> list[dict]:
+    def list(self, exports: bool = False) -> list[dict]:
         out = []
         for part in self.usb.list():
             label = " ".join(x for x in (part.get("label"), part.get("model")) if x) or part["name"]
             out.append({"id": f"usb:{part['name']}", "kind": "usb", "label": f"USB {label} ({part['fstype']})",
-                        "size": part["size"], "path": part["mounted"]})
+                        "size": part["size"], "path": part["mounted"], "fstype": part["fstype"]})
         for i, folder in enumerate(self.dirs):
             out.append({"id": f"dir:{i}", "kind": "dir", "label": str(folder), "size": None,
-                        "path": str(folder) if folder.is_dir() else None})
+                        "path": str(folder) if folder.is_dir() else None, "fstype": None})
+        if exports and self.imports is not None and self.imports.is_dir():
+            out.append({"id": "imports", "kind": "imports", "label": f"Imports folder ({self.imports})",
+                        "size": None, "path": str(self.imports), "fstype": None})
         return out
 
+    def fstype(self, location: str) -> str | None:
+        return next((x["fstype"] for x in self.list(exports=True) if x["id"] == location), None)
+
     def label(self, location: str) -> str:
-        return next((x["label"] for x in self.list() if x["id"] == location), location)
+        return next((x["label"] for x in self.list(exports=True) if x["id"] == location), location)
 
     def open(self, location: str, writable: bool = False) -> Path:
         kind, _, key = location.partition(":")
@@ -517,6 +564,8 @@ class BackupLocations:
                 raise BackupError(f"{key} is not a USB disk on the server (unplugged?)") from None
             except RuntimeError as e:
                 raise BackupError(str(e)) from None
+        if location == "imports" and self.imports is not None and self.imports.is_dir():
+            return self.imports
         if kind == "dir" and key.isdigit() and int(key) < len(self.dirs):
             folder = self.dirs[int(key)]
             if not folder.is_dir():
@@ -541,6 +590,8 @@ def recover(make_session: sessionmaker[Session]) -> None:
         for job in db.scalars(select(BackupJob).where(BackupJob.status.in_(("queued", "running")))):
             if job.kind == "backup" and job.folder and not (Path(job.folder) / MANIFEST).exists():
                 shutil.rmtree(job.folder, ignore_errors=True)
+            if job.kind == "export" and job.folder:
+                Path(job.folder + ".part").unlink(missing_ok=True)
             job.status, job.error, job.finished_at = "failed", "interrupted: ggNet stopped while it ran", _now()
             logger.warning("%s of %s was interrupted", job.kind.capitalize(), job.image_name)
         db.commit()

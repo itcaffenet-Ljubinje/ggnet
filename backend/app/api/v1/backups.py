@@ -7,6 +7,7 @@ API for Images -> Backup / Restore (app.services.backups):
   GET  /backups/estimate?image_id=      a backup's size, with every version
   POST /backups                         back up images (one job each, run one after another)
   POST /backups/restore                 restore a backup into a new image
+  POST /backups/export                  one version into a VHDX or VHD file
   GET  /backups/jobs                    the history
   POST /backups/jobs/{id}/cancel        stop a queued or running job
 """
@@ -29,6 +30,7 @@ from app.api.v1.schemas import (
     BackupLocationOpenOut,
     BackupLocationOut,
     BackupStartIn,
+    ExportIn,
     FoundBackupOut,
     RestoreIn,
 )
@@ -53,8 +55,9 @@ def _found(b: backups.FoundBackup) -> FoundBackupOut:
 
 
 @router.get("/locations", response_model=list[BackupLocationOut])
-def locations(locs=Depends(get_backup_locations)):
-    return [BackupLocationOut(**x) for x in locs.list()]
+def locations(exports: bool = False, locs=Depends(get_backup_locations)):
+    """Where backups go; with exports=true also the imports folder (an exported file can be imported again)."""
+    return [BackupLocationOut(**x) for x in locs.list(exports=exports)]
 
 
 @router.post("/locations/{location}/open", response_model=BackupLocationOpenOut)
@@ -147,6 +150,55 @@ def start_restore(body: RestoreIn, db: Session = Depends(get_db), runner=Depends
     db.add(job)
     db.commit()
     logger.info("Restore of %s into '%s' queued", body.folder, body.name)
+    runner.kick()
+    db.refresh(job)
+    return job
+
+
+@router.post("/export", response_model=BackupJobOut, status_code=status.HTTP_201_CREATED)
+def start_export(body: ExportIn, db: Session = Depends(get_db), runner=Depends(get_backup_runner),
+                 prov: Provisioner = Depends(get_provisioner), locs=Depends(get_backup_locations)):
+    """
+    One version of an image into a dynamic VHDX or VHD file; the image is only
+    read. Refused before it starts when the file cannot fit: VHD holds at most
+    2040 GB, FAT32 takes no file over 4 GB, and the space must be free.
+    """
+    image = db.get(Image, body.image_id)
+    if image is None:
+        not_found("Image", body.image_id)
+    if not image.published:
+        conflict(f"'{image.name}' has no versions yet; publish it first")
+    snapshot = body.snapshot or image.snapshot
+    details = prov.zfs.snapshot_details(image.zvol_path) or []
+    if snapshot not in {d["name"] for d in details}:
+        not_found("Snapshot", f"{image.name}@{snapshot}")
+    if not body.file_name.lower().endswith(f".{body.format}"):
+        conflict(f"The file name must end in .{body.format}")
+    volume = image.size_gb * 1024 ** 3
+    if body.format == "vhd" and volume > backups.VHD_MAX_BYTES:
+        conflict(f"A VHD holds at most 2040 GB and {image.name} is {image.size_gb} GB; choose VHDX")
+    # The file holds the version's data, uncompressed (it is at most the disk's size).
+    used = prov.zfs.get_bytes(f"{image.zvol_path}@{snapshot}", "logicalreferenced")
+    size = min(volume, used) if used is not None else volume
+    if locs.fstype(body.location) == "vfat" and size > backups.FAT32_MAX_BYTES:
+        conflict(f"The file would be about {size / 1024 ** 3:.0f} GB, and this USB disk has FAT32, which takes "
+                 "no file over 4 GB. Use a disk with exFAT, NTFS or ext4, or the imports folder.")
+    try:
+        path = locs.open(body.location, True)
+    except backups.BackupError as e:
+        conflict(str(e))
+    out = path / body.file_name
+    if out.exists():
+        conflict(f"{body.file_name} already exists there; choose another name")
+    if size + backups.SPARE_BYTES > shutil.disk_usage(path).free:
+        conflict(f"Not enough free space: the file can take up to {size / 1024 ** 3:.1f} GB, "
+                 f"{shutil.disk_usage(path).free / 1024 ** 3:.1f} GB is free there")
+    job = BackupJob(kind="export", image_id=image.id, image_name=image.name, location=body.location,
+                    location_label=locs.label(body.location), folder=str(out), snapshot=snapshot,
+                    format=body.format, total_bytes=size)
+    db.add(job)
+    db.commit()
+    logger.info("Export of %s@%s to %s queued", image.name, snapshot, out)
     runner.kick()
     db.refresh(job)
     return job

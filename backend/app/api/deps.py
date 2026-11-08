@@ -84,7 +84,12 @@ def get_backup_locations(prov: Provisioner = Depends(get_provisioner)):
     from app.services.imports import UsbDisks
 
     paths = get_config().get("paths") or {}
-    return BackupLocations(UsbDisks(prov.zfs.runner), [Path(p) for p in paths.get("backup_dirs") or []])
+    try:
+        mount = prov.zfs.get_property(prov.zfs.layout.imports, "mountpoint")
+    except Exception:
+        mount = ""
+    return BackupLocations(UsbDisks(prov.zfs.runner), [Path(p) for p in paths.get("backup_dirs") or []],
+                           Path(mount) if mount.startswith("/") else None)
 
 
 @lru_cache(maxsize=4)
