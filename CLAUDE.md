@@ -54,6 +54,8 @@ Target clients: Windows 11, UEFI Secure Boot, TPM 2.0.
 - iSCSI: ONE shared target `<iscsi_iqn_prefix>:<iscsi_target_name>`; each client is an ACL (its initiator IQN)
   with its own mapped LUNs. Never delete the shared target to fix one client. Design: `docs/architecture.md`.
 - Code: `/opt/ggnet`, data: `/var/lib/ggnet`, service: `ggnet.service`
+- Database: PostgreSQL 17 on the host (`ggnet`, role `root`, Unix socket, peer auth) for installs; SQLite for
+  development and tests. Tests also run on PostgreSQL with `GGNET_TEST_POSTGRES` (CI job `backend-postgres`).
 - Ports: 8443 web UI/API (HTTPS), 8088 HTTP for the PCs (iPXE, WinPE, agent; browsers redirected to 8443),
   3260 iSCSI, 67/4011 UDP proxyDHCP, 69 UDP TFTP, 80 HTTP boot. `python -m app.serve` runs both web ports.
   Do not use 8006/8007 (Proxmox/PBS) or 8008 (ProxMenux).

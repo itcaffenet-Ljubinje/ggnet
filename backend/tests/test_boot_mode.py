@@ -61,7 +61,7 @@ def _mark_dirty(db_url) -> None:
     """The PC wrote to its writebacks (the watcher saw it connected)."""
     engine = make_engine(db_url)
     with engine.begin() as conn:
-        conn.execute(text("UPDATE machines SET writeback_dirty = 1"))
+        conn.execute(text("UPDATE machines SET writeback_dirty = TRUE"))
     engine.dispose()
 
 

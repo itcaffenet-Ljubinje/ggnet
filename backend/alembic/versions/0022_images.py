@@ -5,7 +5,7 @@ Only names change, every row stays. SQLite cannot rename a constraint or an
 index, so `images` and `machines` are rebuilt (batch mode) with foreign key
 checks off for the migration: dropping a table that others point to is
 refused otherwise (see 0021). The foreign keys are checked before they are
-turned on again.
+turned on again. PostgreSQL renames each of them in place.
 
 Revision ID: 0022
 Revises: 0021
@@ -43,8 +43,29 @@ def _foreign_keys(on: bool) -> None:
         op.execute(f"PRAGMA foreign_keys={'ON' if on else 'OFF'}")
 
 
+def _rename_in_place(old_table: str, new_table: str, columns: list[tuple[str, str, str]],
+                     card: tuple[str, str]) -> None:
+    """The same names as the SQLite rebuild leaves, renamed in place (PostgreSQL)."""
+    op.rename_table(old_table, new_table)
+    op.execute(f'ALTER TABLE {new_table} RENAME CONSTRAINT pk_{old_table} TO pk_{new_table}')
+    for col in ('name', 'zvol_path'):
+        op.execute(f'ALTER TABLE {new_table} RENAME CONSTRAINT uq_{old_table}_{col} TO uq_{new_table}_{col}')
+    for old_col, new_col, kind in columns:
+        op.execute(f'ALTER TABLE machines RENAME COLUMN {old_col} TO {new_col}')
+        if kind == 'index':
+            op.execute(f'ALTER INDEX ix_machines_{old_col} RENAME TO ix_machines_{new_col}')
+        else:
+            op.execute(f'ALTER TABLE machines RENAME CONSTRAINT uq_machines_{old_col} TO uq_machines_{new_col}')
+        op.execute(f'ALTER TABLE machines RENAME CONSTRAINT fk_machines_{old_col}_{old_table} '
+                   f'TO fk_machines_{new_col}_{new_table}')
+    op.execute(f'ALTER TABLE image_hardware RENAME COLUMN {card[0]} TO {card[1]}')
+
+
 def _rename(old_table: str, new_table: str, columns: list[tuple[str, str, str]], card: tuple[str, str]) -> None:
     """Rename the image table, its constraints, the machines' columns and the cards' column."""
+    if op.get_bind().dialect.name != 'sqlite':
+        _rename_in_place(old_table, new_table, columns, card)
+        return
     op.rename_table(old_table, new_table)
     with op.batch_alter_table(new_table, recreate='always') as b:
         for col in ('name', 'zvol_path'):

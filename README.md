@@ -45,8 +45,24 @@ ggnet-update                    # the newest release
 ggnet-update --version v0.2.0   # a given one
 ```
 
+Before its migrations, an update dumps the database (`pg_dump`) into `/var/lib/ggnet/db-backups` (the
+newest 5 are kept) and puts it back if a migration fails.
+
 A release is made by pushing a tag that matches `VERSION` (`git tag v0.2.0 && git push origin v0.2.0`); the
 Release workflow builds the packages and their checksums.
+
+## Database
+
+ggNet keeps its records (machines, images, users, settings, activity) in PostgreSQL on the same server: the
+installer installs the `postgresql` package (Debian 13: PostgreSQL 17) and creates the database `ggnet`.
+ggNet signs in over the Unix socket as the role `root` (peer authentication): there is no password, and no
+TCP port is opened for it. An install from before PostgreSQL is moved on its next update: its SQLite database
+is copied (`ggnet-admin copy-database`) and stays in `/var/lib/ggnet` as it was.
+
+```bash
+psql ggnet                                          # look around (as root)
+pg_restore --clean -d ggnet /var/lib/ggnet/db-backups/ggnet-<date>.dump   # an update's backup, by hand
+```
 
 ## Service
 
@@ -84,6 +100,10 @@ pip install -r requirements-dev.txt
 pytest
 uvicorn app.main:app --reload --port 8088
 ```
+
+Development and the tests use SQLite (`./data/ggnet.db`). To run the tests on PostgreSQL as well, point
+`GGNET_TEST_POSTGRES` at an empty database the tests may wipe:
+`GGNET_TEST_POSTGRES=postgresql+psycopg:///ggnet_test?host=/run/postgresql pytest` (CI does both).
 
 Releases: bump `VERSION`, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The Release workflow builds `ggnet.tar.gz`, which the installer downloads.
 

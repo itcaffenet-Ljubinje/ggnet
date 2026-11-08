@@ -28,7 +28,7 @@ def upgrade() -> None:
         sa.Column('instance', sa.String(length=64), nullable=False),
         sa.Column('name', sa.String(length=255), nullable=False),
         sa.Column('snapshot', sa.String(length=64), nullable=True),
-        sa.Column('added_at', sa.DateTime(), nullable=False),
+        sa.Column('added_at', sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(['disk_id'], ['game_disks.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('disk_id', 'nic', 'instance', name='uq_image_hardware_card'),

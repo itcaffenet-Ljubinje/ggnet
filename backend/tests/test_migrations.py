@@ -59,10 +59,10 @@ def test_0021_0022_keep_images_that_pcs_and_cards_point_to(db_url):
 
 
 def test_foreign_keys_enforced(db_url):
-    """SQLite must actually check foreign keys."""
+    """The database must actually check foreign keys (SQLite only does when told to)."""
     engine = make_engine(db_url)
     with engine.connect() as conn:
-        with pytest.raises(Exception, match="FOREIGN KEY"):
+        with pytest.raises(Exception, match="(?i)foreign key"):
             conn.execute(text(
                 "INSERT INTO machines (name, mode, initiator_iqn, game_image_id, status, "
                 "created_at, updated_at) VALUES ('pc01', 'disk', 'iqn.x:pc01', 999, 'idle', "

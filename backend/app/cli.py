@@ -4,6 +4,8 @@ Sign-in from the server's shell, for when the web UI cannot help:
   python -m app.cli setup-code              the code that creates the first admin
   python -m app.cli reset-password USER     a new password (asked twice); signs USER out
   python -m app.cli create-admin USER       an extra admin, e.g. when every admin is locked out
+  python -m app.cli copy-database URL       copy every row from URL (e.g. the old SQLite
+                    [--to URL]              database) into the configured (or --to), empty one
 
 The installer runs them with GGNET_CONFIG set (ggnet-admin wraps this).
 """
@@ -39,7 +41,13 @@ def main(argv: list[str] | None = None) -> int:
     reset.add_argument("username")
     create = sub.add_parser("create-admin")
     create.add_argument("username")
+    copy = sub.add_parser("copy-database")
+    copy.add_argument("source", help="e.g. sqlite:////var/lib/ggnet/ggnet.db")
+    copy.add_argument("--to", help="the target database (default: the configured one)")
     args = parser.parse_args(argv)
+
+    if args.command == "copy-database":
+        return _copy_database(args.source, args.to)
 
     with get_sessionmaker()() as db:
         if args.command == "setup-code":
@@ -69,6 +77,24 @@ def main(argv: list[str] | None = None) -> int:
         auth.setup_code(db)          # the first admin exists now: drop an unused setup code
         print(f"Admin '{username}' created.")
         return 0
+
+
+def _copy_database(source_url: str, target_url: str | None) -> int:
+    from app.db.session import make_engine
+    from app.db.transfer import TransferError, copy_database
+
+    source, target = make_engine(source_url), make_engine(target_url)
+    try:
+        copied = copy_database(source, target)
+    except TransferError as e:
+        sys.exit(f"Copying the database failed: {e}")
+    finally:
+        source.dispose()
+        target.dispose()
+    for c in copied:
+        print(f"{c.table}: {c.rows}")
+    print(f"Copied {sum(c.rows for c in copied)} rows into {target.url.render_as_string(hide_password=True)}.")
+    return 0
 
 
 if __name__ == "__main__":

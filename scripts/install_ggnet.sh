@@ -145,6 +145,15 @@ PY
 )" || die "--update: cannot read $CONF_FILE."
     [[ -n "$POOL" && -n "$SERVICE_IP" ]] || die "--update: $CONF_FILE has no pool or server IP."
 fi
+# The database an existing install uses (an old one: SQLite, moved to PostgreSQL below).
+OLD_DB_URL=""
+if [[ -f "$CONF_FILE" ]]; then
+    OLD_DB_URL="$(python3 - "$CONF_FILE" <<'PY' || true
+import sys, tomllib
+print(tomllib.load(open(sys.argv[1], "rb")).get("paths", {}).get("database", ""))
+PY
+)"
+fi
 command -v pveversion >/dev/null || die "This is not a Proxmox VE host (pveversion not found)."
 PVE_MAJOR="$(pveversion | head -n1 | sed -n 's#^pve-manager/\([0-9]*\)\..*#\1#p')"
 [[ "$PVE_MAJOR" =~ ^[0-9]+$ ]] || die "Cannot read the Proxmox VE version from pveversion."
@@ -339,8 +348,119 @@ apt-get update -qq
 # sbsigntool and openssl to sign iPXE with the ggNet key.
 # Windows images edited on the server: ntfs-3g (mount, ntfsresize), libwin-hivex-perl
 # (hivexregedit), gdisk and fdisk (sgdisk, sfdisk) to grow a disk's data partition.
+# postgresql: ggNet's database (local only, over its Unix socket).
 apt-get install -y -qq python3 python3-venv python3-pip targetcli-fb python3-rtslib-fb dnsmasq-base ipxe \
-    shim-signed sbsigntool openssl ntfs-3g libwin-hivex-perl gdisk fdisk >/dev/null
+    shim-signed sbsigntool openssl ntfs-3g libwin-hivex-perl gdisk fdisk postgresql >/dev/null
+
+# ---------- database helpers (used in 10b) ----------
+PG_DB="ggnet"
+PG_URL="postgresql+psycopg:///$PG_DB?host=/run/postgresql"
+DB_BACKUPS="$DATA_DIR/db-backups"
+DB_KEEP=5
+GGNET_ADMIN="/usr/local/sbin/ggnet-admin"
+
+pg() { runuser -u postgres -- psql -qAtX "$@"; }
+
+# ggNet runs as root and signs in to PostgreSQL as the role root over the
+# Unix socket (peer authentication): no password, and no TCP port is used.
+setup_postgres() {
+    systemctl enable --now postgresql >/dev/null 2>&1 || true
+    local i
+    for i in $(seq 30); do pg -c 'SELECT 1' >/dev/null 2>&1 && break; sleep 1; done
+    pg -c 'SELECT 1' >/dev/null 2>&1 || die "PostgreSQL does not start. Logs: journalctl -u postgresql@*-main -n 50"
+    [[ "$(pg -c "SELECT 1 FROM pg_roles WHERE rolname = 'root'")" == 1 ]] || pg -c 'CREATE ROLE root LOGIN'
+    [[ "$(pg -c "SELECT 1 FROM pg_database WHERE datname = '$PG_DB'")" == 1 ]] \
+        || runuser -u postgres -- createdb -O root "$PG_DB"
+}
+
+# alembic upgrade head on a database URL (not necessarily the configured one).
+alembic_upgrade() {
+    (cd "$INSTALL_DIR/backend" && GGNET_CONFIG="$CONF_FILE" "$INSTALL_DIR/venv/bin/python" - "$1" <<'PY'
+import sys
+from alembic import command
+from alembic.config import Config
+cfg = Config("alembic.ini")
+cfg.set_main_option("sqlalchemy.url", sys.argv[1].replace("%", "%%"))
+command.upgrade(cfg, "head")
+PY
+)
+}
+
+set_database_url() {
+    cp -a "$CONF_FILE" "$CONF_FILE.bak.$(date +%Y%m%d%H%M%S)"
+    python3 - "$CONF_FILE" "$1" <<'PY'
+import re, sys
+path, url = sys.argv[1], sys.argv[2]
+text = open(path).read()
+new, n = re.subn(r'(?m)^database = .*$', lambda m: f'database = "{url}"', text, count=1)
+if n != 1:
+    sys.exit("no database line in " + path)
+open(path, "w").write(new)
+PY
+}
+
+prune_backups() {
+    # The newest DB_KEEP of a kind; the rest goes.
+    find "$DB_BACKUPS" -maxdepth 1 -name "$1" -printf '%T@ %p\n' | sort -rn | tail -n +$((DB_KEEP + 1)) \
+        | cut -d' ' -f2- | xargs -r rm -f
+}
+
+# An install from before PostgreSQL: copy its SQLite database (brought to
+# the same migration first) into the empty PostgreSQL one and switch the
+# config to it. The SQLite file stays as it is; on any problem ggNet keeps
+# running on it and the next update tries again.
+move_to_postgres() {
+    local url="$1" file="${1#sqlite:///}" copy
+    [[ -f "$file" ]] || { set_database_url "$PG_URL"; return; }
+    if [[ -n "$(pg -d "$PG_DB" -c "SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'machines'")" ]] \
+        && [[ "$(pg -d "$PG_DB" -c 'SELECT count(*) FROM machines')" != 0 ]]; then
+        red "PostgreSQL database $PG_DB already has data; ggNet stays on $file. Move it by hand:"
+        red "  ggnet-admin copy-database $url --to $PG_URL"
+        set_database_url "$url"
+        return
+    fi
+    info "Moving the database from SQLite ($file) to PostgreSQL ($PG_DB)..."
+    install -d -m 700 "$DB_BACKUPS"
+    copy="$DB_BACKUPS/ggnet-$(date +%Y%m%d%H%M%S).sqlite"
+    python3 - "$file" "$copy" <<'PY' || die "Backing up $file failed."
+import sqlite3, sys
+src, dst = sqlite3.connect(sys.argv[1]), sqlite3.connect(sys.argv[2])
+src.backup(dst)
+dst.close(); src.close()
+PY
+    if alembic_upgrade "$url" && alembic_upgrade "$PG_URL" \
+        && "$GGNET_ADMIN" copy-database "$url" --to "$PG_URL"; then
+        set_database_url "$PG_URL"
+        green "Database moved to PostgreSQL. The old SQLite file stays in $file (backup: $copy)."
+    else
+        red "Moving the database to PostgreSQL failed; ggNet stays on SQLite ($file)."
+        pg -d "$PG_DB" -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION root' >/dev/null 2>&1 || true
+        set_database_url "$url"
+    fi
+}
+
+# alembic upgrade head on the configured database. On PostgreSQL a dump is
+# taken first (the newest $DB_KEEP are kept) and put back if a migration
+# fails, so a broken update never leaves a half-migrated database.
+migrate_database() {
+    local url="$1" dump=""
+    info "Applying database migrations..."
+    if [[ "$url" == postgresql* ]] \
+        && [[ -n "$(pg -d "$PG_DB" -c "SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'alembic_version'")" ]]; then
+        install -d -m 700 "$DB_BACKUPS"
+        dump="$DB_BACKUPS/ggnet-$(date +%Y%m%d%H%M%S).dump"
+        pg_dump -h /run/postgresql -Fc -f "$dump" "$PG_DB" || die "Backing up the database failed; nothing was changed."
+        prune_backups 'ggnet-*.dump'
+    fi
+    if ! alembic_upgrade "$url"; then
+        if [[ -n "$dump" ]]; then
+            red "A database migration failed; putting the database back from $dump..."
+            pg_restore -h /run/postgresql --clean --if-exists --single-transaction -d "$PG_DB" "$dump" \
+                || die "Restoring $dump failed. Restore it by hand: pg_restore --clean -d $PG_DB $dump"
+        fi
+        die "A database migration failed (log above); the database is as before the update."
+    fi
+}
 
 # ---------- 8. ZFS datasets ----------
 if [[ $SET_AUTOTRIM -eq 1 ]]; then
@@ -474,7 +594,8 @@ frontend_dist = "$INSTALL_DIR/frontend/dist"
 
 [paths]
 data_dir = "$DATA_DIR"
-database = "sqlite:///$DATA_DIR/ggnet.db"
+# PostgreSQL on this server, over its Unix socket (peer authentication, no password).
+database = "$PG_URL"
 # Unpacked ggnet-agent-win-x64.zip, offered in the web UI (Settings → Client app).
 agent_dir = "$DATA_DIR/agent"
 # The hardware scan (Settings → Hardware scan): wimboot and Windows PE, its
@@ -489,9 +610,17 @@ EOF
 chmod 640 "$CONF_FILE"
 fi
 
-# ---------- 10b. database schema ----------
-info "Applying database migrations..."
-(cd "$INSTALL_DIR/backend" && GGNET_CONFIG="$CONF_FILE" "$INSTALL_DIR/venv/bin/alembic" upgrade head)
+# ---------- 10b. database (PostgreSQL) ----------
+setup_postgres
+if [[ "$OLD_DB_URL" == sqlite:///* ]]; then
+    move_to_postgres "$OLD_DB_URL"
+fi
+DB_URL="$(python3 - "$CONF_FILE" <<'PY'
+import sys, tomllib
+print(tomllib.load(open(sys.argv[1], "rb")).get("paths", {}).get("database", ""))
+PY
+)"
+migrate_database "$DB_URL"
 
 # ---------- 10c. PXE: proxyDHCP + TFTP (ggnet-pxe) ----------
 info "Setting up PXE (proxyDHCP + TFTP) on $IFACE..."
@@ -698,8 +827,8 @@ fi
 cat >"$UNIT_FILE" <<EOF
 [Unit]
 Description=ggNet diskless boot manager
-After=network-online.target zfs.target zfs-mount.service
-Wants=network-online.target
+After=network-online.target zfs.target zfs-mount.service postgresql.service
+Wants=network-online.target postgresql.service
 
 [Service]
 Type=simple

@@ -42,7 +42,8 @@ class UTCDateTime(TypeDecorator):
     """
     Timezone-aware datetime that always comes back in UTC. SQLite drops the
     offset, so without this a value read back from the database is naive and
-    the API would send it without "Z" (browsers then read it as local time).
+    the API would send it without "Z" (browsers then read it as local time);
+    PostgreSQL returns it in the server's time zone (+01:00), the same moment.
     """
 
     impl = DateTime(timezone=True)
@@ -54,9 +55,11 @@ class UTCDateTime(TypeDecorator):
         return value.astimezone(timezone.utc) if value is not None else None
 
     def process_result_value(self, value: datetime | None, dialect) -> datetime | None:
-        if value is not None and value.tzinfo is None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
             return value.replace(tzinfo=timezone.utc)
-        return value
+        return value.astimezone(timezone.utc)
 
 
 def _str_enum(cls: type[enum.Enum]) -> Enum:
