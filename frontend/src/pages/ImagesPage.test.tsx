@@ -49,6 +49,7 @@ describe("ImagesPage", () => {
     const reload = vi.fn().mockResolvedValue(undefined);
     render(<ImagesPage disks={[]} machines={[]} reload={reload} />);
 
+    await userEvent.click(screen.getByRole("button", { name: "Create image" }));
     await userEvent.type(screen.getByLabelText("Name"), "cs2");
     await userEvent.clear(screen.getByLabelText("Size (GB)"));
     await userEvent.type(screen.getByLabelText("Size (GB)"), "50");
@@ -58,7 +59,7 @@ describe("ImagesPage", () => {
       { url: "/api/v1/images", method: "POST", body: { name: "cs2", size_gb: 50, kind: "game" } },
     ]);
     expect(reload).toHaveBeenCalled();
-    expect(screen.getByLabelText("Name")).toHaveValue("");
+    expect(screen.queryByRole("dialog", { name: "Create image" })).toBeNull();      // closed when made
   });
 
   it("does nothing when publish is not confirmed", async () => {
@@ -207,15 +208,27 @@ describe("ImagesPage", () => {
     expect(screen.getByText(/A draft has no snapshots or writebacks yet/)).toBeInTheDocument();
   });
 
-  it("copies an image under a new name", async () => {
+  it("copies an image under a new name, with only the active version or with all of them", async () => {
     const fetchMock = stubFetch(201, disk({ id: 5, name: "cs2-b", copy_source: "tank/ggnet/images/cs2@base" }));
-    const prompt = vi.spyOn(window, "prompt").mockReturnValue(" CS2-B ");
     const reload = vi.fn().mockResolvedValue(undefined);
     render(<ImagesPage disks={[disk()]} machines={[]} reload={reload} />);
     await menu("cs2", "Copy");
-    expect(prompt.mock.calls[0][1]).toBe("cs2-copy");
-    expect(calls(fetchMock).filter((c) => c.method !== "GET")).toEqual([{ url: "/api/v1/images/1/copy", method: "POST", body: { name: "cs2-b" } }]);
+    const name = screen.getByLabelText("Name of the copy");
+    expect(name).toHaveValue("cs2-copy");
+    await userEvent.clear(name);
+    await userEvent.type(name, " CS2-B ");
+    await userEvent.click(screen.getByRole("button", { name: "Copy" }));
+    expect(calls(fetchMock).filter((c) => c.method !== "GET")).toEqual([
+      { url: "/api/v1/images/1/copy", method: "POST", body: { name: "cs2-b" } },
+    ]);
     expect(reload).toHaveBeenCalled();
+
+    await menu("cs2", "Copy");
+    await userEvent.click(screen.getByLabelText(/All versions/));
+    await userEvent.click(screen.getByRole("button", { name: "Copy" }));
+    expect(calls(fetchMock).filter((c) => c.method !== "GET").at(-1)?.body).toEqual({
+      name: "cs2-copy", all_versions: true,
+    });
   });
 
   it("cancels a running import from its menu", async () => {
@@ -275,8 +288,9 @@ describe("ImagesPage", () => {
     expect(osTable).not.toHaveTextContent("cs2");
     expect(gameTable).toHaveTextContent("cs2");
 
+    await userEvent.click(screen.getByRole("button", { name: "Create image" }));
     await userEvent.type(screen.getByLabelText("Name"), "win11-b");
-    await userEvent.selectOptions(screen.getByLabelText("Kind"), "os");
+    await userEvent.selectOptions(screen.getByLabelText("Type"), "os");
     await userEvent.click(screen.getByRole("button", { name: "Create" }));
     expect(calls(fetchMock).filter((c) => c.method === "POST")[0].body).toMatchObject({ kind: "os" });
   });
@@ -382,10 +396,22 @@ describe("ImagesPage", () => {
       ),
     );
     render(<ImagesPage disks={[]} machines={[]} reload={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Create image" }));
+    await userEvent.type(screen.getByLabelText("Name"), "game-test");
     expect(await screen.findByText("500.0 GB free on the pool")).toBeInTheDocument();
     await userEvent.clear(screen.getByLabelText("Size (GB)"));
     await userEvent.type(screen.getByLabelText("Size (GB)"), "10000");
     expect(screen.getByText(/More than the 500.0 GB free on the pool/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create" })).toBeDisabled();
+  });
+
+  it("finds images by name", async () => {
+    stubFetch(200, []);
+    render(<ImagesPage disks={[disk(), disk({ id: 2, name: "valorant" }), disk({ id: 3, name: "win11", kind: "os" })]}
+                       machines={[]} reload={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText("Search the images"), "VAL");
+    expect(screen.getByText("valorant")).toBeInTheDocument();
+    expect(screen.queryByText("cs2")).toBeNull();
+    expect(screen.getByText("No OS image matches.")).toBeInTheDocument();
   });
 });

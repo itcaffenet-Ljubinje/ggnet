@@ -250,10 +250,12 @@ class WinPeFromIsoIn(BaseModel):
 
 
 class ImageCopy(BaseModel):
-    """A new image from one version of this one (default: the active version)."""
+    """A new image from one version of this one (default: the active version), or from all of them."""
 
     name: str
     snapshot: str | None = None
+    # Every version, with the same names and the same active one (snapshot is ignored).
+    all_versions: bool = False
 
     check_name = field_validator("name")(_disk_name)
 
@@ -339,6 +341,7 @@ class SnapshotOut(BaseModel):
     locked: bool = False         # never deleted (retention or by hand) until unlocked
     # OS images: signs of an unfinished Windows update ([]: none); None: not checked.
     update: list[str] | None = None
+    retention: str | None = None    # what automatic removal does with it, in words
 
 
 class ImageUpdateOut(BaseModel):

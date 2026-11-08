@@ -2950,3 +2950,12 @@ tr.row-warn td {
 .error-icon {
   color: var(--danger, #ef4444);
 }
+
+.images-toolbar {
+  align-items: center;
+}
+
+.images-search {
+  margin-left: auto;
+  min-width: 200px;
+}

@@ -485,6 +485,62 @@ class ZFSManager:
         logger.info("Copied %s to %s@base", snapshot, target)
         return True
 
+    def copy_image(
+        self,
+        newest: str,
+        target: str,
+        progress: Callable[[int, int], None] | None = None,
+        timeout: int = COPY_TIMEOUT,
+    ) -> bool:
+        """
+        A full, independent copy of a master with ALL its versions (up to
+        `newest`, its last), their names, comments and other properties:
+
+            zfs send -R -c -P -v <master>@<newest> | zfs recv -u <target>
+
+        Every version of the target is held and the target made read-only, as
+        publish_master() leaves a master. On failure nothing is left behind.
+        """
+        if "@" not in newest or not self._is_managed(newest):
+            return False
+        if not self._is_managed(target, allow_snapshot=False) or self.dataset_exists(target):
+            return False
+        total, offset, last = 0, 0, 0
+
+        def line(text: str) -> None:
+            nonlocal total, offset, last
+            parts = text.split("\t")
+            if parts[0] == "size" and len(parts) > 1:
+                total = _int(parts[1])
+            elif progress and total and len(parts) > 1 and parts[0][:1].isdigit():
+                done = _int(parts[1])
+                if done < last:              # -v counts each version's stream from 0
+                    offset += last
+                last = done
+                progress(min(offset + done, total), total)
+
+        ok, _, err = self.runner.run_pipe(
+            ["zfs", "send", "-R", "-c", "-P", "-v", newest],
+            ["zfs", "recv", "-u", target],
+            timeout=timeout,
+            on_producer_line=line,
+        )
+        if ok:
+            versions = self.list_snapshots(target) or []
+            ok = bool(versions) and all(self.protect_snapshot(f"{target}@{v}") for v in versions) \
+                and self.set_readonly(target, True)
+            err = self.runner.last_error
+        if not ok:
+            logger.error("Copying %s with all its versions to %s failed: %s", newest, target, err)
+            if self.dataset_exists(target) and not self.destroy(target, recursive=True):
+                logger.error("Could not remove the partial copy %s", target)
+            self.runner.last_error = err
+            return False
+        if progress and total:
+            progress(total, total)
+        logger.info("Copied %s with all its versions to %s", newest.partition("@")[0], target)
+        return True
+
     def apply_clone(self, clone: str, master: str, base_snap: str, new_snap: str) -> bool:
         """
         Turn a client's writeback into a new version of its master

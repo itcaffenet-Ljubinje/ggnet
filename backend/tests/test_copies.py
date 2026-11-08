@@ -60,6 +60,24 @@ def test_copy_of_another_version_becomes_base(client, host, disk, copier):
     assert ["zfs", "rename", f"{COPY}@v2", f"{COPY}@base"] in host.calls
 
 
+def test_a_copy_can_keep_every_version_and_the_active_one(client, host, disk, copier, db_url):
+    for v in ("v2", "v3"):
+        host.snapshots[f"{MASTER}@{v}"] = {"ggnet:protected"}
+    host.snap_props[f"{MASTER}@v2"] = {"ggnet:comment": "AB new drivers"}
+    client.put(f"/api/v1/images/{disk['id']}/active-snapshot", json={"snapshot": "v2"})
+    r = client.post(f"/api/v1/images/{disk['id']}/copy", json={"name": "cs2-copy", "all_versions": True})
+    assert r.status_code == 201, r.text
+    d = client.get(f"/api/v1/images/{r.json()['id']}").json()
+    assert (d["published"], d["snapshot"], d["copy_source"]) == (True, "v2", None)      # same active version
+    assert [s for s in host.snapshots if s.startswith(f"{COPY}@")] == [f"{COPY}@base", f"{COPY}@v2", f"{COPY}@v3"]
+    assert all(host.snapshots[f"{COPY}@{v}"] == {"ggnet:protected"} for v in ("base", "v2", "v3"))
+    assert host.snap_props[f"{COPY}@v2"]["ggnet:comment"] == "AB new drivers"
+    assert host.datasets[COPY]["readonly"] is True
+    assert ["zfs", "send", "-R", "-c", "-P", "-v", f"{MASTER}@v3", "|", "zfs", "recv", "-u", COPY] in host.calls
+    versions = client.get(f"/api/v1/images/{r.json()['id']}/snapshots").json()
+    assert [(v["name"], v["active"]) for v in versions] == [("base", False), ("v2", True), ("v3", False)]
+
+
 def test_copy_reports_progress(make_session, prov, host, client, disk):
     seen = []
     c = DiskCopier(make_session, prov, background=False)
@@ -128,3 +146,21 @@ def test_recover_marks_an_interrupted_copy_failed_and_removes_the_partial_zvol(
         d = db.query(Image).filter_by(name="busy").one()
         assert d.copy_error.startswith("Interrupted") and d.copy_percent is None
     assert "tank/ggnet/images/busy" not in host.datasets
+
+
+def test_progress_of_a_copy_with_all_versions_adds_up_the_versions(prov, host):
+    host.snapshots["tank/ggnet/images/cs2@base"] = set()
+    host.add_dataset("tank/ggnet/images/cs2")
+    seen = []
+
+    def pipe(producer, consumer, timeout=None, on_producer_line=None):
+        for line in ("size\t300", "00:00:01\t100\tcs2@base", "00:00:02\t150\tcs2@base",   # base: 150
+                     "00:00:03\t50\tcs2@v2", "00:00:04\t150\tcs2@v2"):                    # v2 starts at 0 again
+            on_producer_line(line)
+        host.add_dataset(consumer[-1])
+        host.snapshots[f"{consumer[-1]}@base"] = set()
+        return True, "", ""
+
+    host.run_pipe = pipe
+    assert prov.zfs.copy_image("tank/ggnet/images/cs2@base", "tank/ggnet/images/cs2-b", lambda d, t: seen.append(d))
+    assert seen == [100, 150, 200, 300, 300]

@@ -433,6 +433,31 @@ def test_delete_a_version(client, host, disk):
     assert [s["name"] for s in _versions(client, disk)] == ["v2"]
 
 
+def test_going_back_to_a_version_deletes_the_newer_ones(client, host, disk):
+    for v in ("v2", "v3"):
+        host.snapshots[f"{MASTER}@{v}"] = {"ggnet:protected"}
+    client.put(f"/api/v1/images/{disk['id']}/active-snapshot", json={"snapshot": "v3"})
+    url = f"/api/v1/images/{disk['id']}/snapshots"
+    pc = _machine(client, disk)                                         # runs on @v3
+    r = client.post(f"{url}/base/delete-newer")
+    assert r.status_code == 409 and "pc01" in r.text
+    assert [s["name"] for s in _versions(client, disk)] == ["base", "v2", "v3"]   # nothing changed
+    assert client.get(f"/api/v1/images/{disk['id']}").json()["snapshot"] == "v3"
+
+    client.post(f"/api/v1/machines/{pc['id']}/assign", json={"game_image_id": None})
+    client.put(f"{url}/v3/lock", json={"locked": True})
+    r = client.post(f"{url}/base/delete-newer")
+    assert r.status_code == 409 and "@v3 of cs2 is locked" in r.text
+    client.put(f"{url}/v3/lock", json={"locked": False})
+
+    r = client.post(f"{url}/base/delete-newer")
+    assert r.status_code == 200, r.text
+    assert r.json()["snapshot"] == "base"
+    assert [s["name"] for s in _versions(client, disk)] == ["base"]
+    assert client.post(f"{url}/base/delete-newer").status_code == 409            # nothing newer
+    assert client.post(f"{url}/v9/delete-newer").status_code == 404
+
+
 def test_delete_version_failure_keeps_the_hold(client, host, disk):
     m = _keeper(client, disk)
     client.post(f"/api/v1/machines/{m['id']}/apply-writebacks")

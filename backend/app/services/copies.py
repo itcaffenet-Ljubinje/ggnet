@@ -1,6 +1,7 @@
 """
 Copy of an image: one version of a master becomes a new, independent master
-(ZFSManager.copy_snapshot), in the background because a large game image takes
+(ZFSManager.copy_snapshot), or the master with all its versions does
+(ZFSManager.copy_image), in the background because a large game image takes
 a long time.
 
 The new disk is in the database from the start with `copy_source` set and
@@ -31,6 +32,8 @@ logger = logging.getLogger("ggnet.copies")
 
 # The database is updated at most this often with the progress.
 PROGRESS_EVERY = 2.0
+# copy_source of a copy with every version: "versions:<master>@<newest>#<active>".
+ALL_VERSIONS = "versions:"
 
 
 class DiskCopier:
@@ -60,13 +63,19 @@ class DiskCopier:
             source, target = disk.copy_source, disk.zvol_path
         logger.info("Copying %s to %s", source, target)
         started = time.monotonic()
-        ok = self.prov.copy_disk(source, target, self._progress(image_id))
+        everything = source.startswith(ALL_VERSIONS)
+        if everything:
+            newest, _, active = source[len(ALL_VERSIONS):].partition("#")
+            ok = self.prov.copy_all_versions(newest, target, self._progress(image_id))
+        else:
+            ok = self.prov.copy_disk(source, target, self._progress(image_id))
         with self.make_session() as db:
             disk = db.get(Image, image_id)
             if disk is None:
                 return
             if ok:
-                disk.snapshot, disk.copy_source, disk.copy_percent = "base", None, None
+                disk.snapshot = (active or newest.partition("@")[2]) if everything else "base"
+                disk.copy_source, disk.copy_percent = None, None
                 logger.info("Copy of %s to %s done in %.0f s", source, target, time.monotonic() - started)
             else:
                 disk.copy_percent = None

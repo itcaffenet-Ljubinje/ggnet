@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useState } from "react";
 import {
   ArchiveRestore,
   CheckCircle2,
@@ -26,7 +26,6 @@ import {
   isImport,
   isRestore,
   needsHardware,
-  type ImageKind,
   type Image,
   type ImageUsage,
   type Machine,
@@ -35,6 +34,8 @@ import {
 import { formatBytes } from "../format";
 import { ActionMenu, type MenuAction } from "../components/ActionMenu";
 import { BackupRestore } from "../components/BackupRestore";
+import { CopyImage } from "../components/CopyImage";
+import { CreateImage } from "../components/CreateImage";
 import { EditImage } from "../components/EditImage";
 import { ImportImage } from "../components/ImportImage";
 import { AddHardwareWizard } from "../components/AddHardwareWizard";
@@ -57,18 +58,12 @@ export function ImagesPage({ disks, machines, reload }: Props) {
   const { busy, error, setError, run } = useAsyncAction();
   const updates = useImageUpdates(disks);
   const usage = useImageUsage(disks);
-  const [name, setName] = useState("");
-  const [sizeGb, setSizeGb] = useState("100");
-  // The pool's free space, shown next to the size of a new image.
-  const [freeBytes, setFreeBytes] = useState<number | null>(null);
-  useEffect(() => {
-    api
-      .getStorage()
-      .then((s) => setFreeBytes(typeof s?.available_bytes === "number" ? s.available_bytes : null))
-      .catch(() => setFreeBytes(null));
-  }, [disks.length]);
-  const tooBig = freeBytes !== null && Number(sizeGb) * 1024 ** 3 > freeBytes;
-  const [kind, setKind] = useState<ImageKind>("game");
+  const [creating, setCreating] = useState(false);
+  // The image in the Copy dialog.
+  const [copyFrom, setCopyFrom] = useState<number | null>(null);
+  const [search, setSearch] = useState("");
+  const needle = search.trim().toLowerCase();
+  const matching = needle ? disks.filter((d) => d.name.includes(needle)) : disks;
   // Per draft disk: the machine picked to fill it on.
   const [editOn, setEditOn] = useState<Record<number, string>>({});
   // The image shown on its own details page.
@@ -90,13 +85,6 @@ export function ImagesPage({ disks, machines, reload }: Props) {
   const free = machines.filter(
     (m) => m.mode === "disk" && m.status === "idle" && m.game_image_id === null,
   );
-
-  async function create(e: FormEvent) {
-    e.preventDefault();
-    const ok = await run("create", () => api.createDisk(name.trim(), Number(sizeGb), kind));
-    if (ok) setName("");
-    await reload();
-  }
 
   async function publish(disk: Image) {
     const msg =
@@ -152,18 +140,8 @@ export function ImagesPage({ disks, machines, reload }: Props) {
     await reload();
   }
 
-  async function copy(disk: Image) {
-    const what = disk.kind === "os" ? "OS image" : "game image";
-    const next = window.prompt(
-      `Copy version @${disk.snapshot} of ${what} "${disk.name}" into a new ${what}.\n\n` +
-        "The copy is independent: it has its own data and either can be deleted later. It takes " +
-        "a few minutes per 100 GB and runs in the background. Name of the copy:",
-      `${disk.name}-copy`.slice(0, 32),
-    );
-    const name = next?.trim().toLowerCase();
-    if (!name) return;
-    await run(`copy-${disk.id}`, () => api.copyDisk(disk.id, name));
-    await reload();
+  function copy(disk: Image) {
+    setCopyFrom(disk.id);
   }
 
   async function remove(disk: Image) {
@@ -288,6 +266,10 @@ export function ImagesPage({ disks, machines, reload }: Props) {
     />
   );
   const hardwareDisk = disks.find((d) => d.id === addingHardware);
+  const copyDisk = disks.find((d) => d.id === copyFrom);
+  const copyDialog = copyDisk && (
+    <CopyImage image={copyDisk} onClose={() => setCopyFrom(null)} onStarted={reload} />
+  );
   const hardwareDialog = hardwareDisk && (
     <AddHardwareWizard disk={hardwareDisk} onClose={() => setAddingHardware(null)} onChanged={reload} />
   );
@@ -308,6 +290,7 @@ export function ImagesPage({ disks, machines, reload }: Props) {
         {noticeBanner}
         {editDialog}
         {prepareDialog}
+        {copyDialog}
         {hardwareDialog}
         <ImageDetailsPage
           disk={shown}
@@ -479,46 +462,10 @@ export function ImagesPage({ disks, machines, reload }: Props) {
 
       <ImageKpis disks={disks} machines={machines} />
 
-      <form className="card form-row" onSubmit={create} aria-label="New image">
-        <label>
-          Name
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. steam-main"
-            required
-            maxLength={32}
-          />
-        </label>
-        <label>
-          Kind
-          <select value={kind} onChange={(e) => setKind(e.target.value as ImageKind)}>
-            <option value="game">Game image</option>
-            <option value="os">OS image (Boot Mode)</option>
-          </select>
-        </label>
-        <label>
-          Size (GB)
-          <input
-            type="number"
-            min={1}
-            max={16384}
-            value={sizeGb}
-            onChange={(e) => setSizeGb(e.target.value)}
-            required
-            aria-invalid={tooBig}
-            aria-describedby="new-image-free"
-          />
-        </label>
-        {freeBytes !== null && (
-          <span id="new-image-free" className={`small ${tooBig ? "error-text" : "muted"}`}>
-            {tooBig ? "More than the " : ""}
-            {formatBytes(freeBytes)} free on the pool
-          </span>
-        )}
-        <button type="submit" disabled={busy !== null || tooBig}>
+      <div className="card form-row images-toolbar">
+        <button type="button" onClick={() => setCreating(true)} disabled={busy !== null}>
           <Plus size={14} />
-          {busy === "create" ? "Creating…" : "Create"}
+          Create image
         </button>
         <button
           type="button"
@@ -539,7 +486,17 @@ export function ImagesPage({ disks, machines, reload }: Props) {
           <ArchiveRestore size={14} />
           Backup / Restore
         </button>
-      </form>
+        <input
+          type="search"
+          className="images-search"
+          placeholder="Search the images…"
+          aria-label="Search the images"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+      </div>
+      {creating && <CreateImage onClose={() => setCreating(false)} onCreated={reload} />}
+      {copyDialog}
       {backingUp && <BackupRestore images={disks} onClose={() => setBackingUp(false)} onRestored={reload} />}
       {importing && (
         <ImportImage
@@ -551,8 +508,8 @@ export function ImagesPage({ disks, machines, reload }: Props) {
         />
       )}
 
-      {section("OS Images", Monitor, disks.filter((d) => d.kind === "os"), "No OS images yet.")}
-      {section("Game Images", Gamepad2, disks.filter((d) => d.kind !== "os"), "No game images yet.")}
+      {section("OS Images", Monitor, matching.filter((d) => d.kind === "os"), search ? "No OS image matches." : "No OS images yet.")}
+      {section("Game Images", Gamepad2, matching.filter((d) => d.kind !== "os"), search ? "No game image matches." : "No game images yet.")}
     </section>
   );
 }

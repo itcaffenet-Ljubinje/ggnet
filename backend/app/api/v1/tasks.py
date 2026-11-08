@@ -38,6 +38,14 @@ def _aware(t: datetime | None) -> datetime | None:
     return t.replace(tzinfo=timezone.utc) if t is not None and t.tzinfo is None else t
 
 
+def _copy_detail(source: str) -> str:
+    from app.services.copies import ALL_VERSIONS
+
+    if source.startswith(ALL_VERSIONS):
+        return f"from {source[len(ALL_VERSIONS):].partition('@')[0].rsplit('/', 1)[-1]}, all versions"
+    return f"from {source.rsplit('/', 1)[-1]}"
+
+
 @router.get("", response_model=list[TaskOut])
 def tasks(db: Session = Depends(get_db), adder=Depends(get_hardware_adder)):
     now = datetime.now(timezone.utc)
@@ -63,7 +71,7 @@ def tasks(db: Session = Depends(get_db), adder=Depends(get_hardware_adder)):
         out.append(TaskOut(
             id=f"{'import' if importing else 'copy'}-{image.id}", kind="import" if importing else "copy",
             title=f"{'Import' if importing else 'Copy'} into {image.name}",
-            detail=source.rsplit("/", 1)[-1] if importing else f"from {source.rsplit('/', 1)[-1]}",
+            detail=source.rsplit("/", 1)[-1] if importing else _copy_detail(source),
             status="running", percent=image.copy_percent,
             cancel=f"/api/v1/imports/{image.id}/cancel" if importing else None, image_id=image.id))
     names = {i.zvol_path: i for i in db.scalars(select(Image))}

@@ -267,4 +267,41 @@ describe("DiskDetails", () => {
     await userEvent.click(within(versions).getByRole("button", { name: "Comment on @base" }));
     expect(actions(fetchMock)).toEqual([]);
   });
+
+  it("goes back to a version, deleting the newer ones, only when no newer one is in use", async () => {
+    const snaps = SNAPSHOTS.map((s) =>
+      s.name === "v1old" ? { ...s, retention: "removed automatically from 2026-11-20, unless a PC uses it" } : s,
+    );
+    const mock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      const get = (init?.method ?? "GET") === "GET";
+      return new Response(JSON.stringify(!get ? {} : url.endsWith("/snapshots") ? snaps : []), { status: 200 });
+    });
+    vi.stubGlobal("fetch", mock);
+    renderDetails();
+    const versions = await screen.findByRole("table", { name: "Versions of cs2" });
+    expect(within(versions).getByText("Retention: removed automatically from 2026-11-20, unless a PC uses it"))
+      .toBeInTheDocument();
+    const back = within(versions).getAllByRole("button", { name: "Go back here" });
+    expect(back).toHaveLength(3);                                  // not on the newest
+    expect(back[0]).toBeDisabled();                                // @v1pin is pinned, pc01 runs @v2
+    expect(back[2]).toBeDisabled();                                // pc01 still runs @v2
+
+  });
+
+  it("goes back to an older version after confirmation", async () => {
+    const free = SNAPSHOTS.map((s) => ({ ...s, machines: [], pinned: [] }));
+    const mock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      const get = (init?.method ?? "GET") === "GET";
+      return new Response(JSON.stringify(!get ? {} : url.endsWith("/snapshots") ? free : []), { status: 200 });
+    });
+    vi.stubGlobal("fetch", mock);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderDetails();
+    const versions = await screen.findByRole("table", { name: "Versions of cs2" });
+    await userEvent.click(within(versions).getAllByRole("button", { name: "Go back here" })[1]);
+    expect(confirm.mock.calls.at(-1)?.[0]).toContain("@v1old becomes active and @v1pin, @v2 are deleted");
+    expect(actions(mock)).toContainEqual({
+      url: "/api/v1/images/1/snapshots/v1old/delete-newer", method: "POST", body: undefined,
+    });
+  });
 });

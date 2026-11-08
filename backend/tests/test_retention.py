@@ -205,3 +205,41 @@ def test_job_does_nothing_until_enabled_and_dry_run_deletes_nothing(client, host
 def test_job_is_off_in_dev_defaults():
     assert JobSettings.from_config(DEV_DEFAULTS).job is False
     assert JobSettings.from_config({}).job is True
+
+
+def test_each_version_says_what_automatic_removal_does_with_it():
+    from datetime import datetime, timedelta, timezone
+
+    from app.db.models import Image, Machine
+    from app.services.retention import RetentionSettings, version_notes
+
+    now = datetime(2026, 11, 8, tzinfo=timezone.utc)
+    day = 86400
+    t = now.timestamp()
+    disk = Image(name="cs2", zvol_path="tank/ggnet/images/cs2", size_gb=10, snapshot="v6")
+    disk.machines = [Machine(name="pc01", initiator_iqn="iqn.x:pc01", pinned_snapshot="v2")]
+    versions = [
+        {"name": "base", "creation": t - 30 * day, "clones": [], "locked": True},
+        {"name": "v2", "creation": t - 29 * day, "clones": [], "locked": False},
+        {"name": "v3", "creation": t - 28 * day, "clones": ["tank/ggnet/writebacks/pc02"], "locked": False},
+        {"name": "v4", "creation": t - 20 * day, "clones": [], "locked": False},
+        {"name": "v5", "creation": t - 2 * day, "clones": [], "locked": False},
+        {"name": "v6", "creation": t - 1 * day, "clones": [], "locked": False},
+        {"name": "v7", "creation": t, "clones": [], "locked": False},
+        {"name": "v8", "creation": t, "clones": [], "locked": False},
+    ]
+    s = RetentionSettings(enabled=True, dry_run=False, unused_snapshot_days=14, keep_newest_snapshots=2)
+    notes = version_notes(disk, versions, s, now)
+    assert notes == {
+        "base": "locked: never removed until unlocked",
+        "v2": "pinned on a PC: kept",
+        "v3": "PCs run on it: kept",
+        "v4": "removed automatically at the next run, unless a PC uses it",
+        "v5": "removed automatically from 2026-11-20, unless a PC uses it",
+        "v6": "active: never removed automatically",
+        "v7": "one of the newest 2: kept",
+        "v8": "one of the newest 2: kept",
+    }
+    assert version_notes(disk, versions, RetentionSettings(enabled=False), now)["v4"] == "automatic removal is off"
+    dry = version_notes(disk, versions, RetentionSettings(enabled=True, dry_run=True, keep_newest_snapshots=2), now)
+    assert dry["v4"] == "would be removed at the next run (dry run: only reported)"

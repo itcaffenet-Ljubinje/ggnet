@@ -114,6 +114,44 @@ def _store_report(db: Session, report: Report) -> None:
 
 # ── Plan and run ──────────────────────────────────────────────────────
 
+def kept_because(disk: Image, versions: list[dict], s: RetentionSettings) -> dict[str, str]:
+    """Why automatic removal keeps a version, by version; a version not listed may be removed."""
+    pinned = {m.pinned_snapshot for m in disk.machines if m.pinned_snapshot}
+    newest = {v["name"] for v in versions[-s.keep_newest_snapshots:]} if s.keep_newest_snapshots else set()
+    kept: dict[str, str] = {}
+    for v in versions:
+        if v["name"] == disk.snapshot:
+            kept[v["name"]] = "active: never removed automatically"
+        elif v.get("locked"):
+            kept[v["name"]] = "locked: never removed until unlocked"
+        elif v["name"] in pinned:
+            kept[v["name"]] = "pinned on a PC: kept"
+        elif v["clones"]:
+            kept[v["name"]] = "PCs run on it: kept"
+        elif v["name"] in newest:
+            kept[v["name"]] = f"one of the newest {s.keep_newest_snapshots}: kept"
+    return kept
+
+
+def version_notes(disk: Image, versions: list[dict], s: RetentionSettings,
+                  now: datetime | None = None) -> dict[str, str]:
+    """What automatic removal (Settings → Retention) does with each version, in words."""
+    now = now or _now()
+    if not s.enabled:
+        return {v["name"]: "automatic removal is off" for v in versions}
+    kept = kept_because(disk, versions, s)
+    notes = {}
+    for v in versions:
+        if v["name"] in kept:
+            notes[v["name"]] = kept[v["name"]]
+            continue
+        due = datetime.fromtimestamp(v["creation"], timezone.utc) + timedelta(days=s.unused_snapshot_days)
+        when = "at the next run" if due <= now else f"from {due.date().isoformat()}"
+        notes[v["name"]] = (f"would be removed {when} (dry run: only reported)" if s.dry_run
+                            else f"removed automatically {when}, unless a PC uses it")
+    return notes
+
+
 def plan(db: Session, prov: Provisioner, s: RetentionSettings, now: datetime | None = None) -> list[Action]:
     """What the current settings would delete right now; changes nothing."""
     now = now or _now()
@@ -121,11 +159,9 @@ def plan(db: Session, prov: Provisioner, s: RetentionSettings, now: datetime | N
 
     for disk in db.scalars(select(Image).where(Image.snapshot.is_not(None)).order_by(Image.name)):
         versions = prov.snapshots(disk.zvol_path)   # oldest first
-        pinned = {m.pinned_snapshot for m in disk.machines if m.pinned_snapshot}
-        newest = {v["name"] for v in versions[-s.keep_newest_snapshots:]} if s.keep_newest_snapshots else set()
+        kept = kept_because(disk, versions, s)
         for v in versions:
-            if (v["name"] == disk.snapshot or v["name"] in pinned or v["clones"] or v["name"] in newest
-                    or v.get("locked")):
+            if v["name"] in kept:
                 continue
             age = now - datetime.fromtimestamp(v["creation"], timezone.utc)
             if age >= timedelta(days=s.unused_snapshot_days):
