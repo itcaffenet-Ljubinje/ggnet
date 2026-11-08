@@ -26,4 +26,21 @@ public sealed class ServerClient(HttpClient http)
         return await response.Content.ReadFromJsonAsync<AgentConfig>(Protocol.Json, ct)
             ?? throw new ServerException("Heartbeat answer was empty");
     }
+
+    /// <summary>
+    /// A file of the server's agent package (Settings -> Client app). Read as
+    /// a stream: the client's timeout only covers the answer's headers, the
+    /// caller's token the download.
+    /// </summary>
+    public async Task DownloadAsync(string name, Stream output, CancellationToken ct)
+    {
+        using var response = await http.GetAsync(
+            $"api/v1/agent/download/{Uri.EscapeDataString(name)}", HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new ServerException($"Downloading {name} failed: HTTP {(int)response.StatusCode}");
+        }
+        await using var input = await response.Content.ReadAsStreamAsync(ct);
+        await input.CopyToAsync(output, ct);
+    }
 }

@@ -667,6 +667,16 @@ class AgentConfig(BaseModel):
     command: str | None = None          # "shutdown" | "reboot", handed out once
     # Boot Mode, while Settings -> Network boot asks the PCs to enroll the key.
     secure_boot: "AgentSecureBoot | None" = None
+    # Disk Mode, while Settings -> Client app updates agents and this one is older.
+    update: "AgentUpdateOut | None" = None
+
+
+class AgentUpdateOut(BaseModel):
+    """The server's agent package for an older agent: download each file from
+    /api/v1/agent/download/<name>, check its size and SHA-256, run install.ps1."""
+
+    version: str
+    files: list["AgentPackageFileOut"]
 
 
 class AgentSecureBoot(BaseModel):
@@ -742,6 +752,12 @@ class AgentPackageFileOut(BaseModel):
     sha256: str
 
 
+class AgentSettingsIn(BaseModel):
+    """Settings → Client app."""
+
+    auto_update: bool                # Disk Mode PCs update their agent from this server
+
+
 class AgentPackageOut(BaseModel):
     """Settings → Client app: what a PC needs to install ggnet-agent."""
 
@@ -751,6 +767,8 @@ class AgentPackageOut(BaseModel):
     server_url: str
     install_command: str             # one line for an admin PowerShell on the PC
     files: list[AgentPackageFileOut]
+    auto_update: bool                # Settings → Client app: Disk Mode agents update themselves
+    outdated: list[str] = []         # Disk Mode machines whose agent is older than the package
 
 
 BulkKind = Literal["on", "shutdown", "reboot", "assign", "pin", "drive_letter", "stop_keep_writeback"]

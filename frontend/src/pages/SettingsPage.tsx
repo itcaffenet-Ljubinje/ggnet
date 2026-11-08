@@ -105,7 +105,7 @@ export function SettingsPage({ storage, reload, user, onPasswordChanged = () => 
       {section === "boot" && <NetworkBoot />}
       {section === "scan" && <WinPeSetup />}
       {section === "updates" && admin && <Updates />}
-      {section === "client" && <ClientApp />}
+      {section === "client" && <ClientApp canManage={admin} />}
       {section === "users" && user && (
         <>
           <UsersCard me={user} />

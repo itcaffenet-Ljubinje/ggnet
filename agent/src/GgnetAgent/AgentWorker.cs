@@ -19,7 +19,8 @@ public sealed class AgentWorker(
     IPowerControl? power = null,
     ILocalDisks? localDisks = null,
     IUefiVariables? uefi = null,
-    IIdleTasks? idleTasks = null) : BackgroundService
+    IIdleTasks? idleTasks = null,
+    AgentUpdater? updater = null) : BackgroundService
 {
     internal static readonly string Version =
         typeof(AgentWorker).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
@@ -136,6 +137,11 @@ public sealed class AgentWorker(
                 await ApplyAsync(action, ct);
             }
             await RunCommandAsync(config?.Command, ct);
+            // Last: install.ps1 stops this service; a shutdown/reboot goes first.
+            if (updater is not null && config?.Command is null)
+            {
+                await updater.TryUpdateAsync(config, Version, ct);
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

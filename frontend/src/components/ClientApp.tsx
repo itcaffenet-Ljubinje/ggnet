@@ -21,11 +21,15 @@ export async function copyText(text: string, input: HTMLInputElement | null): Pr
   return document.execCommand("copy");
 }
 
-/** Settings → Client app: download ggnet-agent or install it with one command on a PC. */
-export function ClientApp() {
+/**
+ * Settings → Client app: download ggnet-agent or install it with one command
+ * on a PC, and whether Disk Mode PCs update it from this server by themselves.
+ */
+export function ClientApp({ canManage = true }: { canManage?: boolean }) {
   const [pkg, setPkg] = useState<AgentPackage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [saving, setSaving] = useState(false);
   const input = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -34,6 +38,20 @@ export function ClientApp() {
       .then(setPkg)
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, []);
+
+  async function setAutoUpdate(on: boolean) {
+    if (!pkg) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const saved = await api.setAgentAutoUpdate(on);
+      setPkg({ ...pkg, auto_update: saved.auto_update });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function copy() {
     if (pkg) setCopied(await copyText(pkg.install_command, input.current));
@@ -71,6 +89,24 @@ export function ClientApp() {
             <button type="button" onClick={copy}>
               {copied ? "Copied" : "Copy"}
             </button>
+          </div>
+          <div className="field">
+            <label className="check">
+              <input type="checkbox" checked={pkg.auto_update} disabled={!canManage || saving}
+                     onChange={(e) => setAutoUpdate(e.target.checked)} />
+              Update the agent on Disk Mode PCs automatically
+            </label>
+            <p className="small muted">
+              A PC with an older agent downloads this version from the server, checks its SHA-256 and installs it;
+              its settings stay and the game disk stays connected. Boot Mode PCs get the agent with their OS image
+              (Images → Prepare image).
+            </p>
+            {pkg.outdated.length > 0 && (
+              <p className="small" aria-label="Outdated agents">
+                {pkg.auto_update ? "Updating" : "Older agent"} on {pkg.outdated.length} PC
+                {pkg.outdated.length === 1 ? "" : "s"}: {pkg.outdated.join(", ")}
+              </p>
+            )}
           </div>
           <p className="small">
             Or download the files and run <span className="mono">install.ps1 -ServerUrl {pkg.server_url}</span>:{" "}

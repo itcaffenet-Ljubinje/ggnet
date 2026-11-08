@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_provisioner, get_pxe_service
 from app.api.v1.errors import conflict, host_failed, not_found
 from app.api.v1.schemas import (
+    AgentSettingsIn,
     BootSettingsIn,
     BootSettingsOut,
     PxeStatusOut,
@@ -29,7 +30,7 @@ from app.api.v1.schemas import (
     TlsOut,
 )
 from app.db.session import get_db
-from app.services import pxe, retention
+from app.services import agent_updates, pxe, retention
 from app.services.pxe import PxeService
 from app.services.provisioning import Provisioner, ProvisioningError
 
@@ -127,6 +128,19 @@ def put_boot_settings(body: BootSettingsIn, db: Session = Depends(get_db)):
     """Applies to the next PC that asks for its iPXE script; nothing is restarted."""
     pxe.save_settings(db, pxe.BootSettings(**body.model_dump()))
     return get_boot_settings(db)
+
+
+@router.get("/settings/agent", response_model=AgentSettingsIn)
+def get_agent_settings(db: Session = Depends(get_db)):
+    return AgentSettingsIn(**asdict(agent_updates.load_settings(db)))
+
+
+@router.put("/settings/agent", response_model=AgentSettingsIn)
+def put_agent_settings(body: AgentSettingsIn, db: Session = Depends(get_db)):
+    """Applies from each Disk Mode PC's next heartbeat."""
+    agent_updates.save_settings(db, agent_updates.AgentSettings(**body.model_dump()))
+    logger.info("Automatic agent updates %s", "on" if body.auto_update else "off")
+    return get_agent_settings(db)
 
 
 @router.get("/settings/tls", response_model=TlsOut)

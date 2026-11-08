@@ -86,6 +86,7 @@ Status: **done** (backend and UI), **backend** (API exists, UI missing or partia
 | Item | Status |
 |---|---|
 | Client app: agent download and one-line install | done |
+| Client app: Disk Mode agents update themselves | done |
 | Retention: reserved space, warning threshold, unused version age, newest versions kept, dry-run preview, run now | done |
 | Network boot: PXE service state and restart, TFTP files (`snponly.efi`, `ipxe.efi`, `autoexec.ipxe`), iBFT gateway, unregistered PCs wait / boot locally (saved values override `[boot]` in config.toml) | done |
 | Restart services: ZFS, iSCSI target (PXE: done, in Network boot) | todo |

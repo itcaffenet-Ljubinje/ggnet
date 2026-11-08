@@ -38,6 +38,8 @@ builder.Services.AddSingleton<IPowerControl, WindowsPowerControl>();
 builder.Services.AddSingleton<ILocalDisks, WindowsLocalDisks>();
 builder.Services.AddSingleton<IIdleTasks, WindowsIdleTasks>();
 builder.Services.AddSingleton<IUefiVariables, WindowsUefiVariables>();
+builder.Services.AddSingleton<IUpdateLauncher, PowerShellUpdateLauncher>();
+builder.Services.AddSingleton<AgentUpdater>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddHostedService<AgentWorker>();
 
