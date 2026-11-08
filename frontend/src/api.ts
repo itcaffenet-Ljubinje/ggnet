@@ -250,10 +250,12 @@ export function preselectDisk(list: Image[]): string {
 /** Images → Backup / Restore: a USB disk or a backup folder of the server. */
 export interface BackupLocation {
   id: string;
-  kind: "usb" | "dir";
+  kind: "usb" | "dir" | "imports";
   label: string;
   size: number | null;
   path: string | null;
+  /** A USB disk's file system: vfat (FAT32) takes no file over 4 GB. */
+  fstype?: string | null;
 }
 
 export interface FoundBackup {
@@ -277,12 +279,14 @@ export interface BackupLocationOpen {
 
 export interface BackupJob {
   id: number;
-  kind: "backup" | "restore";
+  kind: "backup" | "restore" | "export";
   image_id: number | null;
   image_name: string;
   location: string;
   location_label: string;
   folder: string | null;
+  snapshot?: string | null;
+  format?: string | null;
   status: "queued" | "running" | "done" | "failed" | "cancelled";
   done_bytes: number;
   total_bytes: number | null;
@@ -295,7 +299,7 @@ export interface BackupJob {
 /** A job running on the server (Background tasks panel). */
 export interface ServerTask {
   id: string;
-  kind: "backup" | "restore" | "copy" | "import" | "hardware";
+  kind: "backup" | "restore" | "export" | "copy" | "import" | "hardware";
   title: string;
   detail: string | null;
   status: "queued" | "running" | "done" | "failed" | "cancelled";
@@ -802,7 +806,10 @@ export const api = {
   getTasks: () => request<ServerTask[]>("GET", "/v1/tasks"),
   /** Stop a task by the cancel path the server gave (/api/v1/...). */
   cancelTask: (path: string) => request<unknown>("POST", path.replace(/^\/api/, "")),
-  backupLocations: () => request<BackupLocation[]>("GET", "/v1/backups/locations"),
+  backupLocations: (exports = false) =>
+    request<BackupLocation[]>("GET", `/v1/backups/locations${exports ? "?exports=true" : ""}`),
+  startExport: (body: { image_id: number; snapshot: string; format: "vhdx" | "vhd"; location: string; file_name: string }) =>
+    request<BackupJob>("POST", "/v1/backups/export", body),
   openBackupLocation: (id: string, writable: boolean) =>
     request<BackupLocationOpen>("POST", `/v1/backups/locations/${encodeURIComponent(id)}/open?writable=${writable}`),
   ejectBackupLocation: (id: string) =>

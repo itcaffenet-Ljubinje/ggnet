@@ -427,8 +427,11 @@ function HistoryTab({ jobs, busy, cancel }: { jobs: BackupJob[]; busy: boolean; 
           return (
             <tr key={j.id}>
               <td className="small">{new Date(j.created_at).toLocaleString()}</td>
-              <td>{j.kind === "backup" ? "Backup" : "Restore"}</td>
-              <td className="strong">{j.image_name}</td>
+              <td>{j.kind === "backup" ? "Backup" : j.kind === "export" ? `Export (${(j.format ?? "").toUpperCase()})` : "Restore"}</td>
+              <td className="strong">
+                {j.image_name}
+                {j.kind === "export" && j.snapshot ? `@${j.snapshot}` : ""}
+              </td>
               <td className="small">{j.location_label}</td>
               <td>
                 <span className={`badge ${badge}`} title={j.error ?? undefined}>

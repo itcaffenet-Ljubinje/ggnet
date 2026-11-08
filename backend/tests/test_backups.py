@@ -210,3 +210,62 @@ def test_a_running_backup_can_be_cancelled(client, host, db_url, prov, place):
         assert db.get(BackupJob, job_id).status == "cancelled"
     engine.dispose()
     assert not any((place / "ggnet-backups").iterdir())
+
+
+# ── Export of a version to VHDX / VHD ─────────────────────────────────
+
+def test_a_version_is_exported_to_a_vhdx_file(client, host, runner, place):
+    win11 = _image(client, host)
+    zvol = win11["zvol_path"]
+    host.snap_props[f"{zvol}@v2"] = {"logicalreferenced": str(30 * 1024 ** 3)}
+    r = client.post("/api/v1/backups/export", json={"image_id": win11["id"], "snapshot": "v2", "format": "vhdx",
+                                                    "location": "dir:0", "file_name": "win11-v2.vhdx"})
+    assert r.status_code == 201, r.text
+    job = r.json()
+    assert (job["kind"], job["status"], job["snapshot"], job["format"]) == ("export", "done", "v2", "vhdx")
+    out = place / "win11-v2.vhdx"
+    assert out.is_file() and not (place / "win11-v2.vhdx.part").exists()
+    tmp = "tank/ggnet/writebacks/win11_ggnet_export"
+    assert ["zfs", "clone", "-o", "sync=disabled", f"{zvol}@v2", tmp] in host.calls
+    assert ["qemu-img", "convert", "-p", "-f", "raw", "-O", "vhdx", "-o", "subformat=dynamic",
+            f"/dev/zvol/{tmp}", str(place / "win11-v2.vhdx.part")] in host.calls
+    assert tmp not in host.datasets                                 # the temporary clone is gone
+    tasks = client.get("/api/v1/tasks").json()
+    assert tasks[0]["title"] == "Export of win11@v2 (VHDX)" and tasks[0]["status"] == "done"
+    again = client.post("/api/v1/backups/export", json={"image_id": win11["id"], "format": "vhdx",
+                                                        "location": "dir:0", "file_name": "win11-v2.vhdx"})
+    assert again.status_code == 409 and "already exists" in again.text
+
+
+def test_an_export_that_cannot_fit_is_refused_before_it_starts(client, host, runner, place):
+    big = client.post("/api/v1/images", json={"name": "games", "size_gb": 3072}).json()
+    client.post(f"/api/v1/images/{big['id']}/publish")
+    r = client.post("/api/v1/backups/export", json={"image_id": big["id"], "format": "vhd", "location": "dir:0",
+                                                    "file_name": "games.vhd"})
+    assert r.status_code == 409 and "VHD holds at most 2040 GB" in r.text
+    r = client.post("/api/v1/backups/export", json={"image_id": big["id"], "format": "vhdx", "location": "dir:0",
+                                                    "file_name": "games.vhd"})
+    assert r.status_code == 409 and "must end in .vhdx" in r.text
+    r = client.post("/api/v1/backups/export", json={"image_id": big["id"], "format": "vhdx", "location": "dir:0",
+                                                    "file_name": "games.vhdx"})
+    assert r.status_code == 409 and "Not enough free space" in r.text           # 3 TB into a test folder
+    assert client.get("/api/v1/backups/jobs").json() == []
+
+
+def test_a_fat32_usb_disk_takes_no_export_over_4_gb(client, host, prov, place):
+    from app.services.backups import BackupLocations
+
+    class Usb:
+        def list(self):
+            return [{"name": "sdj1", "fstype": "vfat", "size": 32 << 30, "mounted": str(place), "label": None,
+                     "model": "Ultra"}]
+
+        def mount(self, name, writable=False):
+            return place
+
+    app.dependency_overrides[deps.get_backup_locations] = lambda: BackupLocations(Usb(), [])
+    win11 = _image(client, host)
+    host.snap_props[f"{win11['zvol_path']}@v2"] = {"logicalreferenced": str(30 * 1024 ** 3)}
+    r = client.post("/api/v1/backups/export", json={"image_id": win11["id"], "format": "vhdx", "location": "usb:sdj1",
+                                                    "file_name": "win11.vhdx"})
+    assert r.status_code == 409 and "FAT32" in r.text and "exFAT" in r.text

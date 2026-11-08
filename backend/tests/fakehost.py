@@ -75,6 +75,16 @@ class FakeHost:
         if cmd[:2] != ["qemu-img", "convert"]:
             raise AssertionError(f"FakeHost does not stream: {cmd}")
         src, dst = cmd[-2], cmd[-1].removeprefix("/dev/zvol/")
+        if src.startswith("/dev/zvol/"):             # an export: zvol -> file
+            if src.removeprefix("/dev/zvol/") not in self.datasets:
+                return self._err(f"Could not open '{src}'")
+            for line in ("    (0.00/100%)", "    (50.00/100%)", "    (100.00/100%)"):
+                if cancel is not None and cancel.is_set():
+                    return self._err("killed")
+                on_output(line.strip())
+            from pathlib import Path
+            Path(cmd[-1]).write_bytes(b"conectix" + b"\0" * 504)
+            return self._ok()
         if src not in self.image_files:
             return self._err(f"Could not open '{src}'")
         if dst not in self.datasets:

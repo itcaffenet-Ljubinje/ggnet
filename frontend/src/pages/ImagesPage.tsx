@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Copy,
   Cpu,
+  FileOutput,
   Gamepad2,
   HardDriveDownload,
   HardDrive,
@@ -35,6 +36,7 @@ import { formatBytes } from "../format";
 import { ActionMenu, type MenuAction } from "../components/ActionMenu";
 import { BackupRestore } from "../components/BackupRestore";
 import { CopyImage } from "../components/CopyImage";
+import { ExportImage } from "../components/ExportImage";
 import { CreateImage } from "../components/CreateImage";
 import { EditImage } from "../components/EditImage";
 import { ImportImage } from "../components/ImportImage";
@@ -59,8 +61,9 @@ export function ImagesPage({ disks, machines, reload }: Props) {
   const updates = useImageUpdates(disks);
   const usage = useImageUsage(disks);
   const [creating, setCreating] = useState(false);
-  // The image in the Copy dialog.
+  // The image in the Copy dialog, and in the Export dialog.
   const [copyFrom, setCopyFrom] = useState<number | null>(null);
+  const [exportFrom, setExportFrom] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const needle = search.trim().toLowerCase();
   const matching = needle ? disks.filter((d) => d.name.includes(needle)) : disks;
@@ -176,6 +179,13 @@ export function ImagesPage({ disks, machines, reload }: Props) {
               disabled: busy !== null,
               title: `New independent image from @${d.snapshot}`,
             },
+            {
+              label: "Export",
+              icon: FileOutput,
+              onSelect: () => setExportFrom(d.id),
+              disabled: busy !== null,
+              title: "One version into a VHDX or VHD file on a USB disk or the imports folder",
+            },
           ]
         : []),
       ...(d.published
@@ -266,6 +276,11 @@ export function ImagesPage({ disks, machines, reload }: Props) {
     />
   );
   const hardwareDisk = disks.find((d) => d.id === addingHardware);
+  const exportDisk = disks.find((d) => d.id === exportFrom);
+  const exportDialog = exportDisk && (
+    <ExportImage image={exportDisk} compressRatio={usage[exportDisk.id]?.compress_ratio}
+                 onClose={() => setExportFrom(null)} />
+  );
   const copyDisk = disks.find((d) => d.id === copyFrom);
   const copyDialog = copyDisk && (
     <CopyImage image={copyDisk} onClose={() => setCopyFrom(null)} onStarted={reload} />
@@ -291,6 +306,7 @@ export function ImagesPage({ disks, machines, reload }: Props) {
         {editDialog}
         {prepareDialog}
         {copyDialog}
+        {exportDialog}
         {hardwareDialog}
         <ImageDetailsPage
           disk={shown}
@@ -497,6 +513,7 @@ export function ImagesPage({ disks, machines, reload }: Props) {
       </div>
       {creating && <CreateImage onClose={() => setCreating(false)} onCreated={reload} />}
       {copyDialog}
+      {exportDialog}
       {backingUp && <BackupRestore images={disks} onClose={() => setBackingUp(false)} onRestored={reload} />}
       {importing && (
         <ImportImage

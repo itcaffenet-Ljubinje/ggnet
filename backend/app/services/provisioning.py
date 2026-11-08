@@ -22,10 +22,12 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 from app.disk_grow import GrowResult, PartitionGrower
@@ -52,6 +54,15 @@ PLAIN_ERRORS = (
     ("dataset does not exist", "it is not on the server any more"),
     ("pool I/O is currently suspended", "the pool has a disk problem (see Server)"),
 )
+
+
+def _qemu_progress(line: str, progress: Callable[[float], None]) -> None:
+    """`qemu-img convert -p` prints "(42.17/100%)"."""
+    from app.services.imports import qemu_percent
+
+    percent = qemu_percent(line)
+    if percent is not None:
+        progress(percent)
 
 
 def plain_error(detail: str) -> str:
@@ -87,6 +98,8 @@ class WritebackApply:
 _VERSION_RE = re.compile(r"^v(\d+)$")
 
 SPARE_SUFFIX = "_spare"            # '_' never appears in a machine name
+EXPORT_SUFFIX = "_ggnet_export"    # the temporary clone an export reads
+EXPORT_TIMEOUT = 24 * 3600
 SETUP_PROP = "ggnet:setup"         # on an OS spare: which setup it was made with
 SPARE_RETRY = 600.0                # seconds before spares that failed are tried again
 
@@ -429,6 +442,42 @@ class Provisioner:
         @base (ZFSManager.copy_snapshot). Without the lock: it can take hours.
         """
         return self.zfs.copy_snapshot(snapshot, target, progress)
+
+    def export_version(self, master: str, snapshot: str, out: Path, fmt: str,
+                       progress: Callable[[float], None], cancel: threading.Event) -> None:
+        """
+        One version of an image into a dynamic VHDX or VHD file (`fmt`: vhdx or
+        vpc): a temporary clone of the version is converted with qemu-img. The
+        lock is held only to make and remove the clone, not while it converts
+        (that can take an hour). Raises ProvisioningError; `out` is written
+        as <out>.part and renamed when complete.
+        """
+        tmp = f"{self.zfs.layout.writebacks}/{master.rsplit('/', 1)[-1]}{EXPORT_SUFFIX}"
+        with self.lock:
+            self._clear()
+            if self.zfs.dataset_exists(tmp) and not self.zfs.destroy(tmp):
+                raise self._fail(f"{tmp} is left over from an earlier export and cannot be removed")
+            if not self.zfs.clone(f"{master}@{snapshot}", tmp):
+                raise self._fail(f"Cloning {master}@{snapshot} for the export failed")
+        part = out.with_name(out.name + ".part")
+        try:
+            self.zfs.runner.run(["udevadm", "settle"])
+            ok, _, err = self.zfs.runner.run_stream(
+                ["qemu-img", "convert", "-p", "-f", "raw", "-O", fmt, "-o", "subformat=dynamic",
+                 self.zfs.zvol_device_path(tmp), str(part)],
+                lambda line: _qemu_progress(line, progress), timeout=EXPORT_TIMEOUT, cancel=cancel)
+            if cancel.is_set():
+                raise ProvisioningError("cancelled")
+            if not ok:
+                raise ProvisioningError(f"Converting {master}@{snapshot} failed: {err or 'qemu-img failed'}")
+            os.replace(part, out)
+        except BaseException:
+            part.unlink(missing_ok=True)
+            raise
+        finally:
+            with self.lock:
+                if not self.zfs.destroy(tmp):
+                    logger.error("Could not remove %s after the export", tmp)
 
     def copy_all_versions(self, newest: str, target: str, progress=None) -> bool:
         """A copy of a master with every version (ZFSManager.copy_image). Without the lock."""

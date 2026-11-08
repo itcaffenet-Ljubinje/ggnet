@@ -435,13 +435,16 @@ class BackupJob(Base):
     __tablename__ = "backup_jobs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    kind: Mapped[str] = mapped_column(String(16))                 # backup | restore
+    kind: Mapped[str] = mapped_column(String(16))                 # backup | restore | export
     # Backup: the image backed up; restore: the new image (gone if it failed).
     image_id: Mapped[int | None] = mapped_column(ForeignKey("images.id", ondelete="SET NULL"), default=None)
     image_name: Mapped[str] = mapped_column(String(64))
     location: Mapped[str] = mapped_column(String(128))            # usb:<partition> or dir:<n>
     location_label: Mapped[str] = mapped_column(String(255), default="")
-    folder: Mapped[str | None] = mapped_column(String(512), default=None)
+    folder: Mapped[str | None] = mapped_column(String(512), default=None)    # an export: the file
+    # An export: the version and the file format (vhdx, vhd).
+    snapshot: Mapped[str | None] = mapped_column(String(64), default=None)
+    format: Mapped[str | None] = mapped_column(String(8), default=None)
     status: Mapped[str] = mapped_column(String(16), default="queued")   # queued running done failed cancelled
     done_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     total_bytes: Mapped[int | None] = mapped_column(BigInteger, default=None)
