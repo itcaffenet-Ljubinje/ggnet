@@ -348,3 +348,16 @@ def test_check_network_cards_reads_them_from_the_image(client, prov, pc):
     r = client.post(f"/api/v1/images/{disk}/check-hardware")          # again: the same card, no clash
     assert r.status_code == 200, r.text
     assert "tank/ggnet/writebacks/win11_ggnet_hw" not in prov.zfs.runner.datasets   # the clone is gone
+
+
+def test_going_back_on_an_os_image_reads_its_cards_from_that_version(client, host, pc):
+    image = pc["os_image_id"]
+    zvol = client.get(f"/api/v1/images/{image}").json()["zvol_path"]
+    host.snapshots[f"{zvol}@v2"] = {"ggnet:protected"}
+    client.put(f"/api/v1/images/{image}/active-snapshot", json={"snapshot": "v2"})   # the PC stays on @base
+    prov = app.dependency_overrides[deps.get_provisioner]()
+    prov.windows.installed = True                      # @base has the I219 in its registry
+    r = client.post(f"/api/v1/images/{image}/snapshots/base/delete-newer")
+    assert r.status_code == 200, r.text
+    assert r.json()["snapshot"] == "base"
+    assert r.json()["nic_models"] == ["Intel(R) Ethernet Connection (2) I219-V"]

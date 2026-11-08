@@ -443,9 +443,17 @@ def check_hardware(image_id: int, db: Session = Depends(get_db), prov: Provision
     _not_copying(disk)
     if disk.kind is not ImageKind.OS:
         conflict(f"'{disk.name}' is a game image; only OS images have network cards")
+    problem = _read_cards(db, prov, disk)
+    if problem:
+        host_failed(f"Reading the network cards of {disk.name}@{disk.snapshot} failed: {problem}")
+    return disk
+
+
+def _read_cards(db: Session, prov: Provisioner, disk: Image) -> str | None:
+    """The OS image's card list from its active version's registry; why not, when it cannot be read."""
     found = prov.list_nics(disk.zvol_path, disk.snapshot)
     if isinstance(found, str):
-        host_failed(f"Reading the network cards of {disk.name}@{disk.snapshot} failed: {found}")
+        return found
     disk.hardware.clear()
     db.flush()                          # the old rows go first: a card found again has the same key
     disk.hardware.extend(ImageHardware(nic=nic, instance=instance, name=name[:255], snapshot=disk.snapshot)
@@ -453,7 +461,7 @@ def check_hardware(image_id: int, db: Session = Depends(get_db), prov: Provision
     db.commit()
     db.refresh(disk)
     logger.info("'%s'@%s network cards: %s", disk.name, disk.snapshot, ", ".join(disk.nic_models) or "none")
-    return disk
+    return None
 
 
 def _keep_hardware(db: Session, disk: Image, snapshots: list[str]) -> None:
@@ -771,6 +779,11 @@ def make_active_and_delete_newer(
         kept.remove(v["name"])
     _keep_hardware(db, disk, kept)
     logger.info("'%s' went back to @%s; deleted %s", disk.name, name, ", ".join(f"@{v['name']}" for v in newer))
+    if disk.kind is ImageKind.OS:
+        # The cards from the version itself: a list kept per version can be off.
+        problem = _read_cards(db, prov, disk)
+        if problem:
+            logger.warning("Reading the network cards of %s@%s failed: %s", disk.name, name, problem)
     db.refresh(disk)
     return disk
 
