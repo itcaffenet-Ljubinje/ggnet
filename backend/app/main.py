@@ -9,10 +9,12 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import OperationalError
 
+from app import serve
 from app.api.deps import require_user
 from app.api.v1 import agent, auth, backups, boot, discovery, images, imports, machines, server, settings, tasks, winpe
 from app.config import get_config
@@ -114,6 +116,22 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="ggNet", version=read_version(), lifespan=lifespan)
+
+# The PCs talk to ggNet over plain HTTP: iPXE's boot scripts and Windows PE,
+# the agent, the health check. Once HTTPS is set up (app.serve), everything
+# else (the web UI and its API) is sent to it, so passwords never go over HTTP.
+PC_PATHS = ("/api/v1/boot", "/api/v1/agent", "/api/health")
+
+
+@app.middleware("http")
+async def web_ui_over_https(request: Request, call_next):
+    secure = serve.tls()
+    if secure is None or request.url.scheme == "https" or request.url.path.startswith(PC_PATHS):
+        return await call_next(request)
+    host = request.url.hostname or get_config()["network"]["server_ip"]
+    return RedirectResponse(str(request.url.replace(scheme="https", netloc=f"{host}:{secure[0]}")),
+                            status_code=308)
+
 # The web UI's API needs a signed-in user (app.services.auth); what the PCs
 # use (agent, boot) and signing in itself do not.
 signed_in = [Depends(require_user)]

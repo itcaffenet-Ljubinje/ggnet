@@ -37,7 +37,7 @@ def _ip(request: Request) -> str:
 def _sign_in(db: Session, user: User, request: Request, response: Response) -> AuthState:
     token = auth.start_session(db, user, _ip(request))
     response.set_cookie(auth.COOKIE, token, max_age=auth.SESSION_HOURS * 3600, httponly=True,
-                        samesite="strict", secure=request.url.scheme == "https", path="/")
+                        samesite="strict", secure=_secure(request), path="/")
     return AuthState(setup_required=False, user=UserOut.model_validate(user), token=token)
 
 
@@ -176,3 +176,11 @@ def list_activity(limit: int = 200, db: Session = Depends(get_db)):
     """The newest entries of the activity log (admin)."""
     limit = max(1, min(limit, 1000))
     return db.scalars(select(Activity).order_by(Activity.id.desc()).limit(limit)).all()
+
+
+def _secure(request: Request) -> bool:
+    """The session cookie never goes over HTTP once HTTPS is set up (app.serve)."""
+    from app import serve
+
+    return request.url.scheme == "https" or serve.tls() is not None
+

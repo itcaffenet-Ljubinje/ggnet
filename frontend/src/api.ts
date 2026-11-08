@@ -413,6 +413,17 @@ export interface SecureBootKey {
 }
 
 /** The PXE service (proxyDHCP + TFTP) as systemd sees it. */
+/** The web UI's HTTPS (Settings → Network boot). */
+export interface TlsStatus {
+  enabled: boolean;
+  url: string | null;
+  subject: string | null;
+  names: string[];
+  not_after: string | null;
+  sha256: string | null;
+  self_signed: boolean;
+}
+
 export interface PxeStatus {
   unit: string;
   installed: boolean;
@@ -842,6 +853,7 @@ export const api = {
   getBootSettings: () => request<BootSettingsOut>("GET", "/v1/settings/boot"),
   saveBootSettings: (body: BootSettings) => request<BootSettingsOut>("PUT", "/v1/settings/boot", body),
   getPxe: () => request<PxeStatus>("GET", "/v1/pxe"),
+  getTls: () => request<TlsStatus>("GET", "/v1/settings/tls"),
   restartPxe: () => request<PxeStatus>("POST", "/v1/pxe/restart"),
   saveRetention: (body: RetentionSettings) => request<Retention>("PUT", "/v1/settings/retention", body),
   previewRetention: (body: RetentionSettings) =>
