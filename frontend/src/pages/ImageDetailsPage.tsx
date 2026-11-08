@@ -15,10 +15,12 @@ interface Props {
   menu?: ReactNode;
   /** Open the Add new hardware wizard (OS images). */
   onAddHardware?: () => void;
+  /** Staff only look: no actions on versions and writebacks. */
+  canManage?: boolean;
 }
 
 /** One image on its own page: what it is, its snapshots and the PCs' writebacks. */
-export function ImageDetailsPage({ disk, machines, reload, onBack, menu, onAddHardware }: Props) {
+export function ImageDetailsPage({ disk, machines, reload, onBack, menu, onAddHardware, canManage = true }: Props) {
   const KindIcon = disk.kind === "os" ? Monitor : Gamepad2;
   const editor = machines.find((m) => m.id === disk.editor_id);
   return (
@@ -65,6 +67,7 @@ export function ImageDetailsPage({ disk, machines, reload, onBack, menu, onAddHa
             disk={disk}
             onChanged={reload}
             refreshKey={machines}
+            canManage={canManage}
             summary={(snapshots, writebacks) => <Summary disk={disk} snapshots={snapshots} writebacks={writebacks} />}
           />
         </>

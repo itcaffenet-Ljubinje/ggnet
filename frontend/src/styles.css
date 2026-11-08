@@ -341,6 +341,23 @@ select:focus {
   box-shadow: 0 0 0 2px var(--accent-glow);
 }
 
+/* The keyboard's place, for buttons, tabs, menus and links (not on a mouse click). */
+button:focus-visible,
+[role="button"]:focus-visible,
+[role="tab"]:focus-visible,
+[role="menuitem"]:focus-visible,
+a:focus-visible,
+summary:focus-visible,
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+}
+
+.modal-content:focus {
+  outline: none;
+}
+
 /* KPI Summary Cards Grid */
 .kpi-grid {
   display: grid;
@@ -1430,7 +1447,7 @@ td.td-select {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: var(--primary);
+  background: var(--accent);
   color: #fff;
   font-weight: 600;
 }
@@ -2959,3 +2976,16 @@ tr.row-warn td {
   margin-left: auto;
   min-width: 200px;
 }
+
+/* People who turned animations off get none. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+

@@ -6,6 +6,7 @@ import { startUpload, useUploads } from "../uploads";
 import { formatBytes } from "../format";
 import { useAsyncAction } from "../useAsyncAction";
 import { ErrorBanner } from "./ErrorBanner";
+import { Modal } from "./Modal";
 
 type Source = "folder" | "usb" | "upload";
 
@@ -164,183 +165,176 @@ export function ImportImage({ onClose, onStarted }: Props) {
   ];
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div
-        className="modal-content"
-        role="dialog"
-        aria-label="Import image"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="modal-header">
-          <div className="title-with-icon">
-            <HardDriveDownload size={20} aria-hidden />
-            <h2>Import image</h2>
-          </div>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
-            <X size={18} />
-          </button>
+    <Modal label="Import image" onClose={onClose} closeOnBackdrop>
+      <div className="modal-header">
+        <div className="title-with-icon">
+          <HardDriveDownload size={20} aria-hidden />
+          <h2>Import image</h2>
         </div>
+        <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
+          <X size={18} />
+        </button>
+      </div>
 
-        <form onSubmit={start}>
-          <div className="modal-body">
-            <ErrorBanner message={error} onClose={() => setError(null)} />
-            <div className="subnav" role="tablist" aria-label="Import from">
-              {tabs.map(({ id, label, icon: Icon }) => (
-                <button
-                  key={id}
-                  type="button"
-                  role="tab"
-                  aria-selected={source === id}
-                  className={`subnav-btn ${source === id ? "active" : ""}`}
-                  onClick={() => setSource(id)}
-                >
-                  <Icon size={14} />
-                  {label}
-                </button>
-              ))}
-            </div>
+      <form onSubmit={start}>
+        <div className="modal-body">
+          <ErrorBanner message={error} onClose={() => setError(null)} />
+          <div className="subnav" role="tablist" aria-label="Import from">
+            {tabs.map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={source === id}
+                className={`subnav-btn ${source === id ? "active" : ""}`}
+                onClick={() => setSource(id)}
+              >
+                <Icon size={14} />
+                {label}
+              </button>
+            ))}
+          </div>
 
-            {sources === null ? (
-              <p className="muted small">Loading…</p>
-            ) : source === "folder" ? (
-              sources.folder ? (
-                <>
-                  <p className="muted small">
-                    Files in <span className="mono">{sources.folder}</span> (copy them there over the network, e.g.
-                    a Samba share or scp).{" "}
-                    <button type="button" className="link-btn small" onClick={load} disabled={busy !== null}>
-                      <RefreshCw size={12} /> Refresh
-                    </button>
-                  </p>
-                  {fileList(sources.files, true)}
-                </>
-              ) : (
-                <p className="warn-text small">The imports dataset does not exist on the host yet.</p>
-              )
-            ) : source === "usb" ? (
-              sources.usb.length === 0 ? (
+          {sources === null ? (
+            <p className="muted small">Loading…</p>
+          ) : source === "folder" ? (
+            sources.folder ? (
+              <>
                 <p className="muted small">
-                  No USB disk with a readable file system (NTFS, exFAT, FAT, ext4, XFS). Plug one into the server
-                  and refresh.{" "}
+                  Files in <span className="mono">{sources.folder}</span> (copy them there over the network, e.g.
+                  a Samba share or scp).{" "}
                   <button type="button" className="link-btn small" onClick={load} disabled={busy !== null}>
                     <RefreshCw size={12} /> Refresh
                   </button>
                 </p>
-              ) : (
-                sources.usb.map((p) => (
-                  <div key={p.name} className="usb-part">
-                    <div className="usb-part-head">
-                      <span className="strong">{p.label ?? p.name}</span>
-                      <span className="muted small">
-                        {p.model ?? "USB disk"} · {p.path} · {p.fstype} · {formatBytes(p.size)}
-                      </span>
-                      {p.mounted ? (
-                        <button
-                          type="button"
-                          className="secondary"
-                          onClick={() => ejectUsb(p.name)}
-                          disabled={busy !== null}
-                        >
-                          {busy === `eject-${p.name}` ? "Ejecting…" : "Eject"}
-                        </button>
-                      ) : (
-                        <button type="button" onClick={() => openUsb(p.name)} disabled={busy !== null}>
-                          {busy === `open-${p.name}` ? "Opening…" : "Open (read-only)"}
-                        </button>
-                      )}
-                    </div>
-                    {p.mounted && usbFiles[p.name] && fileList(usbFiles[p.name], false)}
-                  </div>
-                ))
-              )
+                {fileList(sources.files, true)}
+              </>
             ) : (
-              <>
-                <p className="muted small">
-                  The file goes to the imports folder on the pool and can be imported from there. Large files
-                  (50 GB and more) are faster over a Samba share or scp.
-                </p>
-                <input
-                  type="file"
-                  accept={ACCEPT}
-                  aria-label="Image file to upload"
-                  disabled={upload !== null || !sources.folder}
-                  onChange={(e) => e.target.files?.[0] && send(e.target.files[0])}
-                />
-                {upload && (
-                  <>
-                    <div className="meter" role="meter" aria-label="Upload" aria-valuenow={percent(upload)}>
-                      <div style={{ width: `${percent(upload)}%` }} />
-                    </div>
-                    <p className="muted small">
-                      {upload.name}: {formatBytes(upload.sent)} of {formatBytes(upload.total)}
-                    </p>
-                  </>
-                )}
-              </>
-            )}
+              <p className="warn-text small">The imports dataset does not exist on the host yet.</p>
+            )
+          ) : source === "usb" ? (
+            sources.usb.length === 0 ? (
+              <p className="muted small">
+                No USB disk with a readable file system (NTFS, exFAT, FAT, ext4, XFS). Plug one into the server
+                and refresh.{" "}
+                <button type="button" className="link-btn small" onClick={load} disabled={busy !== null}>
+                  <RefreshCw size={12} /> Refresh
+                </button>
+              </p>
+            ) : (
+              sources.usb.map((p) => (
+                <div key={p.name} className="usb-part">
+                  <div className="usb-part-head">
+                    <span className="strong">{p.label ?? p.name}</span>
+                    <span className="muted small">
+                      {p.model ?? "USB disk"} · {p.path} · {p.fstype} · {formatBytes(p.size)}
+                    </span>
+                    {p.mounted ? (
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => ejectUsb(p.name)}
+                        disabled={busy !== null}
+                      >
+                        {busy === `eject-${p.name}` ? "Ejecting…" : "Eject"}
+                      </button>
+                    ) : (
+                      <button type="button" onClick={() => openUsb(p.name)} disabled={busy !== null}>
+                        {busy === `open-${p.name}` ? "Opening…" : "Open (read-only)"}
+                      </button>
+                    )}
+                  </div>
+                  {p.mounted && usbFiles[p.name] && fileList(usbFiles[p.name], false)}
+                </div>
+              ))
+            )
+          ) : (
+            <>
+              <p className="muted small">
+                The file goes to the imports folder on the pool and can be imported from there. Large files
+                (50 GB and more) are faster over a Samba share or scp.
+              </p>
+              <input
+                type="file"
+                accept={ACCEPT}
+                aria-label="Image file to upload"
+                disabled={upload !== null || !sources.folder}
+                onChange={(e) => e.target.files?.[0] && send(e.target.files[0])}
+              />
+              {upload && (
+                <>
+                  <div className="meter" role="meter" aria-label="Upload" aria-valuenow={percent(upload)}>
+                    <div style={{ width: `${percent(upload)}%` }} />
+                  </div>
+                  <p className="muted small">
+                    {upload.name}: {formatBytes(upload.sent)} of {formatBytes(upload.total)}
+                  </p>
+                </>
+              )}
+            </>
+          )}
 
-            {chosen && (
-              <div className="form-row">
-                <label>
-                  Name
-                  <input value={name} onChange={(e) => setName(e.target.value)} maxLength={32} required />
-                </label>
-                <label>
-                  Kind
-                  <select value={kind} onChange={(e) => setKind(e.target.value as ImageKind)}>
-                    <option value="os">OS image (Boot Mode)</option>
-                    <option value="game">Game image</option>
-                  </select>
-                </label>
-              </div>
-            )}
-            {chosen && kind === "os" && (
-              <>
-                <label className="check">
-                  <input type="checkbox" checked={prepare} onChange={(e) => setPrepare(e.target.checked)} />
-                  Prepare image for all PCs after the import (agent, diskless settings)
-                </label>
-                {prepare && (
-                  <>
-                    <label className="check">
-                      <input
-                        type="checkbox"
-                        checked={servicesOff}
-                        onChange={(e) => setServicesOff(e.target.checked)}
-                      />
-                      Turn off background services a cafe PC does not need (faster startup)
-                    </label>
-                    <label className="check">
-                      <input
-                        type="checkbox"
-                        checked={defenderOff}
-                        onChange={(e) => setDefenderOff(e.target.checked)}
-                      />
-                      Turn off Microsoft Defender
-                    </label>
-                  </>
-                )}
-                <p className="muted small">
-                  After the import, run Add new hardware once for each board type: until then no PC can boot it.
-                </p>
-              </>
-            )}
-          </div>
-
-          <div className="modal-footer">
-            <div className="footer-left muted small">{chosen ? `Selected: ${chosen.name}` : "Choose a file"}</div>
-            <div className="footer-right">
-              <button type="button" className="secondary" onClick={onClose} disabled={busy === "import"}>
-                Close
-              </button>
-              <button type="submit" className="btn-primary" disabled={!chosen || !name.trim() || busy !== null}>
-                <HardDriveDownload size={14} />
-                {busy === "import" ? "Starting…" : "Import"}
-              </button>
+          {chosen && (
+            <div className="form-row">
+              <label>
+                Name
+                <input value={name} onChange={(e) => setName(e.target.value)} maxLength={32} required />
+              </label>
+              <label>
+                Kind
+                <select value={kind} onChange={(e) => setKind(e.target.value as ImageKind)}>
+                  <option value="os">OS image (Boot Mode)</option>
+                  <option value="game">Game image</option>
+                </select>
+              </label>
             </div>
+          )}
+          {chosen && kind === "os" && (
+            <>
+              <label className="check">
+                <input type="checkbox" checked={prepare} onChange={(e) => setPrepare(e.target.checked)} />
+                Prepare image for all PCs after the import (agent, diskless settings)
+              </label>
+              {prepare && (
+                <>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={servicesOff}
+                      onChange={(e) => setServicesOff(e.target.checked)}
+                    />
+                    Turn off background services a cafe PC does not need (faster startup)
+                  </label>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={defenderOff}
+                      onChange={(e) => setDefenderOff(e.target.checked)}
+                    />
+                    Turn off Microsoft Defender
+                  </label>
+                </>
+              )}
+              <p className="muted small">
+                After the import, run Add new hardware once for each board type: until then no PC can boot it.
+              </p>
+            </>
+          )}
+        </div>
+
+        <div className="modal-footer">
+          <div className="footer-left muted small">{chosen ? `Selected: ${chosen.name}` : "Choose a file"}</div>
+          <div className="footer-right">
+            <button type="button" className="secondary" onClick={onClose} disabled={busy === "import"}>
+              Close
+            </button>
+            <button type="submit" className="btn-primary" disabled={!chosen || !name.trim() || busy !== null}>
+              <HardDriveDownload size={14} />
+              {busy === "import" ? "Starting…" : "Import"}
+            </button>
           </div>
-        </form>
-      </div>
-    </div>
+        </div>
+      </form>
+    </Modal>
   );
 }

@@ -19,6 +19,7 @@ import { ImagesPage } from "./pages/ImagesPage";
 import { MachinesPage } from "./pages/MachinesPage";
 import { ServerPage } from "./pages/ServerPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { useSingleFlight } from "./useSingleFlight";
 
 type Tab = "machines" | "disks" | "server" | "settings";
 
@@ -74,6 +75,8 @@ export function App() {
 }
 
 function Console({ user, onSignOut }: { user: User; onSignOut: () => void }) {
+  // Staff see everything and use the power controls; the rest is for admins (the server checks too).
+  const admin = user.role === "admin";
   const [tab, setTab] = useState<Tab>("machines");
   const [health, setHealth] = useState<Health | null>(null);
   const [disks, setDisks] = useState<Image[]>([]);
@@ -85,7 +88,7 @@ function Console({ user, onSignOut }: { user: User; onSignOut: () => void }) {
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  const reload = useCallback(async () => {
+  const reload = useSingleFlight(async () => {
     setRefreshing(true);
     try {
       const [d, m] = await Promise.all([api.listDisks(), api.listMachines()]);
@@ -105,7 +108,7 @@ function Console({ user, onSignOut }: { user: User; onSignOut: () => void }) {
       .then((t) => setTraffic(Object.fromEntries(t.map((x) => [x.machine_id, x]))))
       .catch(() => setTraffic({}));
     api.listDiscovered().then(setDiscovered).catch(() => setDiscovered([]));
-  }, []);
+  });
 
   useEffect(() => {
     api.health().then(setHealth).catch(() => setHealth(null));
@@ -224,9 +227,10 @@ function Console({ user, onSignOut }: { user: User; onSignOut: () => void }) {
             traffic={traffic}
             discovered={discovered}
             reload={reload}
+            canManage={admin}
           />
         ) : tab === "disks" ? (
-          <ImagesPage disks={disks} machines={machines} reload={reload} />
+          <ImagesPage disks={disks} machines={machines} reload={reload} canManage={admin} />
         ) : tab === "server" ? (
           <ServerPage user={user} pcs={machines.length} />
         ) : (

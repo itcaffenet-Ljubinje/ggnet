@@ -54,9 +54,11 @@ interface Props {
   disks: Image[];
   machines: Machine[];
   reload: () => Promise<void>;
+  /** Admins manage the images; staff only look at them. */
+  canManage?: boolean;
 }
 
-export function ImagesPage({ disks, machines, reload }: Props) {
+export function ImagesPage({ disks, machines, reload, canManage = true }: Props) {
   const { busy, error, setError, run } = useAsyncAction();
   const updates = useImageUpdates(disks);
   const usage = useImageUsage(disks);
@@ -160,6 +162,7 @@ export function ImagesPage({ disks, machines, reload }: Props) {
   }
 
   function menuFor(d: Image): MenuAction[] {
+    if (!canManage) return [{ label: "Details", icon: Info, onSelect: () => setOpen(d.id) }];
     const users = assigned(d.id);
     return [
       { label: "Details", icon: Info, onSelect: () => setOpen(d.id) },
@@ -313,8 +316,13 @@ export function ImagesPage({ disks, machines, reload }: Props) {
           machines={machines}
           reload={reload}
           onBack={() => setOpen(null)}
-          onAddHardware={() => setAddingHardware(shown.id)}
-          menu={<ActionMenu label={`Actions for ${shown.name}`} actions={menuFor(shown).filter((a) => a.label !== "Details")} />}
+          onAddHardware={canManage ? () => setAddingHardware(shown.id) : undefined}
+          canManage={canManage}
+          menu={
+            canManage ? (
+              <ActionMenu label={`Actions for ${shown.name}`} actions={menuFor(shown).filter((a) => a.label !== "Details")} />
+            ) : undefined
+          }
         />
       </>
     );
@@ -411,7 +419,7 @@ export function ImagesPage({ disks, machines, reload }: Props) {
                       <td>{usage[d.id] ? usage[d.id].versions : "—"}</td>
                       <td>{assigned(d.id)}</td>
                       <td className="actions">
-                        {!d.published && d.editor_id === null && !d.copy_source && (
+                        {canManage && !d.published && d.editor_id === null && !d.copy_source && (
                           <>
                             <select
                               aria-label={`PC to edit ${d.name} on`}
@@ -440,7 +448,7 @@ export function ImagesPage({ disks, machines, reload }: Props) {
                             </button>
                           </>
                         )}
-                        {d.editor_id !== null && (
+                        {canManage && d.editor_id !== null && (
                           <button
                             type="button"
                             onClick={() => finishEdit(d)}
@@ -479,6 +487,8 @@ export function ImagesPage({ disks, machines, reload }: Props) {
       <ImageKpis disks={disks} machines={machines} />
 
       <div className="card form-row images-toolbar">
+        {canManage && (
+          <>
         <button type="button" onClick={() => setCreating(true)} disabled={busy !== null}>
           <Plus size={14} />
           Create image
@@ -502,6 +512,8 @@ export function ImagesPage({ disks, machines, reload }: Props) {
           <ArchiveRestore size={14} />
           Backup / Restore
         </button>
+          </>
+        )}
         <input
           type="search"
           className="images-search"

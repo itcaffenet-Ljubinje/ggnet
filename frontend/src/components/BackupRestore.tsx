@@ -11,6 +11,7 @@ import {
 } from "../api";
 import { formatBytes, formatDuration } from "../format";
 import { ErrorBanner } from "./ErrorBanner";
+import { Modal } from "./Modal";
 
 type Tab = "backup" | "restore" | "history";
 const POLL_MS = 3000;
@@ -101,125 +102,123 @@ export function BackupRestore({ images, onClose, onRestored }: Props) {
   ];
 
   return (
-    <div className="modal-backdrop">
-      <div className="modal-content modal-wide" role="dialog" aria-label="Backup / Restore">
-        <div className="modal-header">
-          <div className="title-with-icon">
-            <ArchiveRestore size={20} aria-hidden />
-            <h2>Backup / Restore</h2>
-          </div>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
-            <X size={18} />
-          </button>
+    <Modal label="Backup / Restore" onClose={onClose} className="modal-wide">
+      <div className="modal-header">
+        <div className="title-with-icon">
+          <ArchiveRestore size={20} aria-hidden />
+          <h2>Backup / Restore</h2>
         </div>
-        <div className="modal-body">
-          <ErrorBanner message={error} onClose={() => setError(null)} />
-          <div className="subnav" role="tablist" aria-label="Backup or restore">
-            {tabs.map(({ id, label, icon: Icon }) => (
-              <button
-                key={id}
-                type="button"
-                role="tab"
-                aria-selected={tab === id}
-                className={`subnav-btn ${tab === id ? "active" : ""}`}
-                onClick={() => setTab(id)}
-              >
-                <Icon size={14} />
-                {label}
-              </button>
-            ))}
-          </div>
-
-          {tab !== "history" && (
-            <div className="backup-location">
-              <label>
-                Location
-                <select value={location} onChange={(e) => setLocation(e.target.value)} disabled={!locations?.length}>
-                  {locations?.length === 0 ? (
-                    <option value="">No USB disk or backup folder found</option>
-                  ) : (
-                    locations &&
-                    locations.length > 1 && <option value="">Choose a disk…</option>
-                  )}
-                  {locations?.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.label}
-                      {l.size ? ` · ${formatBytes(l.size)}` : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {opened && (
-                <span className="small muted">
-                  Free space: <span className="strong">{formatBytes(opened.free_bytes)}</span>
-                </span>
-              )}
-              {chosen?.kind === "usb" && (
-                <button
-                  type="button"
-                  className="secondary small"
-                  disabled={busy || active}
-                  title={active ? "Wait until the backup or restore is done" : "Unmount it so it can be unplugged"}
-                  onClick={() =>
-                    act(async () => {
-                      await api.ejectBackupLocation(location);
-                      setOpened(null);
-                      setError(null);
-                      window.alert("The USB disk can be unplugged now.");
-                    })
-                  }
-                >
-                  <Usb size={13} />
-                  Eject
-                </button>
-              )}
-            </div>
-          )}
-          {locations?.length === 0 && tab !== "history" && (
-            <p className="small warn-text">
-              Plug a USB disk (FAT32, exFAT, NTFS or ext4) into the server, or set backup folders in config.toml
-              ([paths] backup_dirs), then open this again.
-            </p>
-          )}
-
-          {tab === "backup" && (
-            <BackupTab
-              images={images}
-              opened={opened}
-              busy={busy || !opened}
-              start={(ids) =>
-                act(async () => {
-                  await api.startBackup(ids, location);
-                  await loadJobs();
-                  setTab("history");
-                })
-              }
-            />
-          )}
-          {tab === "restore" && (
-            <RestoreTab
-              images={images}
-              opened={opened}
-              busy={busy || !opened}
-              start={(folder, name) =>
-                act(async () => {
-                  await api.startRestore(location, folder, name);
-                  await Promise.all([loadJobs(), onRestored()]);
-                  setTab("history");
-                })
-              }
-            />
-          )}
-          {tab === "history" && (
-            <HistoryTab
-              jobs={jobs}
-              busy={busy}
-              cancel={(id) => act(async () => (await api.cancelBackupJob(id), await loadJobs()))}
-            />
-          )}
-        </div>
+        <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
+          <X size={18} />
+        </button>
       </div>
-    </div>
+      <div className="modal-body">
+        <ErrorBanner message={error} onClose={() => setError(null)} />
+        <div className="subnav" role="tablist" aria-label="Backup or restore">
+          {tabs.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={tab === id}
+              className={`subnav-btn ${tab === id ? "active" : ""}`}
+              onClick={() => setTab(id)}
+            >
+              <Icon size={14} />
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {tab !== "history" && (
+          <div className="backup-location">
+            <label>
+              Location
+              <select value={location} onChange={(e) => setLocation(e.target.value)} disabled={!locations?.length}>
+                {locations?.length === 0 ? (
+                  <option value="">No USB disk or backup folder found</option>
+                ) : (
+                  locations &&
+                  locations.length > 1 && <option value="">Choose a disk…</option>
+                )}
+                {locations?.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.label}
+                    {l.size ? ` · ${formatBytes(l.size)}` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {opened && (
+              <span className="small muted">
+                Free space: <span className="strong">{formatBytes(opened.free_bytes)}</span>
+              </span>
+            )}
+            {chosen?.kind === "usb" && (
+              <button
+                type="button"
+                className="secondary small"
+                disabled={busy || active}
+                title={active ? "Wait until the backup or restore is done" : "Unmount it so it can be unplugged"}
+                onClick={() =>
+                  act(async () => {
+                    await api.ejectBackupLocation(location);
+                    setOpened(null);
+                    setError(null);
+                    window.alert("The USB disk can be unplugged now.");
+                  })
+                }
+              >
+                <Usb size={13} />
+                Eject
+              </button>
+            )}
+          </div>
+        )}
+        {locations?.length === 0 && tab !== "history" && (
+          <p className="small warn-text">
+            Plug a USB disk (FAT32, exFAT, NTFS or ext4) into the server, or set backup folders in config.toml
+            ([paths] backup_dirs), then open this again.
+          </p>
+        )}
+
+        {tab === "backup" && (
+          <BackupTab
+            images={images}
+            opened={opened}
+            busy={busy || !opened}
+            start={(ids) =>
+              act(async () => {
+                await api.startBackup(ids, location);
+                await loadJobs();
+                setTab("history");
+              })
+            }
+          />
+        )}
+        {tab === "restore" && (
+          <RestoreTab
+            images={images}
+            opened={opened}
+            busy={busy || !opened}
+            start={(folder, name) =>
+              act(async () => {
+                await api.startRestore(location, folder, name);
+                await Promise.all([loadJobs(), onRestored()]);
+                setTab("history");
+              })
+            }
+          />
+        )}
+        {tab === "history" && (
+          <HistoryTab
+            jobs={jobs}
+            busy={busy}
+            cancel={(id) => act(async () => (await api.cancelBackupJob(id), await loadJobs()))}
+          />
+        )}
+      </div>
+    </Modal>
   );
 }
 

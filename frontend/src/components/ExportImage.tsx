@@ -4,6 +4,7 @@ import { FileOutput, X } from "lucide-react";
 import { api, type BackupLocation, type Image, type Snapshot } from "../api";
 import { formatBytes } from "../format";
 import { ErrorBanner } from "./ErrorBanner";
+import { Modal } from "./Modal";
 
 const GiB = 1024 ** 3;
 const VHD_MAX = 2040 * GiB;
@@ -84,98 +85,96 @@ export function ExportImage({ image, compressRatio, onClose }: Props) {
   }
 
   return (
-    <div className="modal-backdrop">
-      <div className="modal-content" role="dialog" aria-label={`Export ${image.name}`}>
-        <div className="modal-header">
-          <div className="title-with-icon">
-            <FileOutput size={20} aria-hidden />
-            <h2>Export {image.name}</h2>
-          </div>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
-            <X size={18} />
-          </button>
+    <Modal label={`Export ${image.name}`} onClose={onClose}>
+      <div className="modal-header">
+        <div className="title-with-icon">
+          <FileOutput size={20} aria-hidden />
+          <h2>Export {image.name}</h2>
         </div>
-        <form onSubmit={start}>
-          <div className="modal-body">
-            <ErrorBanner message={error} onClose={() => setError(null)} />
-            <div className="settings-grid">
-              <label>
-                Version
-                <select value={snapshot} onChange={(e) => setSnapshot(e.target.value)}>
-                  {versions.length === 0 && <option value={snapshot}>@{snapshot}</option>}
-                  {versions.map((v) => (
-                    <option key={v.name} value={v.name}>
-                      @{v.name}
-                      {v.active ? " (active)" : ""}
-                      {v.comment ? ` · ${v.comment}` : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Format
-                <select value={format} onChange={(e) => setFormat(e.target.value as "vhdx" | "vhd")}>
-                  <option value="vhdx">VHDX (Windows, Hyper-V, Proxmox; up to 64 TB)</option>
-                  <option value="vhd">VHD (older tools; up to 2040 GB)</option>
-                </select>
-              </label>
-              <label>
-                Location
-                <select value={location} onChange={(e) => setLocation(e.target.value)} disabled={!locations?.length}>
-                  {locations && locations.length !== 1 && (
-                    <option value="">{locations.length === 0 ? "No USB disk or folder found" : "Choose where…"}</option>
-                  )}
-                  {locations?.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                File name
-                <input
-                  value={fileName}
-                  onChange={(e) => {
-                    setNameTouched(true);
-                    setFileName(e.target.value);
-                  }}
-                  aria-invalid={!nameOk}
-                />
-              </label>
-            </div>
-            <p className="small muted">
-              About {formatBytes(size)} of data
-              {free !== null ? `, ${formatBytes(free)} free there` : ""}. The file is dynamic: it takes only the space
-              of the data. The image is only read; PCs keep running.
-            </p>
-            {vhdTooBig && (
-              <p className="small error-text">A VHD holds at most 2040 GB and this image is {image.size_gb} GB: choose VHDX.</p>
-            )}
-            {fat32 && (
-              <p className="small error-text">
-                This USB disk has FAT32, which takes no file over 4 GB. Use a disk with exFAT, NTFS or ext4, or the
-                imports folder.
-              </p>
-            )}
-            {noRoom && !fat32 && <p className="small error-text">Not enough free space there.</p>}
-          </div>
-          <div className="modal-footer">
-            <div className="footer-right">
-              <button type="button" className="secondary" onClick={onClose}>
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={busy || !location || !snapshot || !nameOk || vhdTooBig || fat32 || noRoom}
-              >
-                <FileOutput size={14} />
-                {busy ? "Starting…" : "Export"}
-              </button>
-            </div>
-          </div>
-        </form>
+        <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
+          <X size={18} />
+        </button>
       </div>
-    </div>
+      <form onSubmit={start}>
+        <div className="modal-body">
+          <ErrorBanner message={error} onClose={() => setError(null)} />
+          <div className="settings-grid">
+            <label>
+              Version
+              <select value={snapshot} onChange={(e) => setSnapshot(e.target.value)}>
+                {versions.length === 0 && <option value={snapshot}>@{snapshot}</option>}
+                {versions.map((v) => (
+                  <option key={v.name} value={v.name}>
+                    @{v.name}
+                    {v.active ? " (active)" : ""}
+                    {v.comment ? ` · ${v.comment}` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Format
+              <select value={format} onChange={(e) => setFormat(e.target.value as "vhdx" | "vhd")}>
+                <option value="vhdx">VHDX (Windows, Hyper-V, Proxmox; up to 64 TB)</option>
+                <option value="vhd">VHD (older tools; up to 2040 GB)</option>
+              </select>
+            </label>
+            <label>
+              Location
+              <select value={location} onChange={(e) => setLocation(e.target.value)} disabled={!locations?.length}>
+                {locations && locations.length !== 1 && (
+                  <option value="">{locations.length === 0 ? "No USB disk or folder found" : "Choose where…"}</option>
+                )}
+                {locations?.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              File name
+              <input
+                value={fileName}
+                onChange={(e) => {
+                  setNameTouched(true);
+                  setFileName(e.target.value);
+                }}
+                aria-invalid={!nameOk}
+              />
+            </label>
+          </div>
+          <p className="small muted">
+            About {formatBytes(size)} of data
+            {free !== null ? `, ${formatBytes(free)} free there` : ""}. The file is dynamic: it takes only the space
+            of the data. The image is only read; PCs keep running.
+          </p>
+          {vhdTooBig && (
+            <p className="small error-text">A VHD holds at most 2040 GB and this image is {image.size_gb} GB: choose VHDX.</p>
+          )}
+          {fat32 && (
+            <p className="small error-text">
+              This USB disk has FAT32, which takes no file over 4 GB. Use a disk with exFAT, NTFS or ext4, or the
+              imports folder.
+            </p>
+          )}
+          {noRoom && !fat32 && <p className="small error-text">Not enough free space there.</p>}
+        </div>
+        <div className="modal-footer">
+          <div className="footer-right">
+            <button type="button" className="secondary" onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={busy || !location || !snapshot || !nameOk || vhdTooBig || fat32 || noRoom}
+            >
+              <FileOutput size={14} />
+              {busy ? "Starting…" : "Export"}
+            </button>
+          </div>
+        </div>
+      </form>
+    </Modal>
   );
 }
