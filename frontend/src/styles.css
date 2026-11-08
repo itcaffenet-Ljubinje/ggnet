@@ -3000,3 +3000,22 @@ tr.row-warn td {
   border-radius: 8px;
   padding: 8px 10px;
 }
+/* Machines → Columns */
+.columns-menu {
+  position: relative;
+}
+.columns-menu-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 160px;
+  padding: 10px 12px;
+  background: var(--surface, #1b1f27);
+  border: 1px solid var(--border, #2c313c);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}

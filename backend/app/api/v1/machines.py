@@ -137,6 +137,18 @@ def _has_host_state(m: Machine) -> bool:
     return m.status is not MachineStatus.IDLE or m.clone_zvol is not None
 
 
+def _shut_down_first(prov: Provisioner, m: Machine) -> None:
+    """Refused while the PC runs: deleting it would pull its disks from under Windows."""
+    if agent_online(m):
+        conflict(f"'{m.name}' is on (its agent reports); shut it down first")
+    if _has_host_state(m) and m.iscsi_target_iqn:
+        session = prov.session_active(m.initiator_iqn, m.iscsi_target_iqn)
+        if session is None:
+            host_failed(f"Cannot read the iSCSI session state of '{m.name}'")
+        if session:
+            conflict(f"'{m.name}' is still connected; shut it down first")
+
+
 def _set_provisioned(m: Machine, cd: ClientDisk) -> None:
     m.status = MachineStatus.PROVISIONED
     m.last_error = None
@@ -228,7 +240,8 @@ def bulk(
     Run one action on several machines, each exactly like its single-machine
     route (same checks, same messages). One machine failing does not stop the
     others; the answer says per machine what happened. Staff may only turn
-    PCs on, shut them down and restart them.
+    PCs on, shut them down and restart them. `discard` leaves PCs that keep
+    their writeback alone; `delete` and `discard` refuse PCs that are on.
     """
     if user.role is not UserRole.ADMIN and body.action not in ("on", "shutdown", "reboot"):
         raise HTTPException(403, detail={"error": f"Your role ({user.role.value}) cannot do this"})
@@ -241,6 +254,18 @@ def bulk(
             pin_snapshot(machine_id, MachinePin(snapshot=body.snapshot), db, prov)
         elif body.action == "drive_letter":
             update_machine(machine_id, MachineUpdate(drive_letter=body.drive_letter), db, prov)
+        elif body.action in ("hide", "show"):
+            update_machine(machine_id, MachineUpdate(hidden=body.action == "hide"), db, prov)
+        elif body.action == "mode":
+            update_machine(machine_id, MachineUpdate(mode=body.mode), db, prov)
+        elif body.action == "discard":
+            m = _get(db, machine_id)
+            # A kept writeback is someone's install in progress: only on its own.
+            if m.keep_writeback:
+                conflict(f"'{m.name}' keeps its writeback; discard it on its own (Writeback -> Discard)")
+            discard_writeback(machine_id, db, prov)
+        elif body.action == "delete":
+            delete_machine(machine_id, db, prov)
         else:
             keep_writeback(machine_id, KeepWriteback(enabled=False), db, prov)
 
@@ -698,6 +723,7 @@ def delete_machine(
 ):
     machine = _get(db, machine_id)
     _not_editing(machine)
+    _shut_down_first(prov, machine)
     if _has_host_state(machine):
         _deprovision(db, prov, machine)
     db.delete(machine)

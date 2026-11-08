@@ -278,6 +278,33 @@ def test_delete_machine_cleans_host(client, host):
     assert client.get(f"/api/v1/machines/{m['id']}").status_code == 404
 
 
+def test_delete_refused_while_the_pc_is_on(client, host):
+    d = _disk(client)
+    m = _machine(client, game_image_id=d["id"])
+    client.post("/api/v1/agent/heartbeat", json={"name": m["name"], "agent_version": "0.1.9"})
+    r = client.delete(f"/api/v1/machines/{m['id']}")
+    assert r.status_code == 409 and "shut it down first" in r.json()["detail"]["error"]
+    assert CLONE in host.datasets
+
+
+def test_delete_refused_while_connected_without_an_agent(client, host):
+    d = _disk(client)
+    m = _machine(client, game_image_id=d["id"])
+    host.sessions.add(IQN)          # e.g. a Boot Mode PC still in iPXE, or an agent that is not installed
+    r = client.delete(f"/api/v1/machines/{m['id']}")
+    assert r.status_code == 409 and "still connected" in r.json()["detail"]["error"]
+    host.sessions.clear()
+    assert client.delete(f"/api/v1/machines/{m['id']}").status_code == 204
+
+
+def test_hide_and_show(client):
+    m = client.post("/api/v1/machines", json={"name": "pc01"}).json()
+    assert m["hidden"] is False
+    assert client.patch(f"/api/v1/machines/{m['id']}", json={"hidden": True}).json()["hidden"] is True
+    assert client.get("/api/v1/machines").json()[0]["hidden"] is True     # still listed; the UI hides it
+    assert client.patch(f"/api/v1/machines/{m['id']}", json={"hidden": None}).status_code == 422
+
+
 def test_delete_machine_host_failure_keeps_record(client, host):
     d = _disk(client)
     m = _machine(client, game_image_id=d["id"])

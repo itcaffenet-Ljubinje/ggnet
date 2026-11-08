@@ -2,6 +2,10 @@ import { useEffect, useState, type FormEvent } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
+  Columns3,
+  Eraser,
+  Eye,
+  EyeOff,
   HardDrive,
   KeyRound,
   Lock,
@@ -39,7 +43,7 @@ import { ImageStatus } from "../components/ImageStatus";
 import { MachineSettings } from "../components/MachineSettings";
 import { Modal } from "../components/Modal";
 import { StatusBadge } from "../components/StatusBadge";
-import { formatBytes, formatRate } from "../format";
+import { formatBytes, formatDuration, formatLink, formatRate } from "../format";
 import { useAsyncAction } from "../useAsyncAction";
 
 interface Props {
@@ -67,6 +71,8 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
+  const [showHidden, setShowHidden] = useState(false);
+  const [columns, setColumns] = useColumns();
   // Boot Mode: which kept writebacks Apply Writebacks turns into versions, per machine.
   const [applyWhat, setApplyWhat] = useState<Record<number, ApplyKey>>({});
   const [allLetter, setAllLetter] = useState("D");
@@ -122,15 +128,18 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
   }, [versionKey]); // inUse is derived from versionKey
   const diskName = (id: number | null) => disks.find((d) => d.id === id)?.name ?? "—";
 
-  const online = machines.filter((m) => isOnline(m));
+  // Hidden PCs stay out of the list (and its counts) until Show hidden.
+  const hiddenCount = machines.filter((m) => m.hidden).length;
+  const listed = showHidden ? machines : machines.filter((m) => !m.hidden);
+  const online = listed.filter((m) => isOnline(m));
   const counts: Record<Filter, number> = {
-    all: machines.length,
+    all: listed.length,
     online: online.length,
-    offline: machines.length - online.length,
-    writeback: machines.filter(hasWriteback).length,
+    offline: listed.length - online.length,
+    writeback: listed.filter(hasWriteback).length,
   };
   const needle = search.trim().toLowerCase();
-  const shown = machines.filter((m) => {
+  const shown = listed.filter((m) => {
     if (filter === "online" && !isOnline(m)) return false;
     if (filter === "offline" && isOnline(m)) return false;
     if (filter === "writeback" && !hasWriteback(m)) return false;
@@ -284,6 +293,18 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
           </div>
         </div>
         <div className="toolbar-right">
+          {hiddenCount > 0 && (
+            <button
+              type="button"
+              className="secondary small"
+              aria-pressed={showHidden}
+              onClick={() => setShowHidden(!showHidden)}
+            >
+              {showHidden ? <EyeOff size={14} /> : <Eye size={14} />}
+              {showHidden ? "Hide hidden" : "Show hidden"} ({hiddenCount})
+            </button>
+          )}
+          <ColumnsMenu columns={columns} onChange={setColumns} />
           {canManage && machines.some((m) => m.mode === "disk") && (
             <div className="bulk-disk-assign">
               <select
@@ -352,11 +373,13 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
                   />
                 </th>
                 <th>Station</th>
-                <th>MAC</th>
-                <th>Disks</th>
-                <th>Writeback</th>
-                <th title="Since the PC's writeback was last cloned">Network I/O</th>
-                <th>Agent</th>
+                {columns.mac && <th>MAC</th>}
+                {columns.disks && <th>Disks</th>}
+                {columns.writeback && <th>Writeback</th>}
+                {columns.traffic && <th title="Since the PC's writeback was last cloned">Network I/O</th>}
+                {columns.link && <th>Link</th>}
+                {columns.uptime && <th title="Since Windows started, while the PC is on">Uptime</th>}
+                {columns.agent && <th>Agent</th>}
                 <th className="th-actions">Actions</th>
               </tr>
             </thead>
@@ -404,14 +427,21 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
                             </span>
                           </div>
                           <div className="mono muted small">{m.reported_ip ?? "No IP reported"}</div>
+                          {m.hidden && (
+                            <span className="badge" title="Hidden: shown only with Show hidden">
+                              <EyeOff size={12} />
+                              Hidden
+                            </span>
+                          )}
                           {m.status !== "provisioned" && <StatusBadge status={m.status} />}
                           {m.last_error && <div className="error-text small">{m.last_error}</div>}
                         </div>
                       </div>
                     </td>
 
-                    <td className="mono small">{m.mac ?? "—"}</td>
+                    {columns.mac && <td className="mono small">{m.mac ?? "—"}</td>}
 
+                    {columns.disks && (
                     <td>
                       {m.status === "editing" ? (
                         <span className="badge badge-warn">Editing {diskName(m.editing_image_id)}</span>
@@ -481,7 +511,9 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
                         </div>
                       )}
                     </td>
+                    )}
 
+                    {columns.writeback && (
                     <td>
                       {m.status === "idle" ? (
                         <span className="muted">—</span>
@@ -562,13 +594,25 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
                       )}
                     </td>
 
-                    <td className="small">
-                      <TrafficCell traffic={traffic[m.id]} />
-                    </td>
+                    )}
 
-                    <td>
-                      <AgentState machine={m} />
-                    </td>
+                    {columns.traffic && (
+                      <td className="small">
+                        <TrafficCell traffic={traffic[m.id]} />
+                      </td>
+                    )}
+
+                    {columns.link && (
+                      <td className="small">{m.link_speed_mbps ? formatLink(m.link_speed_mbps) : "—"}</td>
+                    )}
+
+                    {columns.uptime && <td className="small">{uptime(m, up)}</td>}
+
+                    {columns.agent && (
+                      <td>
+                        <AgentState machine={m} />
+                      </td>
+                    )}
 
                     <td>
                       <div className="actions-cell">
@@ -622,9 +666,15 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
                               type="button"
                               className="icon-btn icon-btn-danger"
                               onClick={() => remove(m)}
-                              disabled={busy !== null || m.status === "editing"}
+                              disabled={busy !== null || m.status === "editing" || up}
                               aria-label={`Delete ${m.name}`}
-                              title={m.status === "editing" ? "Finish editing the game image first" : "Delete"}
+                              title={
+                                m.status === "editing"
+                                  ? "Finish editing the game image first"
+                                  : up
+                                    ? "Delete is not allowed while the PC is on; shut it down first"
+                                    : "Delete"
+                              }
                             >
                               <Trash2 size={14} />
                             </button>
@@ -813,6 +863,7 @@ function BulkDock({ machines, total, disks, versions, busy, run, all, select, cl
   const [disk, setDisk] = useState("");
   const [version, setVersion] = useState("");
   const [letter, setLetter] = useState("D");
+  const [mode, setMode] = useState<MachineMode | "">("");
   const n = machines.length;
   // A version can be pinned on several PCs only when they share a game image.
   const imageIds = new Set(machines.map((m) => m.game_image_id));
@@ -942,6 +993,23 @@ function BulkDock({ machines, total, disks, versions, busy, run, all, select, cl
           </button>
         </div>
 
+        <div className="bulk-disk-assign">
+          <select aria-label="Mode for selected" value={mode} onChange={(e) => setMode(e.target.value as MachineMode | "")}>
+            <option value="">Mode…</option>
+            <option value="disk">Disk Mode</option>
+            <option value="boot">Boot Mode</option>
+          </select>
+          <button
+            type="button"
+            className="small"
+            disabled={busy || !mode}
+            title="Only PCs without a disk can change their mode"
+            onClick={() => mode && run("Mode", "mode", { mode })}
+          >
+            Apply
+          </button>
+        </div>
+
         <button
           type="button"
           className="bulk-btn"
@@ -949,6 +1017,38 @@ function BulkDock({ machines, total, disks, versions, busy, run, all, select, cl
           onClick={() => run("Stop keeping writeback", "stop_keep_writeback")}
         >
           Stop keeping writeback
+        </button>
+        <button
+          type="button"
+          className="bulk-btn"
+          disabled={busy}
+          onClick={() => run("Discard writebacks", "discard", {}, discardText(machines))}
+        >
+          <Eraser size={14} />
+          Discard writebacks
+        </button>
+        {machines.some((m) => !m.hidden) ? (
+          <button type="button" className="bulk-btn" disabled={busy} onClick={() => run("Hide", "hide")}>
+            <EyeOff size={14} />
+            Hide
+          </button>
+        ) : (
+          <button type="button" className="bulk-btn" disabled={busy} onClick={() => run("Show", "show")}>
+            <Eye size={14} />
+            Show
+          </button>
+        )}
+        <button
+          type="button"
+          className="bulk-btn bulk-btn-poweroff"
+          disabled={busy || machines.some((m) => isOnline(m))}
+          title={machines.some((m) => isOnline(m)) ? "Delete is not allowed while a selected PC is on" : undefined}
+          onClick={() =>
+            run("Delete", "delete", {}, `Delete ${n} PC(s) and their disks on the host? This cannot be undone.`)
+          }
+        >
+          <Trash2 size={14} />
+          Delete
         </button>
           </>
         )}
@@ -1079,6 +1179,95 @@ function MachineKpis({ machines, discovered }: { machines: Machine[]; discovered
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/** What Discard writebacks does to the selection, for its confirmation. */
+export function discardText(machines: Machine[]): string {
+  const kept = machines.filter((m) => m.keep_writeback).map((m) => m.name);
+  return (
+    `Throw away what ${machines.length - kept.length} PC(s) wrote and give them a clean copy of their images? ` +
+    "PCs that are on are left alone." +
+    (kept.length ? `\n\nPCs with "Keep writeback" ON are not touched: ${kept.join(", ")}` : "")
+  );
+}
+
+/** "3 h 12 min" since Windows started, while the PC is on. */
+export function uptime(m: Machine, up: boolean, now = Date.now()): string {
+  if (!up || !m.booted_at) return "—";
+  return formatDuration(Math.max(0, now - Date.parse(m.booted_at)));
+}
+
+type ColumnKey = "mac" | "disks" | "writeback" | "traffic" | "link" | "uptime" | "agent";
+type Columns = Record<ColumnKey, boolean>;
+const COLUMN_LABELS: [ColumnKey, string][] = [
+  ["mac", "MAC"],
+  ["disks", "Disks"],
+  ["writeback", "Writeback"],
+  ["traffic", "Network I/O"],
+  ["link", "Link speed"],
+  ["uptime", "Uptime"],
+  ["agent", "Agent"],
+];
+const DEFAULT_COLUMNS: Columns = {
+  mac: true, disks: true, writeback: true, traffic: true, link: false, uptime: false, agent: true,
+};
+const COLUMNS_KEY = "ggnet:machine-columns";
+
+/** The columns this browser shows on Machines, remembered between visits. */
+function useColumns(): [Columns, (c: Columns) => void] {
+  const [columns, set] = useState<Columns>(() => {
+    try {
+      const saved = window.localStorage.getItem(COLUMNS_KEY);
+      return saved ? { ...DEFAULT_COLUMNS, ...(JSON.parse(saved) as Partial<Columns>) } : DEFAULT_COLUMNS;
+    } catch {
+      return DEFAULT_COLUMNS;
+    }
+  });
+  function update(next: Columns) {
+    set(next);
+    try {
+      window.localStorage.setItem(COLUMNS_KEY, JSON.stringify(next));
+    } catch {
+      // private window or blocked storage: the choice lasts until the page reloads
+    }
+  }
+  return [columns, update];
+}
+
+function ColumnsMenu({ columns, onChange }: { columns: Columns; onChange: (c: Columns) => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="columns-menu">
+      <button
+        type="button"
+        className="secondary small"
+        aria-expanded={open}
+        aria-label="Columns"
+        title="Choose the columns"
+        onClick={() => setOpen(!open)}
+      >
+        <Columns3 size={14} />
+        Columns
+      </button>
+      {open && (
+        <div className="columns-menu-panel" role="group" aria-label="Shown columns">
+          {COLUMN_LABELS.map(([key, label]) => (
+            <label key={key} className="check small">
+              <input
+                type="checkbox"
+                checked={columns[key]}
+                onChange={(e) => onChange({ ...columns, [key]: e.target.checked })}
+              />
+              {label}
+            </label>
+          ))}
+          <button type="button" className="link-btn small" onClick={() => onChange(DEFAULT_COLUMNS)}>
+            Reset
+          </button>
+        </div>
+      )}
     </div>
   );
 }

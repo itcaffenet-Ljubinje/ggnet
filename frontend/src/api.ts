@@ -586,7 +586,19 @@ export interface AgentPackage {
   outdated: string[];
 }
 
-export type BulkKind = "on" | "shutdown" | "reboot" | "assign" | "pin" | "drive_letter" | "stop_keep_writeback";
+export type BulkKind =
+  | "on"
+  | "shutdown"
+  | "reboot"
+  | "assign"
+  | "pin"
+  | "drive_letter"
+  | "stop_keep_writeback"
+  | "hide"
+  | "show"
+  | "discard"
+  | "mode"
+  | "delete";
 
 /** What happened to one machine in a bulk operation. */
 export interface BulkResult {
@@ -616,6 +628,8 @@ export interface Machine {
   reported_ip: string | null;
   reported_mac: string | null;
   link_speed_mbps: number | null;
+  /** Kept out of the Machines list until Show hidden. */
+  hidden: boolean;
   hardware: MachineHardware | null;
   /** Boot Mode: the boot network card's PCI ID as iPXE read it (VEN_10EC&DEV_8168&SUBSYS_…&REV_16). */
   boot_nic?: string | null;
@@ -909,7 +923,7 @@ export const api = {
   bulk: (
     machine_ids: number[],
     action: BulkKind,
-    extra: { game_image_id?: number | null; snapshot?: string | null; drive_letter?: string } = {},
+    extra: { game_image_id?: number | null; snapshot?: string | null; drive_letter?: string; mode?: MachineMode } = {},
   ) => request<BulkResult[]>("POST", "/v1/machines/bulk", { machine_ids, action, ...extra }),
   power: (id: number, action: "on" | "shutdown" | "reboot") =>
     request<Machine>("POST", `/v1/machines/${id}/power`, { action }),
