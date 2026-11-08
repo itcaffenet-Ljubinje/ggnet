@@ -1216,3 +1216,15 @@ class TaskOut(BaseModel):
     cancel: str | None = None     # POST here to stop it
     image_id: int | None = None
 
+
+class TlsOut(BaseModel):
+    """The web UI's HTTPS (Settings → Network boot)."""
+
+    enabled: bool
+    url: str | None = None            # https://<service IP>:<port>
+    subject: str | None = None
+    names: list[str] = []
+    not_after: str | None = None
+    sha256: str | None = None
+    self_signed: bool = False
+

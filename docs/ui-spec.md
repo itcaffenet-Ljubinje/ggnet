@@ -92,7 +92,7 @@ Status: **done** (backend and UI), **backend** (API exists, UI missing or partia
 | Secure Boot: key enrollment prepared by the agent (MokNew/MokAuth, no USB), switched on in Network boot with a MokManager password; per-PC key state (enrolled / confirm at next boot) | done |
 | Secure Boot: BIOS how-to per vendor | todo |
 | Sign-in: users with roles (admin: everything; staff: view + power), first admin with a one-time setup code (`ggnet-admin setup-code`), sessions in an HttpOnly cookie or Bearer token, scrypt passwords, wrong-password lockout; Settings → Users and Account | done |
-| HTTPS | todo |
+| HTTPS: the web UI on 8443 (`python -m app.serve`: HTTP and HTTPS in one process), a self-signed certificate made by the installer (or the cafe's own); 8088 stays HTTP for the PCs (/api/v1/boot, /api/v1/agent, /api/health) and sends every other request to HTTPS (308); the session cookie is always Secure once HTTPS is set up; Settings → Network boot shows the certificate (names, end date, SHA-256) and offers it to trust | done |
 
 ## Server (new page)
 

@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_provisioner, get_pxe_service
-from app.api.v1.errors import conflict, host_failed
+from app.api.v1.errors import conflict, host_failed, not_found
 from app.api.v1.schemas import (
     BootSettingsIn,
     BootSettingsOut,
@@ -26,6 +26,7 @@ from app.api.v1.schemas import (
     RetentionOut,
     RetentionReportOut,
     StorageOut,
+    TlsOut,
 )
 from app.db.session import get_db
 from app.services import pxe, retention
@@ -126,6 +127,35 @@ def put_boot_settings(body: BootSettingsIn, db: Session = Depends(get_db)):
     """Applies to the next PC that asks for its iPXE script; nothing is restarted."""
     pxe.save_settings(db, pxe.BootSettings(**body.model_dump()))
     return get_boot_settings(db)
+
+
+@router.get("/settings/tls", response_model=TlsOut)
+def tls_status():
+    """Whether the web UI runs on HTTPS, and its certificate."""
+    from app import serve
+    from app.config import get_config
+    from app.services.tls import cert_info
+
+    cfg = get_config()
+    secure = serve.tls(cfg)
+    if secure is None:
+        return TlsOut(enabled=False)
+    port, cert, _ = secure
+    info = cert_info(cert) or {}
+    return TlsOut(enabled=True, url=f"https://{cfg['network']['server_ip']}:{port}", **info)
+
+
+@router.get("/settings/tls/certificate")
+def tls_certificate():
+    """The certificate (no key), to add to the admin PCs' trusted root certificates."""
+    from fastapi.responses import FileResponse
+
+    from app import serve
+
+    secure = serve.tls()
+    if secure is None:
+        not_found("HTTPS certificate", "ggnet.crt")
+    return FileResponse(secure[1], media_type="application/x-x509-ca-cert", filename="ggnet.crt")
 
 
 @router.get("/pxe", response_model=PxeStatusOut)

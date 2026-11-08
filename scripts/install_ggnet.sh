@@ -29,7 +29,8 @@ Options:
   --dataset NAME    root dataset inside the pool (default: ggnet)
   --iface NAME      interface for services (e.g. vmbr1)
   --ip ADDR         IP for services (must exist on the host)
-  --web-port N      web UI port (default: 8088)
+  --web-port N      HTTP port for the PCs (iPXE, agent) (default: 8088)
+  --https-port N    HTTPS port for the web UI (default: 8443)
   --web-bind MODE   "service" (service IP only) or "all" (0.0.0.0) (default: service)
   --app MODULE      uvicorn entry point (default: app.main:app)
   --yes             no prompts (for CI / automation)
@@ -54,6 +55,7 @@ IFACE=""
 SERVICE_IP=""
 SERVICE_CIDR=""
 WEB_PORT="8088"
+HTTPS_PORT="8443"
 WEB_BIND_MODE="service"
 APP_MODULE="app.main:app"
 ASSUME_YES=0
@@ -66,6 +68,7 @@ UNIT_FILE="/etc/systemd/system/ggnet.service"
 PXE_UNIT_FILE="/etc/systemd/system/ggnet-pxe.service"
 PXE_CONF_FILE="$CONF_DIR/dnsmasq-pxe.conf"
 SB_DIR="$CONF_DIR/secureboot"
+TLS_DIR="$CONF_DIR/tls"
 SB_SIGN="/usr/local/sbin/ggnet-sign-ipxe"
 SB_APT_HOOK="/etc/apt/apt.conf.d/90ggnet-secureboot"
 LAN_UNIT_FILE="/etc/systemd/system/ggnet-lan-route.service"
@@ -100,6 +103,7 @@ while [[ $# -gt 0 ]]; do
         --iface)    IFACE="$2"; shift 2 ;;
         --ip)       SERVICE_IP="$2"; shift 2 ;;
         --web-port) WEB_PORT="$2"; shift 2 ;;
+        --https-port) HTTPS_PORT="$2"; shift 2 ;;
         --web-bind) WEB_BIND_MODE="$2"; shift 2 ;;
         --app)      APP_MODULE="$2"; shift 2 ;;
         --yes|-y)   ASSUME_YES=1; shift ;;
@@ -250,18 +254,22 @@ IFACE="${IFACE:-$(iface_of_ip "$SERVICE_IP")}"
 
 # ---------- 5. web UI port and bind address ----------
 if interactive; then
-    WEB_PORT="$(wt --inputbox "Port for the ggNet web UI:" 10 60 "$WEB_PORT")" || die "Aborted."
+    WEB_PORT="$(wt --inputbox "HTTP port for the PCs (iPXE, agent):" 10 60 "$WEB_PORT")" || die "Aborted."
+    HTTPS_PORT="$(wt --inputbox "HTTPS port for the ggNet web UI:" 10 60 "$HTTPS_PORT")" || die "Aborted."
     WEB_BIND_MODE="$(wt --radiolist "Where should the web UI listen?" 12 74 2 \
         service "Only on $SERVICE_IP ($IFACE)" ON \
         all     "On all interfaces (0.0.0.0)" OFF)" || die "Aborted."
 fi
-[[ "$WEB_PORT" =~ ^[0-9]+$ ]] && (( WEB_PORT > 0 && WEB_PORT < 65536 )) || die "Invalid port: $WEB_PORT"
-for p in "${RESERVED_PORTS[@]}"; do
-    [[ "$WEB_PORT" == "$p" ]] && die "Port $WEB_PORT is reserved (Proxmox/ProxMenux/iSCSI)."
+for port in "$WEB_PORT" "$HTTPS_PORT"; do
+    [[ "$port" =~ ^[0-9]+$ ]] && (( port > 0 && port < 65536 )) || die "Invalid port: $port"
+    for p in "${RESERVED_PORTS[@]}"; do
+        [[ "$port" == "$p" ]] && die "Port $port is reserved (Proxmox/ProxMenux/iSCSI)."
+    done
+    if ss -ltnH "sport = :$port" | grep -q . && ! systemctl is-active --quiet ggnet; then
+        die "Port $port is already in use."
+    fi
 done
-if ss -ltnH "sport = :$WEB_PORT" | grep -q . && ! systemctl is-active --quiet ggnet; then
-    die "Port $WEB_PORT is already in use."
-fi
+[[ "$WEB_PORT" != "$HTTPS_PORT" ]] || die "The HTTP and the HTTPS port must differ."
 case "$WEB_BIND_MODE" in
     service) WEB_BIND="$SERVICE_IP" ;;
     all)     WEB_BIND="0.0.0.0" ;;
@@ -281,7 +289,8 @@ iSCSI portal: $SERVICE_IP:3260
 PXE:          $SERVICE_IP  (proxyDHCP 67/4011 + TFTP 69 UDP, service ggnet-pxe;
               the router stays the DHCP server; only one PXE server per LAN)
 HTTP boot:    $SERVICE_IP:80
-Web UI:       http://$WEB_BIND:$WEB_PORT"
+Web UI:       https://$WEB_BIND:$HTTPS_PORT  (self-signed certificate, $CONF_DIR/tls)
+PCs:          http://$WEB_BIND:$WEB_PORT  (iPXE, agent)"
 
 if interactive; then
     wt --yesno "$SUMMARY\n\nStart installation?" 24 78 || die "Aborted."
@@ -416,7 +425,13 @@ spares = true
 
 [web]
 bind = "$WEB_BIND"
+# HTTP: what the PCs use (iPXE, Windows PE, the agent); a browser is sent to HTTPS.
 port = $WEB_PORT
+# HTTPS: the web UI. A self-signed certificate is made by the installer; put
+# your own certificate and key here instead if you have them.
+https_port = $HTTPS_PORT
+tls_cert = "$TLS_DIR/ggnet.crt"
+tls_key = "$TLS_DIR/ggnet.key"
 frontend_dist = "$INSTALL_DIR/frontend/dist"
 
 [paths]
@@ -463,6 +478,20 @@ if ! echo "$WIMBOOT_SHA256  $DATA_DIR/winpe/wimboot" | sha256sum -c --status 2>/
         red "Could not download wimboot $WIMBOOT_VERSION; Add new hardware needs it. Run the installer again later."
     fi
     rm -f "$WIMBOOT_TMP"
+fi
+
+# HTTPS for the web UI: a self-signed certificate for the service IP and the
+# host name, made once and kept on reinstall (Settings -> Network boot offers
+# it for download, to trust it on the admin PCs).
+install -d -m 700 "$TLS_DIR"
+if [[ ! -f "$TLS_DIR/ggnet.crt" || ! -f "$TLS_DIR/ggnet.key" ]]; then
+    info "Creating the web UI's HTTPS certificate in $TLS_DIR..."
+    openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \
+        -subj "/CN=ggNet $(hostname -s)/" \
+        -addext "subjectAltName=IP:$SERVICE_IP,DNS:$(hostname -s),DNS:$(hostname -f)" \
+        -keyout "$TLS_DIR/ggnet.key" -out "$TLS_DIR/ggnet.crt" 2>/dev/null \
+        || die "Creating the HTTPS certificate failed."
+    chmod 600 "$TLS_DIR/ggnet.key"
 fi
 
 # Secure Boot: the PCs load shim (signed by Microsoft) from sb/, and shim
@@ -637,7 +666,9 @@ Wants=network-online.target
 Type=simple
 Environment=GGNET_CONFIG=$CONF_FILE
 WorkingDirectory=$INSTALL_DIR/backend
-ExecStart=$INSTALL_DIR/venv/bin/uvicorn $APP_MODULE --host $WEB_BIND --port $WEB_PORT
+Environment=GGNET_APP=$APP_MODULE
+# HTTP for the PCs and HTTPS for the web UI, in one process (app.serve).
+ExecStart=$INSTALL_DIR/venv/bin/python -m app.serve
 Restart=on-failure
 RestartSec=3
 # On stop or restart only uvicorn gets SIGTERM: a writeback reset under way
@@ -656,7 +687,8 @@ systemctl restart ggnet-pxe || red "ggnet-pxe failed to start. Logs: journalctl 
 
 sleep 2
 if systemctl is-active --quiet ggnet; then
-    green "ggNet is running:  http://$([[ $WEB_BIND == 0.0.0.0 ]] && echo "$SERVICE_IP" || echo "$WEB_BIND"):$WEB_PORT"
+    green "ggNet is running:  https://$([[ $WEB_BIND == 0.0.0.0 ]] && echo "$SERVICE_IP" || echo "$WEB_BIND"):$HTTPS_PORT"
+    echo "   (the browser warns once about the self-signed certificate; Settings -> Network boot offers it to trust)"
     # The first admin is created in the web UI with this one-time code.
     if SETUP_CODE="$(/usr/local/sbin/ggnet-admin setup-code 2>/dev/null)"; then
         green "Create the first admin in the web UI with setup code:  $SETUP_CODE"
@@ -671,7 +703,8 @@ fi
 if pve-firewall status 2>/dev/null | grep -q "enabled"; then
     echo
     info "Proxmox firewall is enabled. Add rules for $IFACE (Datacenter/Node → Firewall):"
-    echo "   TCP $WEB_PORT   (web UI)"
+    echo "   TCP $HTTPS_PORT   (web UI, HTTPS)"
+    echo "   TCP $WEB_PORT   (PCs: iPXE, agent)"
     echo "   TCP 3260        (iSCSI)"
     echo "   UDP 67, 69, 4011 (proxyDHCP, TFTP)"
     echo "   TCP 80          (HTTP boot)"
