@@ -34,6 +34,8 @@ Options:
   --web-bind MODE   "service" (service IP only) or "all" (0.0.0.0) (default: service)
   --app MODULE      uvicorn entry point (default: app.main:app)
   --yes             no prompts (for CI / automation)
+  --update          update an installed ggNet: take every setting from the
+                    existing config.toml and keep that file as it is (no prompts)
 EOF
 }
 
@@ -59,6 +61,7 @@ HTTPS_PORT="8443"
 WEB_BIND_MODE="service"
 APP_MODULE="app.main:app"
 ASSUME_YES=0
+UPDATE=0
 
 INSTALL_DIR="/opt/ggnet"
 DATA_DIR="/var/lib/ggnet"
@@ -107,6 +110,7 @@ while [[ $# -gt 0 ]]; do
         --web-bind) WEB_BIND_MODE="$2"; shift 2 ;;
         --app)      APP_MODULE="$2"; shift 2 ;;
         --yes|-y)   ASSUME_YES=1; shift ;;
+        --update)   UPDATE=1; ASSUME_YES=1; shift ;;
         -h|--help)  usage; exit 0 ;;
         *) die "Unknown option: $1" ;;
     esac
@@ -114,6 +118,33 @@ done
 
 # ---------- 1. prerequisites ----------
 [[ $EUID -eq 0 ]] || die "Run as root."
+
+# An update keeps what the admin set: pool, interface, IP and ports come from
+# the installed config.toml, and the file itself is not rewritten (a new
+# setting has a default in the code until the admin sets it).
+if [[ $UPDATE -eq 1 ]]; then
+    [[ -f "$CONF_FILE" ]] || die "--update: $CONF_FILE not found; is ggNet installed?"
+    eval "$(python3 - "$CONF_FILE" <<'PY'
+import shlex, sys, tomllib
+c = tomllib.load(open(sys.argv[1], "rb"))
+st, net, web = c.get("storage", {}), c.get("network", {}), c.get("web", {})
+pool = st.get("pool", "")
+root = st.get("root_dataset", "")
+values = {
+    "POOL": pool,
+    "DATASET": root[len(pool) + 1:] if root.startswith(pool + "/") else root,
+    "IFACE": net.get("interface", ""),
+    "SERVICE_IP": net.get("server_ip", ""),
+    "WEB_PORT": web.get("port", 8088),
+    "HTTPS_PORT": web.get("https_port", 8443),
+    "WEB_BIND_MODE": "all" if web.get("bind") == "0.0.0.0" else "service",
+}
+for k, v in values.items():
+    print(f"{k}={shlex.quote(str(v))}")
+PY
+)" || die "--update: cannot read $CONF_FILE."
+    [[ -n "$POOL" && -n "$SERVICE_IP" ]] || die "--update: $CONF_FILE has no pool or server IP."
+fi
 command -v pveversion >/dev/null || die "This is not a Proxmox VE host (pveversion not found)."
 PVE_MAJOR="$(pveversion | head -n1 | sed -n 's#^pve-manager/\([0-9]*\)\..*#\1#p')"
 [[ "$PVE_MAJOR" =~ ^[0-9]+$ ]] || die "Cannot read the Proxmox VE version from pveversion."
@@ -348,6 +379,10 @@ fi
 if [[ -f "$SRC_DIR/scripts/uninstall_ggnet.sh" ]]; then
     install -m 755 "$SRC_DIR/scripts/uninstall_ggnet.sh" /usr/local/sbin/ggnet-uninstall
 fi
+# Settings -> Updates runs it: download a release, check it, run this installer with --update.
+if [[ -f "$SRC_DIR/scripts/update_ggnet.sh" ]]; then
+    install -m 755 "$SRC_DIR/scripts/update_ggnet.sh" /usr/local/sbin/ggnet-update
+fi
 # Sign-in from the shell: the setup code of the first admin, a password reset.
 cat >/usr/local/sbin/ggnet-admin <<EOF
 #!/bin/sh
@@ -363,6 +398,9 @@ fi
 "$INSTALL_DIR/venv/bin/pip" install -q -r "$REQ_FILE"
 
 # ---------- 10. configuration ----------
+if [[ $UPDATE -eq 1 ]]; then
+    info "Keeping $CONF_FILE (an update never rewrites it)."
+else
 if [[ -f "$CONF_FILE" ]]; then
     cp -a "$CONF_FILE" "$CONF_FILE.bak.$(date +%Y%m%d%H%M%S)"
 fi
@@ -449,6 +487,7 @@ iso_dirs = ["/var/lib/vz/template/iso"]
 backup_dirs = []
 EOF
 chmod 640 "$CONF_FILE"
+fi
 
 # ---------- 10b. database schema ----------
 info "Applying database migrations..."

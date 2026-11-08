@@ -1228,3 +1228,37 @@ class TlsOut(BaseModel):
     sha256: str | None = None
     self_signed: bool = False
 
+
+class ReleaseOut(BaseModel):
+    tag: str
+    version: str
+    name: str
+    notes: str
+    url: str
+    published_at: str
+
+
+class UpdateJobOut(BaseModel):
+    version: str | None
+    from_version: str | None = None
+    started_at: str | None
+    state: str                     # running, done, failed
+    exit: int | None
+    log: list[str]
+
+
+class UpdateOut(BaseModel):
+    """Settings -> Updates."""
+
+    current: str
+    latest: ReleaseOut | None      # None: no release yet, or GitHub could not be read
+    available: bool                # latest is newer than current
+    can_update: bool               # this ggNet can update itself now
+    reason: str | None = None      # why not
+    error: str | None = None       # why GitHub could not be read
+    job: UpdateJobOut | None = None
+
+
+class UpdateIn(BaseModel):
+    version: str                   # the release tag, e.g. v0.2.0
+

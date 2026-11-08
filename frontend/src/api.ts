@@ -413,6 +413,24 @@ export interface SecureBootKey {
 }
 
 /** The PXE service (proxyDHCP + TFTP) as systemd sees it. */
+/** Settings → Updates: the installed and the newest ggNet. */
+export interface UpdateStatus {
+  current: string;
+  latest: { tag: string; version: string; name: string; notes: string; url: string; published_at: string } | null;
+  available: boolean;
+  can_update: boolean;
+  reason: string | null;
+  error: string | null;
+  job: {
+    version: string | null;
+    from_version: string | null;
+    started_at: string | null;
+    state: "running" | "done" | "failed";
+    exit: number | null;
+    log: string[];
+  } | null;
+}
+
 /** The web UI's HTTPS (Settings → Network boot). */
 export interface TlsStatus {
   enabled: boolean;
@@ -853,6 +871,8 @@ export const api = {
   getBootSettings: () => request<BootSettingsOut>("GET", "/v1/settings/boot"),
   saveBootSettings: (body: BootSettings) => request<BootSettingsOut>("PUT", "/v1/settings/boot", body),
   getPxe: () => request<PxeStatus>("GET", "/v1/pxe"),
+  getUpdate: (check = false) => request<UpdateStatus>("GET", `/v1/server/update${check ? "?check=true" : ""}`),
+  startUpdate: (version: string) => request<UpdateStatus>("POST", "/v1/server/update", { version }),
   getTls: () => request<TlsStatus>("GET", "/v1/settings/tls"),
   restartPxe: () => request<PxeStatus>("POST", "/v1/pxe/restart"),
   saveRetention: (body: RetentionSettings) => request<Retention>("PUT", "/v1/settings/retention", body),
