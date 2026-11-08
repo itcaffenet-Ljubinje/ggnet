@@ -414,4 +414,14 @@ describe("ImagesPage", () => {
     expect(screen.queryByText("cs2")).toBeNull();
     expect(screen.getByText("No OS image matches.")).toBeInTheDocument();
   });
+
+  it("staff see the images and their details, but no admin action", async () => {
+    stubFetch(200, []);
+    render(<ImagesPage disks={[disk(), disk({ id: 2, name: "draft", published: false, snapshot: null })]}
+                       machines={[]} reload={vi.fn()} canManage={false} />);
+    for (const name of ["Create image", "Import", "Backup / Restore", "Publish"])
+      expect(screen.queryByRole("button", { name: new RegExp(`^${name}`) })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Actions for cs2" }));
+    expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["Details"]);
+  });
 });

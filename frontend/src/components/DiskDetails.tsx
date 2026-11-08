@@ -15,10 +15,12 @@ interface Props {
   refreshKey?: unknown;
   /** Shown above the lists once they are read (the details page's summary). */
   summary?: (snapshots: Snapshot[], writebacks: Writeback[]) => ReactNode;
+  /** Staff only look: the action columns are left out. */
+  canManage?: boolean;
 }
 
 /** Versions (snapshots) and PC writebacks of one game image, read live from ZFS. */
-export function DiskDetails({ disk, onChanged, refreshKey, summary }: Props) {
+export function DiskDetails({ disk, onChanged, refreshKey, summary, canManage = true }: Props) {
   const { busy, error, setError, run } = useAsyncAction();
   const [snapshots, setSnapshots] = useState<Snapshot[] | null>(null);
   const [writebacks, setWritebacks] = useState<Writeback[] | null>(null);
@@ -175,7 +177,7 @@ export function DiskDetails({ disk, onChanged, refreshKey, summary }: Props) {
               <th>Only in this version</th>
               <th>Used by</th>
               <th>Comment</th>
-              <th />
+              {canManage && <th />}
             </tr>
           </thead>
           <tbody>
@@ -218,71 +220,73 @@ export function DiskDetails({ disk, onChanged, refreshKey, summary }: Props) {
                       </div>
                     )}
                   </td>
-                  <td className="actions">
-                    <button
-                      type="button"
-                      className="icon-btn"
-                      onClick={() => toggleLock(s)}
-                      disabled={busy !== null}
-                      aria-label={`${s.locked ? "Unlock" : "Lock"} @${s.name}`}
-                      title={s.locked ? "Unlock" : "Lock: keep this version until unlocked"}
-                    >
-                      {s.locked ? <LockOpen size={14} /> : <Lock size={14} />}
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary"
-                      onClick={() => editComment(s)}
-                      disabled={busy !== null}
-                      aria-label={`Comment on @${s.name}`}
-                    >
-                      {busy === `comment-${s.name}` ? "Saving…" : "Comment"}
-                    </button>
-                    {!s.active && (
-                      <button type="button" onClick={() => makeActive(s)} disabled={busy !== null}>
-                        {busy === `active-${s.name}` ? "Activating…" : "Make active"}
-                      </button>
-                    )}
-                    {i < snapshots.length - 1 && (
+                  {canManage && (
+                    <td className="actions">
                       <button
                         type="button"
-                        onClick={() => goBack(s, i)}
-                        disabled={busy !== null || newerBlocker(i) !== null}
-                        title={newerBlocker(i) ?? `Make @${s.name} active and delete every newer version`}
+                        className="icon-btn"
+                        onClick={() => toggleLock(s)}
+                        disabled={busy !== null}
+                        aria-label={`${s.locked ? "Unlock" : "Lock"} @${s.name}`}
+                        title={s.locked ? "Unlock" : "Lock: keep this version until unlocked"}
                       >
-                        {busy === `back-${s.name}` ? "Going back…" : "Go back here"}
+                        {s.locked ? <LockOpen size={14} /> : <Lock size={14} />}
                       </button>
-                    )}
-                    {i > 0 && (
                       <button
                         type="button"
-                        onClick={() => mergeIntoBase(s, i)}
-                        disabled={busy !== null || blocker !== null}
-                        title={blocker ?? `Delete every older version and rename @${s.name} to @base`}
+                        className="secondary"
+                        onClick={() => editComment(s)}
+                        disabled={busy !== null}
+                        aria-label={`Comment on @${s.name}`}
                       >
-                        {busy === `merge-${s.name}` ? "Merging…" : "Merge into base"}
+                        {busy === `comment-${s.name}` ? "Saving…" : "Comment"}
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      className="danger"
-                      onClick={() => remove(s)}
-                      disabled={busy !== null || s.active || used || s.locked === true}
-                      title={
-                        s.locked
-                          ? "Locked; unlock it first"
-                          : s.active
-                          ? "The active version cannot be deleted"
-                          : s.pinned.length > 0
-                            ? "PCs are pinned to it; unpin them first"
-                            : used
-                              ? "PCs still run on it; they move off at their next reboot"
-                              : undefined
-                      }
-                    >
-                      {busy === `delete-${s.name}` ? "Deleting…" : "Delete"}
-                    </button>
-                  </td>
+                      {!s.active && (
+                        <button type="button" onClick={() => makeActive(s)} disabled={busy !== null}>
+                          {busy === `active-${s.name}` ? "Activating…" : "Make active"}
+                        </button>
+                      )}
+                      {i < snapshots.length - 1 && (
+                        <button
+                          type="button"
+                          onClick={() => goBack(s, i)}
+                          disabled={busy !== null || newerBlocker(i) !== null}
+                          title={newerBlocker(i) ?? `Make @${s.name} active and delete every newer version`}
+                        >
+                          {busy === `back-${s.name}` ? "Going back…" : "Go back here"}
+                        </button>
+                      )}
+                      {i > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => mergeIntoBase(s, i)}
+                          disabled={busy !== null || blocker !== null}
+                          title={blocker ?? `Delete every older version and rename @${s.name} to @base`}
+                        >
+                          {busy === `merge-${s.name}` ? "Merging…" : "Merge into base"}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="danger"
+                        onClick={() => remove(s)}
+                        disabled={busy !== null || s.active || used || s.locked === true}
+                        title={
+                          s.locked
+                            ? "Locked; unlock it first"
+                            : s.active
+                            ? "The active version cannot be deleted"
+                            : s.pinned.length > 0
+                              ? "PCs are pinned to it; unpin them first"
+                              : used
+                                ? "PCs still run on it; they move off at their next reboot"
+                                : undefined
+                        }
+                      >
+                        {busy === `delete-${s.name}` ? "Deleting…" : "Delete"}
+                      </button>
+                    </td>
+                  )}
                 </tr>
               );
             })}
@@ -306,7 +310,7 @@ export function DiskDetails({ disk, onChanged, refreshKey, summary }: Props) {
               <th>Version</th>
               <th>Written</th>
               <th>Connected</th>
-              <th />
+              {canManage && <th />}
             </tr>
           </thead>
           <tbody>
@@ -332,35 +336,37 @@ export function DiskDetails({ disk, onChanged, refreshKey, summary }: Props) {
                 </td>
                 <td>{formatBytes(w.used_bytes)}</td>
                 <td>{w.session_active === null ? "—" : w.session_active ? "Yes" : "No"}</td>
-                <td className="actions">
-                  {w.machine_id !== null && w.keep_writeback && (
-                    <button
-                      type="button"
-                      onClick={() => apply(w)}
-                      disabled={busy !== null || w.session_active === true || w.snapshot !== latest}
-                      title={
-                        w.session_active
-                          ? `Shut down ${w.machine_name} first`
-                          : w.snapshot !== latest
-                            ? `Only a writeback of the newest version (@${latest}) can be applied`
-                            : "Make this writeback the next version of the image"
-                      }
-                    >
-                      {busy === `apply-${w.machine_id}` ? "Applying…" : "Apply"}
-                    </button>
-                  )}
-                  {w.machine_id !== null && (
-                    <button
-                      type="button"
-                      className="danger"
-                      onClick={() => discard(w)}
-                      disabled={busy !== null || w.session_active === true}
-                      title={w.session_active ? `Shut down ${w.machine_name} first` : undefined}
-                    >
-                      {busy === `discard-${w.machine_id}` ? "Discarding…" : "Discard"}
-                    </button>
-                  )}
-                </td>
+                {canManage && (
+                  <td className="actions">
+                    {w.machine_id !== null && w.keep_writeback && (
+                      <button
+                        type="button"
+                        onClick={() => apply(w)}
+                        disabled={busy !== null || w.session_active === true || w.snapshot !== latest}
+                        title={
+                          w.session_active
+                            ? `Shut down ${w.machine_name} first`
+                            : w.snapshot !== latest
+                              ? `Only a writeback of the newest version (@${latest}) can be applied`
+                              : "Make this writeback the next version of the image"
+                        }
+                      >
+                        {busy === `apply-${w.machine_id}` ? "Applying…" : "Apply"}
+                      </button>
+                    )}
+                    {w.machine_id !== null && (
+                      <button
+                        type="button"
+                        className="danger"
+                        onClick={() => discard(w)}
+                        disabled={busy !== null || w.session_active === true}
+                        title={w.session_active ? `Shut down ${w.machine_name} first` : undefined}
+                      >
+                        {busy === `discard-${w.machine_id}` ? "Discarding…" : "Discard"}
+                      </button>
+                    )}
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

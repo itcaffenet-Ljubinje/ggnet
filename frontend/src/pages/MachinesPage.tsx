@@ -37,6 +37,7 @@ import { DiscoveredPanel } from "../components/DiscoveredPanel";
 import { ErrorBanner } from "../components/ErrorBanner";
 import { ImageStatus } from "../components/ImageStatus";
 import { MachineSettings } from "../components/MachineSettings";
+import { Modal } from "../components/Modal";
 import { StatusBadge } from "../components/StatusBadge";
 import { formatBytes, formatRate } from "../format";
 import { useAsyncAction } from "../useAsyncAction";
@@ -49,6 +50,8 @@ interface Props {
   /** PCs that asked for a disk but are not registered. */
   discovered?: Discovered[];
   reload: () => Promise<void>;
+  /** Admins manage the PCs; staff see them and use the power controls only. */
+  canManage?: boolean;
 }
 
 const CLIENT_OFF = "The client PC must be powered off or disconnected.";
@@ -59,7 +62,7 @@ const MOVES_NOW = "Running PCs move the game image within a minute; close games 
 type Filter = "all" | "online" | "offline" | "writeback";
 const hasWriteback = (m: Machine) => m.keep_writeback || m.writeback_dirty || m.status === "editing";
 
-export function MachinesPage({ disks, machines, traffic = {}, discovered = [], reload }: Props) {
+export function MachinesPage({ disks, machines, traffic = {}, discovered = [], reload, canManage = true }: Props) {
   const { busy, error, setError, run } = useAsyncAction();
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState("");
@@ -250,7 +253,9 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
         <AddMachine disks={disks} busy={busy !== null} run={run} reload={reload} onClose={() => setAdding(false)} />
       )}
 
-      <DiscoveredPanel discovered={discovered} disks={disks} busy={busy !== null} run={run} reload={reload} />
+      {canManage && (
+        <DiscoveredPanel discovered={discovered} disks={disks} busy={busy !== null} run={run} reload={reload} />
+      )}
 
       <div className="toolbar">
         <div className="toolbar-left">
@@ -279,7 +284,7 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
           </div>
         </div>
         <div className="toolbar-right">
-          {machines.some((m) => m.mode === "disk") && (
+          {canManage && machines.some((m) => m.mode === "disk") && (
             <div className="bulk-disk-assign">
               <select
                 aria-label="Game image letter for all Disk Mode PCs"
@@ -298,10 +303,12 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
               </button>
             </div>
           )}
-          <button type="button" onClick={() => setAdding(true)}>
-            <Plus size={16} />
-            Add machine
-          </button>
+          {canManage && (
+            <button type="button" onClick={() => setAdding(true)}>
+              <Plus size={16} />
+              Add machine
+            </button>
+          )}
         </div>
       </div>
 
@@ -316,6 +323,7 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
           select={(ids) => setSelected(new Set(ids))}
           all={shown}
           clear={() => setSelected(new Set())}
+          canManage={canManage}
         />
       )}
       {bulkReport && <BulkReport {...bulkReport} onClose={() => setBulkReport(null)} />}
@@ -375,14 +383,18 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
                         />
                         <div>
                           <div className="station-name">
-                            <button
-                              type="button"
-                              className="btn-text"
-                              onClick={() => setEditing(m.id)}
-                              title={`Settings of ${m.name}`}
-                            >
-                              {m.name}
-                            </button>
+                            {canManage ? (
+                              <button
+                                type="button"
+                                className="btn-text"
+                                onClick={() => setEditing(m.id)}
+                                title={`Settings of ${m.name}`}
+                              >
+                                {m.name}
+                              </button>
+                            ) : (
+                              <span className="strong">{m.name}</span>
+                            )}
                             <SecureBootIcon machine={m} />
                             <span
                               className={`mode-pill ${m.mode === "boot" ? "mode-pill-boot" : "mode-pill-disk"}`}
@@ -413,7 +425,7 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
                               className="letter-select"
                               value={m.drive_letter}
                               onChange={(e) => setLetter(m, e.target.value)}
-                              disabled={busy !== null}
+                              disabled={busy !== null || !canManage}
                             >
                               {LETTERS.map((l) => (
                                 <option key={l} value={l}>
@@ -426,7 +438,7 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
                               className={m.game_image_id ? "disk-select assigned" : "disk-select"}
                               value={m.game_image_id ?? ""}
                               onChange={(e) => assign(m, e.target.value)}
-                              disabled={busy !== null}
+                              disabled={busy !== null || !canManage}
                             >
                               <option value="">None</option>
                               {published.map((d) => (
@@ -450,7 +462,7 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
                                 aria-label={`Version for ${m.name}`}
                                 value={m.pinned_snapshot ?? ""}
                                 onChange={(e) => pin(m, e.target.value)}
-                                disabled={busy !== null}
+                                disabled={busy !== null || !canManage}
                               >
                                 <option value="">
                                   Follow active (@{disks.find((d) => d.id === m.game_image_id)?.snapshot})
@@ -481,7 +493,7 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
                               aria-label={`Keep writeback of ${m.name}`}
                               checked={m.keep_writeback}
                               onChange={(e) => keep(m, e.target.checked)}
-                              disabled={busy !== null}
+                              disabled={busy !== null || !canManage}
                             />
                             Keep
                           </label>
@@ -520,7 +532,7 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
                               Clean
                             </span>
                           )}
-                          {m.keep_writeback && m.status === "provisioned" && (
+                          {canManage && m.keep_writeback && m.status === "provisioned" && (
                             <div className="apply-line">
                               {m.mode === "boot" && (
                                 <select
@@ -595,25 +607,29 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
                             <Zap size={14} />
                           </button>
                         )}
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          onClick={() => setEditing(m.id)}
-                          aria-label={`Settings of ${m.name}`}
-                          title="Settings"
-                        >
-                          <SettingsIcon size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-btn icon-btn-danger"
-                          onClick={() => remove(m)}
-                          disabled={busy !== null || m.status === "editing"}
-                          aria-label={`Delete ${m.name}`}
-                          title={m.status === "editing" ? "Finish editing the game image first" : "Delete"}
-                        >
-                          <Trash2 size={14} />
-                        </button>
+                        {canManage && (
+                          <>
+                            <button
+                              type="button"
+                              className="icon-btn"
+                              onClick={() => setEditing(m.id)}
+                              aria-label={`Settings of ${m.name}`}
+                              title="Settings"
+                            >
+                              <SettingsIcon size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              className="icon-btn icon-btn-danger"
+                              onClick={() => remove(m)}
+                              disabled={busy !== null || m.status === "editing"}
+                              aria-label={`Delete ${m.name}`}
+                              title={m.status === "editing" ? "Finish editing the game image first" : "Delete"}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -669,94 +685,92 @@ function AddMachine({ disks, busy, run, reload, onClose }: AddMachineProps) {
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-content" role="dialog" aria-label="Add machine" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-sheet-grabber" />
-        <div className="modal-header">
-          <h2>Add machine</h2>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
-            <X size={16} />
-          </button>
-        </div>
-        <form onSubmit={create}>
-          <div className="modal-body">
+    <Modal label="Add machine" onClose={onClose} closeOnBackdrop>
+      <div className="modal-sheet-grabber" />
+      <div className="modal-header">
+        <h2>Add machine</h2>
+        <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
+          <X size={16} />
+        </button>
+      </div>
+      <form onSubmit={create}>
+        <div className="modal-body">
+          <div className="form-group">
+            <label htmlFor="add-name">Name</label>
+            <input
+              id="add-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. pc-01"
+              required
+              maxLength={15}
+              autoFocus
+            />
+            <div className="form-hint">Windows gets this computer name in Boot Mode.</div>
+          </div>
+          <div className="form-group">
+            <label htmlFor="add-mac">MAC</label>
+            <input
+              id="add-mac"
+              value={mac}
+              onChange={(e) => setMac(e.target.value)}
+              placeholder="e.g. 10:ff:e0:66:be:3a"
+              required
+            />
+            <div className="form-hint">The PC's identity: network boot and Wake-on-LAN find it by this.</div>
+          </div>
+          <div className="form-group">
+            <label htmlFor="add-mode">Mode</label>
+            <select id="add-mode" value={mode} onChange={(e) => setMode(e.target.value as MachineMode)}>
+              <option value="disk">Disk (local Windows)</option>
+              <option value="boot">Boot (diskless)</option>
+            </select>
+          </div>
+          {mode === "boot" && (
             <div className="form-group">
-              <label htmlFor="add-name">Name</label>
-              <input
-                id="add-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. pc-01"
-                required
-                maxLength={15}
-                autoFocus
-              />
-              <div className="form-hint">Windows gets this computer name in Boot Mode.</div>
-            </div>
-            <div className="form-group">
-              <label htmlFor="add-mac">MAC</label>
-              <input
-                id="add-mac"
-                value={mac}
-                onChange={(e) => setMac(e.target.value)}
-                placeholder="e.g. 10:ff:e0:66:be:3a"
-                required
-              />
-              <div className="form-hint">The PC's identity: network boot and Wake-on-LAN find it by this.</div>
-            </div>
-            <div className="form-group">
-              <label htmlFor="add-mode">Mode</label>
-              <select id="add-mode" value={mode} onChange={(e) => setMode(e.target.value as MachineMode)}>
-                <option value="disk">Disk (local Windows)</option>
-                <option value="boot">Boot (diskless)</option>
-              </select>
-            </div>
-            {mode === "boot" && (
-              <div className="form-group">
-                <label htmlFor="add-os">OS image</label>
-                <select id="add-os" value={osImageId} onChange={(e) => setOsImageId(e.target.value)} required>
-                  <option value="">Choose…</option>
-                  {osImages.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name}
-                    </option>
-                  ))}
-                </select>
-                <div className="form-hint">C:, loaded over the network.</div>
-              </div>
-            )}
-            <div className="form-group">
-              <label htmlFor="add-disk">Game image</label>
-              <select
-                id="add-disk"
-                value={imageId}
-                onChange={(e) => setImageId(e.target.value)}
-                required={mode === "boot"}
-              >
-                <option value="">None</option>
-                {gameImages.map((d) => (
+              <label htmlFor="add-os">OS image</label>
+              <select id="add-os" value={osImageId} onChange={(e) => setOsImageId(e.target.value)} required>
+                <option value="">Choose…</option>
+                {osImages.map((d) => (
                   <option key={d.id} value={d.id}>
                     {d.name}
                   </option>
                 ))}
               </select>
+              <div className="form-hint">C:, loaded over the network.</div>
             </div>
+          )}
+          <div className="form-group">
+            <label htmlFor="add-disk">Game image</label>
+            <select
+              id="add-disk"
+              value={imageId}
+              onChange={(e) => setImageId(e.target.value)}
+              required={mode === "boot"}
+            >
+              <option value="">None</option>
+              {gameImages.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
           </div>
-          <div className="modal-footer">
-            <div className="footer-left" />
-            <div className="footer-right">
-              <button type="button" className="secondary" onClick={onClose} disabled={busy}>
-                Cancel
-              </button>
-              <button type="submit" disabled={busy}>
-                <Plus size={14} />
-                {busy ? "Adding…" : "Add"}
-              </button>
-            </div>
+        </div>
+        <div className="modal-footer">
+          <div className="footer-left" />
+          <div className="footer-right">
+            <button type="button" className="secondary" onClick={onClose} disabled={busy}>
+              Cancel
+            </button>
+            <button type="submit" disabled={busy}>
+              <Plus size={14} />
+              {busy ? "Adding…" : "Add"}
+            </button>
           </div>
-        </form>
-      </div>
-    </div>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -790,10 +804,12 @@ interface BulkDockProps {
   all: Machine[];
   select: (ids: number[]) => void;
   clear: () => void;
+  /** Staff get the power actions only. */
+  canManage: boolean;
 }
 
 /** Bulk operations on the selected machines, as a dock at the bottom of the screen. */
-function BulkDock({ machines, total, disks, versions, busy, run, all, select, clear }: BulkDockProps) {
+function BulkDock({ machines, total, disks, versions, busy, run, all, select, clear, canManage }: BulkDockProps) {
   const [disk, setDisk] = useState("");
   const [version, setVersion] = useState("");
   const [letter, setLetter] = useState("D");
@@ -857,6 +873,8 @@ function BulkDock({ machines, total, disks, versions, busy, run, all, select, cl
           Reboot
         </button>
 
+        {canManage && (
+          <>
         <div className="bulk-disk-assign">
           <select aria-label="Game image for selected" value={disk} onChange={(e) => setDisk(e.target.value)}>
             <option value="">Game image…</option>
@@ -932,6 +950,8 @@ function BulkDock({ machines, total, disks, versions, busy, run, all, select, cl
         >
           Stop keeping writeback
         </button>
+          </>
+        )}
       </div>
     </div>
   );

@@ -633,4 +633,20 @@ describe("MachinesPage", () => {
       ]);
     });
   });
+
+  it("staff see the PCs and use the power controls, but no admin control", async () => {
+    stubFetch(200, []);
+    const on = machine({ id: 1, name: "pc01", game_image_id: 1, status: "provisioned", keep_writeback: true,
+                         session_active: true, last_seen_at: new Date().toISOString() });
+    const off = machine({ id: 2, name: "pc02", game_image_id: 1, status: "provisioned", mac: "aa:bb:cc:dd:ee:ff" });
+    render(<MachinesPage disks={DISKS} machines={[on, off]} reload={vi.fn()} canManage={false} />);
+    expect(screen.queryByRole("button", { name: "Add machine" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Apply to all" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete pc01" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Settings of pc01" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Apply writebacks" })).toBeNull();
+    expect(screen.getByLabelText("Game image for pc01")).toBeDisabled();
+    expect(screen.getByLabelText("Keep writeback of pc01")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Turn on pc02" })).toBeEnabled();      // power stays
+  });
 });

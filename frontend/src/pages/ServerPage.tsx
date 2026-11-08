@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   CalendarClock,
@@ -18,6 +18,7 @@ import { MaintenanceSchedule } from "../components/MaintenanceSchedule";
 import { SubNav, useSection, type SubNavItem } from "../components/SubNav";
 import { formatBytes } from "../format";
 import { useAsyncAction } from "../useAsyncAction";
+import { useSingleFlight } from "../useSingleFlight";
 
 const REFRESH_MS = 10_000;
 const DAY_MS = 24 * 3600 * 1000;
@@ -57,7 +58,14 @@ export function ServerPage({
   const admin = !user || user.role === "admin";
   const [section, setSection] = useSection("server", SERVER_SECTIONS);
 
-  const load = useCallback(() => run("load", async () => setStatus(await api.getServer())), [run]);
+  // The polling keeps its own state: it never marks an action (scrub, TRIM, ARC) busy or done.
+  const load = useSingleFlight(async () => {
+    try {
+      setStatus(await api.getServer());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  });
   useEffect(() => {
     load();
     const timer = window.setInterval(load, REFRESH_MS);
