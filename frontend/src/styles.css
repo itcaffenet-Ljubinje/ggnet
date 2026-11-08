@@ -3019,3 +3019,26 @@ tr.row-warn td {
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
+
+/* A form grid whose labels sit above full-width fields (Machine settings). */
+.form-stacked {
+  align-items: start;
+}
+.form-stacked > label:not(.check),
+.form-stacked > .form-stacked-note {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.form-stacked > label:not(.check) > select,
+.form-stacked > label:not(.check) > input {
+  width: 100%;
+  font-size: 14px;
+  color: var(--text);
+}
+.form-stacked > label.check {
+  align-self: end;
+  padding-bottom: 8px;
+}

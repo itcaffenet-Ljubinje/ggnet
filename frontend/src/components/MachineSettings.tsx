@@ -173,7 +173,7 @@ export function MachineSettings({ machine: m, disks, onClose, reload }: Props) {
           <ErrorBanner message={error} onClose={() => setError(null)} />
 
           {tab === "general" && (
-            <div className="form-grid-2">
+            <div className="form-grid-2 form-stacked">
               <label>
                 Name
                 <input
@@ -192,7 +192,9 @@ export function MachineSettings({ machine: m, disks, onClose, reload }: Props) {
           )}
 
           {tab === "disks" && (
-            <div className="form-grid-2">
+            // Two rows of two: what the PC starts (mode, and its OS image or
+            // the game image's letter), then the game image and its version.
+            <div className="form-grid-2 form-stacked">
               <label>
                 Mode
                 <select
@@ -204,7 +206,7 @@ export function MachineSettings({ machine: m, disks, onClose, reload }: Props) {
                   <option value="boot">Boot (diskless)</option>
                 </select>
               </label>
-              {mode === "boot" && (
+              {mode === "boot" ? (
                 <label>
                   OS image
                   <select value={osImageId} onChange={(e) => setOsImageId(e.target.value)}>
@@ -212,6 +214,17 @@ export function MachineSettings({ machine: m, disks, onClose, reload }: Props) {
                     {osImages.map((d) => (
                       <option key={d.id} value={d.id}>
                         {d.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <label>
+                  Game image letter
+                  <select value={letter} onChange={(e) => setLetter(e.target.value)}>
+                    {LETTERS.map((l) => (
+                      <option key={l} value={l}>
+                        {l}:
                       </option>
                     ))}
                   </select>
@@ -228,19 +241,7 @@ export function MachineSettings({ machine: m, disks, onClose, reload }: Props) {
                   ))}
                 </select>
               </label>
-              {mode === "disk" && (
-                <label>
-                  Game image letter
-                  <select value={letter} onChange={(e) => setLetter(e.target.value)}>
-                    {LETTERS.map((l) => (
-                      <option key={l} value={l}>
-                        {l}:
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              {m.game_image_id !== null && !disksChanged && mode === m.mode && (
+              {m.game_image_id !== null && !disksChanged && mode === m.mode ? (
                 <label>
                   Game image version
                   <select value={pin} onChange={(e) => setPin(e.target.value)}>
@@ -252,6 +253,13 @@ export function MachineSettings({ machine: m, disks, onClose, reload }: Props) {
                     ))}
                   </select>
                 </label>
+              ) : (
+                <div className="form-stacked-note">
+                  <span>Game image version</span>
+                  <span className="form-hint">
+                    {imageId ? "Follows the active version; pin another one after saving." : "No game image."}
+                  </span>
+                </div>
               )}
             </div>
           )}
