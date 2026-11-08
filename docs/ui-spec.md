@@ -53,7 +53,8 @@ Status: **done** (backend and UI), **backend** (API exists, UI missing or partia
 | Fixed IP per PC (as a DHCP reservation hint, not in Windows) | todo |
 | Add new hardware wizard (Images → ⋮): the first PC that boots the image reads its hardware in Windows PE (signed vendor NIC drivers from `winpe-drivers`), Windows installs the card in a temporary Proxmox VM, the image gets a new version; once per board type. The writeback never gets a card | done |
 | New PC template (Settings → Network boot → New PCs: name with {n}/{nn}; the default game image): while Add new hardware is open on one image, an unknown PC that boots is registered on it in Boot Mode and taken by the wizard | done |
-| Images table: Name, Type, Default, State, Size (on the pool, with versions), Volume, Compression, Versions, Machines; the ZFS path is on the Details page | done |
+| Images table: Name, Type, Default, State, Size (on the pool, with versions), Volume, Compression, Versions, Machines; the ZFS path is in the details | done |
+| An image's details (snapshots, writebacks, hardware) open in a dialog over the list, with its ⋮ menu; no separate page | done |
 | Make default (Images → ⋮): one default OS image and one default game image; new PCs get them (New PC template, Add machine, New PCs claim) | done |
 | Backup / Restore (Images): an image with all its versions, comments and network cards to a USB disk or a backup folder (`zfs send -R -c` in 1 GiB parts with SHA-256, manifest.json last), free space checked first; restore always into a new image, parts checked as they are read; History tab, cancel, interrupted jobs cleaned up at start | done |
 | Notifications (header bell): Running tasks (backups, restores, copies, imports, Add new hardware, browser uploads) with progress, speed, time left and Cancel (`GET /api/v1/tasks`); Finished kept in the browser until Clear; a short notice when one ends. Browser uploads go on when the Import dialog is closed | done |

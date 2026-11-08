@@ -300,33 +300,29 @@ export function ImagesPage({ disks, machines, reload, canManage = true }: Props)
     </div>
   );
 
+  // The image whose details are open, in a dialog over the list.
   const shown = disks.find((d) => d.id === open);
-  if (shown) {
-    return (
-      <>
-        <ErrorBanner message={error} onClose={() => setError(null)} />
-        {noticeBanner}
-        {editDialog}
-        {prepareDialog}
-        {copyDialog}
-        {exportDialog}
-        {hardwareDialog}
-        <ImageDetailsPage
-          disk={shown}
-          machines={machines}
-          reload={reload}
-          onBack={() => setOpen(null)}
-          onAddHardware={canManage ? () => setAddingHardware(shown.id) : undefined}
-          canManage={canManage}
-          menu={
-            canManage ? (
-              <ActionMenu label={`Actions for ${shown.name}`} actions={menuFor(shown).filter((a) => a.label !== "Details")} />
-            ) : undefined
-          }
-        />
-      </>
-    );
-  }
+  const detailsDialog = shown && (
+    <ImageDetailsPage
+      disk={shown}
+      machines={machines}
+      reload={reload}
+      onClose={() => setOpen(null)}
+      banner={
+        <>
+          <ErrorBanner message={error} onClose={() => setError(null)} />
+          {noticeBanner}
+        </>
+      }
+      onAddHardware={canManage ? () => setAddingHardware(shown.id) : undefined}
+      canManage={canManage}
+      menu={
+        canManage ? (
+          <ActionMenu label={`Actions for ${shown.name}`} actions={menuFor(shown).filter((a) => a.label !== "Details")} />
+        ) : undefined
+      }
+    />
+  );
 
   function section(title: string, Icon: LucideIcon, list: Image[], empty: string) {
     return (
@@ -478,8 +474,14 @@ export function ImagesPage({ disks, machines, reload, canManage = true }: Props)
 
   return (
     <section>
-      <ErrorBanner message={error} onClose={() => setError(null)} />
-      {noticeBanner}
+      {!shown && (
+        <>
+          <ErrorBanner message={error} onClose={() => setError(null)} />
+          {noticeBanner}
+        </>
+      )}
+      {/* Before the other dialogs: the ones its menu opens stack on top of it. */}
+      {detailsDialog}
       {editDialog}
       {prepareDialog}
       {hardwareDialog}

@@ -1,16 +1,19 @@
 import type { ReactNode } from "react";
-import { ArrowLeft, Gamepad2, GitBranch, HardDrive, Layers, Monitor } from "lucide-react";
+import { Gamepad2, GitBranch, HardDrive, Layers, Monitor, X } from "lucide-react";
 
 import { isImport, needsHardware, type Image, type Machine, type Snapshot, type Writeback } from "../api";
 import { DiskDetails } from "../components/DiskDetails";
 import { HardwarePanel } from "../components/HardwarePanel";
+import { Modal } from "../components/Modal";
 import { formatBytes } from "../format";
 
 interface Props {
   disk: Image;
   machines: Machine[];
   reload: () => Promise<void>;
-  onBack: () => void;
+  onClose: () => void;
+  /** Errors and notices of the image's actions, shown on top of its details. */
+  banner?: ReactNode;
   /** The image's ⋮ menu, the same as on the list. */
   menu?: ReactNode;
   /** Open the Add new hardware wizard (OS images). */
@@ -19,18 +22,17 @@ interface Props {
   canManage?: boolean;
 }
 
-/** One image on its own page: what it is, its snapshots and the PCs' writebacks. */
-export function ImageDetailsPage({ disk, machines, reload, onBack, menu, onAddHardware, canManage = true }: Props) {
+/**
+ * One image in a dialog over the Images list: what it is, its snapshots and
+ * the PCs' writebacks. Its ⋮ menu opens the same dialogs as on the list,
+ * on top of this one.
+ */
+export function ImageDetailsPage({ disk, machines, reload, onClose, banner, menu, onAddHardware, canManage = true }: Props) {
   const KindIcon = disk.kind === "os" ? Monitor : Gamepad2;
   const editor = machines.find((m) => m.id === disk.editor_id);
   return (
-    <section aria-label={`Image ${disk.name}`}>
-      <button type="button" className="secondary page-back" onClick={onBack}>
-        <ArrowLeft size={14} />
-        Images
-      </button>
-
-      <div className="details-header">
+    <Modal label={`Image ${disk.name}`} onClose={onClose} className="image-details-modal">
+      <div className="modal-header details-header">
         <KindIcon size={22} className={`kind-icon ${disk.kind === "os" ? "kind-os" : "kind-game"}`} aria-hidden />
         <h2>{disk.name}</h2>
         <span className="badge">{disk.kind === "os" ? "OS image" : "Game image"}</span>
@@ -50,8 +52,16 @@ export function ImageDetailsPage({ disk, machines, reload, onBack, menu, onAddHa
           <span className="badge badge-idle">Draft</span>
         )}
         <span className="mono muted small">{disk.zvol_path}</span>
-        {menu}
+        <span className="details-header-end">
+          {menu}
+          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
+            <X size={16} />
+          </button>
+        </span>
       </div>
+
+      <div className="image-details-body">
+      {banner}
 
       {disk.copy_source ? (
         <p className={disk.copy_error ? "error-text" : "empty"}>
@@ -76,7 +86,8 @@ export function ImageDetailsPage({ disk, machines, reload, onBack, menu, onAddHa
           A draft has no snapshots or writebacks yet: fill it {disk.kind === "os" ? "" : "on a PC "}and publish it.
         </p>
       )}
-    </section>
+      </div>
+    </Modal>
   );
 }
 

@@ -3042,3 +3042,33 @@ tr.row-warn td {
   align-self: end;
   padding-bottom: 8px;
 }
+
+/* Images → an image's details, as a dialog over the list */
+.image-details-modal {
+  width: min(1180px, calc(100vw - 32px));
+  max-width: none;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 48px);
+}
+.image-details-modal .details-header {
+  margin-bottom: 0;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.details-header-end {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.image-details-body {
+  padding: 16px 20px 20px;
+  overflow-y: auto;
+}
+@media (max-width: 600px) {
+  .image-details-modal {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+  }
+}
