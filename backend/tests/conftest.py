@@ -150,11 +150,32 @@ def prov(host: FakeHost) -> Provisioner:
     return p
 
 
+# GGNET_TEST_POSTGRES=postgresql+psycopg:///ggnet_test?host=/run/postgresql runs
+# every test on that (otherwise empty) PostgreSQL database instead of SQLite,
+# as production does; each test starts from an empty schema.
+TEST_POSTGRES = os.environ.get("GGNET_TEST_POSTGRES")
+
+
+def _empty_postgres(url: str) -> None:
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.execute(text("SET lock_timeout = '10s'"))
+        conn.execute(text("DROP SCHEMA public CASCADE"))
+        conn.execute(text("CREATE SCHEMA public"))
+    engine.dispose()
+
+
 @pytest.fixture
 def db_url(tmp_path) -> str:
     from alembic import command
 
-    url = f"sqlite:///{tmp_path / 'test.db'}"
+    if TEST_POSTGRES:
+        url = TEST_POSTGRES
+        _empty_postgres(url)
+    else:
+        url = f"sqlite:///{tmp_path / 'test.db'}"
     command.upgrade(alembic_config(url), "head")   # schema ALWAYS from migrations
     return url
 

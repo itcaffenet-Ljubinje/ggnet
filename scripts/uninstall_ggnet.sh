@@ -64,6 +64,10 @@ rm -rf "$INSTALL_DIR"
 
 if [[ $PURGE -eq 1 ]] || ask "Also delete configuration ($CONF_DIR) and application data ($DATA_DIR)?"; then
     rm -rf "$CONF_DIR" "$DATA_DIR"
+    # The PostgreSQL database (the postgresql package itself stays installed).
+    if command -v psql >/dev/null && runuser -u postgres -- psql -qAtX -c 'SELECT 1' >/dev/null 2>&1; then
+        runuser -u postgres -- dropdb --if-exists ggnet && echo "==> PostgreSQL database ggnet deleted."
+    fi
     echo "==> Configuration and data deleted."
 else
     echo "==> $CONF_DIR and $DATA_DIR were kept (a reinstall will reuse them)."

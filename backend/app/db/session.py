@@ -1,6 +1,8 @@
 """
-Database connection. The URL comes from `paths.database` in config.toml
-(one backend process, ~17 machines, so SQLite is enough).
+Database connection. The URL comes from `paths.database` in config.toml:
+PostgreSQL on an installed ggNet (the installer sets it up, over its Unix
+socket: postgresql+psycopg:///ggnet?host=/run/postgresql), SQLite for
+development and the tests.
 """
 
 from __future__ import annotations
@@ -26,7 +28,9 @@ def make_engine(url: str | None = None) -> Engine:
         # SQLite creates the file but not its directory.
         Path(parsed.database).parent.mkdir(parents=True, exist_ok=True)
 
-    engine = create_engine(url)
+    # PostgreSQL may restart (package upgrade) under a running ggNet: test a
+    # pooled connection before handing it out.
+    engine = create_engine(url, pool_pre_ping=parsed.get_backend_name() == "postgresql")
     if engine.dialect.name == "sqlite":
         # Without this SQLite IGNORES foreign key constraints.
         @event.listens_for(engine, "connect")
