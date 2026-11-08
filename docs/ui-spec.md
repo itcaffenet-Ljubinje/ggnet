@@ -58,6 +58,7 @@ Status: **done** (backend and UI), **backend** (API exists, UI missing or partia
 | Staff see Machines and Images but only use the power controls (Wake, Shutdown, Restart); every admin control is hidden or locked for them (the API refuses them too) | done |
 | Dialogs: one Modal (aria-modal, Escape, Tab kept inside, focus back to the opener); visible keyboard focus on buttons, tabs, menus and links; no animations with prefers-reduced-motion | done |
 | Refreshes never overlap: a refresh while one runs waits and runs once more after it; the Server page's polling does not touch the actions' busy state | done |
+| Updates (Settings): the installed and the newest release (GitHub, checked hourly, "Check now"), its notes, Install: `ggnet-update` runs as its own unit (download, SHA-256, installer `--update` keeping config.toml), its log and result shown; a banner for admins when a release is out; a development checkout is never updated from the UI | done |
 | Backup to another server over SSH (key, incremental), scheduled backups | todo |
 | Images: Create image in a dialog (name, type, size with the pool's free space), search by name; Copy of the active version or of all versions (`zfs send -R`, same names and active version); "Go back here" on a version (active, newer ones deleted; refused while a newer one is locked, pinned or used); each version says what automatic removal does with it | done |
 | Hardware scan with Secure Boot on: wimboot is served signed with the ggNet key (shim starts it like iPXE; Windows PE itself is Microsoft-signed) | done |

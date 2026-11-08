@@ -198,3 +198,20 @@ def require_user(request: Request, db: Session = Depends(get_db)) -> Iterator[Us
         # Never commit what a failed request left behind; write only the log entry.
         db.rollback()
         auth.record(db, user, method, path, status, ip)
+
+
+@lru_cache(maxsize=1)
+def get_updates():
+    """Settings -> Updates: the newest release (checked hourly) and ggnet-update."""
+    from pathlib import Path
+
+    from app.runner import CommandRunner
+    from app.services.updates import Updates
+
+    backend = Path(__file__).resolve().parents[2]
+    try:
+        version = (backend.parent / "VERSION").read_text().strip()
+    except OSError:
+        version = "dev"
+    return Updates(get_config(), CommandRunner(), version, backend)
+

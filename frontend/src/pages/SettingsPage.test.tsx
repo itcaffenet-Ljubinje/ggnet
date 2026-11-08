@@ -163,6 +163,7 @@ describe("SettingsPage", () => {
       "Hardware scan",
       "Client app",
       "Users",
+      "Updates",
     ]);
     expect(await screen.findByLabelText("Retention")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: /Network boot/ }));

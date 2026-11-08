@@ -44,6 +44,8 @@ jobs:
             cp -a frontend/dist dist/ggnet/frontend/dist
           fi
           tar -czf ggnet.tar.gz -C dist ggnet
+          # ggnet-update (Settings -> Updates) installs only a package that matches this.
+          sha256sum ggnet.tar.gz > ggnet.tar.gz.sha256
 
       - uses: actions/setup-dotnet@v5
         with:
@@ -61,10 +63,13 @@ jobs:
           # The web UI (Settings → Client app) shows this version.
           echo "${GITHUB_REF_NAME#v}" > dist/ggnet-agent/VERSION
           (cd dist && zip -r ../ggnet-agent-win-x64.zip ggnet-agent)
+          sha256sum ggnet-agent-win-x64.zip > ggnet-agent-win-x64.zip.sha256
 
       - uses: softprops/action-gh-release@v3
         with:
           files: |
             ggnet.tar.gz
+            ggnet.tar.gz.sha256
             ggnet-agent-win-x64.zip
+            ggnet-agent-win-x64.zip.sha256
           generate_release_notes: true

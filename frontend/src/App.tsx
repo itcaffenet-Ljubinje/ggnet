@@ -15,6 +15,7 @@ import {
 import { isOnline } from "./components/AgentState";
 import { SignIn } from "./components/SignIn";
 import { Notifications } from "./components/Notifications";
+import { UpdateBanner } from "./components/Updates";
 import { ImagesPage } from "./pages/ImagesPage";
 import { MachinesPage } from "./pages/MachinesPage";
 import { ServerPage } from "./pages/ServerPage";
@@ -219,6 +220,18 @@ function Console({ user, onSignOut }: { user: User; onSignOut: () => void }) {
             Pool {storage.pool} is {storage.used_percent} % full (warning at {storage.warning_percent} %). Delete
             old versions or free space before writebacks fill it.
           </div>
+        )}
+        {admin && (
+          <UpdateBanner
+            onOpen={() => {
+              try {
+                window.localStorage.setItem("ggnet.section.settings", "updates");
+              } catch {
+                // the Settings tab opens on its first section
+              }
+              setTab("settings");
+            }}
+          />
         )}
         {tab === "machines" ? (
           <MachinesPage

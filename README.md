@@ -34,6 +34,20 @@ the browser warns once; Settings → Network boot offers the certificate to trus
 own certificate and key in `[web] tls_cert` / `tls_key`. `http://<server-ip>:8088` sends a browser to HTTPS.
 ggNet is meant for the cafe's LAN: do not expose it to the internet.
 
+## Updates
+
+Settings → Updates shows the newest release and installs it: `ggnet-update` downloads `ggnet.tar.gz`, checks it
+against `ggnet.tar.gz.sha256` and runs the release's installer with `--update`, which keeps
+`/etc/ggnet/config.toml` as it is. The PCs keep running; ggNet restarts once. From the shell:
+
+```bash
+ggnet-update                    # the newest release
+ggnet-update --version v0.2.0   # a given one
+```
+
+A release is made by pushing a tag that matches `VERSION` (`git tag v0.2.0 && git push origin v0.2.0`); the
+Release workflow builds the packages and their checksums.
+
 ## Service
 
 ```bash

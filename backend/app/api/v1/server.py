@@ -13,9 +13,13 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_provisioner, get_server_monitor
+from app.api.deps import get_provisioner, get_server_monitor, get_updates
 from app.api.v1.errors import conflict, host_failed
 from app.api.v1.schemas import (
+    ReleaseOut,
+    UpdateIn,
+    UpdateJobOut,
+    UpdateOut,
     ArcIn,
     ArcOut,
     MaintenanceIn,
@@ -176,3 +180,49 @@ def get_schedule(db: Session = Depends(get_db)):
 def put_schedule(body: MaintenanceIn, db: Session = Depends(get_db)):
     maintenance.save_settings(db, maintenance.MaintenanceSettings(**body.model_dump()))
     return _schedule(db)
+
+
+# ── Updates of ggNet (app.services.updates) ───────────────────────────
+
+def _update_out(updates, check: bool = False) -> UpdateOut:
+    from app.services.updates import newer
+
+    release, error = updates.latest(force=check)
+    job = updates.status()
+    problem = updates.installed()
+    available = release is not None and newer(release.version, updates.version)
+    reason = problem
+    if reason is None and release is not None and available and not release.checked:
+        reason = f"{release.tag} has no ggnet.tar.gz.sha256; it cannot be installed from here"
+    if reason is None and job is not None and job["state"] == "running":
+        reason = "an update is running"
+    return UpdateOut(
+        current=updates.version,
+        latest=ReleaseOut(tag=release.tag, version=release.version, name=release.name, notes=release.notes,
+                          url=release.url, published_at=release.published_at) if release else None,
+        available=available, can_update=available and reason is None, reason=reason, error=error,
+        job=UpdateJobOut(version=job["version"], from_version=job.get("from"), started_at=job["started_at"],
+                         state=job["state"], exit=job["exit"], log=job["log"]) if job else None,
+    )
+
+
+@router.get("/update", response_model=UpdateOut)
+def update_status(check: bool = False, updates=Depends(get_updates)):
+    """The installed and the newest version; check=true asks GitHub again now."""
+    return _update_out(updates, check)
+
+
+@router.post("/update", response_model=UpdateOut)
+def start_update(body: UpdateIn, updates=Depends(get_updates)):
+    """Install a release: ggnet-update runs as its own unit and restarts ggnet (PCs keep running)."""
+    from app.services.updates import UpdateError
+
+    release, _ = updates.latest()
+    if release is None or release.tag != body.version:
+        conflict(f"{body.version} is not the newest release")
+    try:
+        updates.start(body.version)
+    except UpdateError as e:
+        conflict(str(e))
+    return _update_out(updates)
+

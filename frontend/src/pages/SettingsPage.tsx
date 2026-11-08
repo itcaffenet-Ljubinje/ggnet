@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Cpu, Download, HardDrive, Network, UserRound, Users } from "lucide-react";
+import { ArrowUpCircle, Cpu, Download, HardDrive, Network, UserRound, Users } from "lucide-react";
 
 import {
   api,
@@ -14,6 +14,7 @@ import { ErrorBanner } from "../components/ErrorBanner";
 import { NetworkBoot } from "../components/NetworkBoot";
 import { SubNav, useSection, type SubNavItem } from "../components/SubNav";
 import { AccountCard, ActivityCard, UsersCard } from "../components/Users";
+import { Updates } from "../components/Updates";
 import { WinPeSetup } from "../components/WinPeSetup";
 import { formatBytes } from "../format";
 import { useAsyncAction } from "../useAsyncAction";
@@ -77,7 +78,7 @@ function settingsOf(r: Retention): RetentionSettings {
   return s;
 }
 
-type SettingsSection = "storage" | "boot" | "scan" | "client" | "users" | "account";
+type SettingsSection = "storage" | "boot" | "scan" | "client" | "users" | "updates" | "account";
 
 const ADMIN_SECTIONS: SubNavItem<SettingsSection>[] = [
   { id: "storage", label: "Storage", icon: HardDrive },
@@ -85,6 +86,7 @@ const ADMIN_SECTIONS: SubNavItem<SettingsSection>[] = [
   { id: "scan", label: "Hardware scan", icon: Cpu },
   { id: "client", label: "Client app", icon: Download },
   { id: "users", label: "Users", icon: Users },
+  { id: "updates", label: "Updates", icon: ArrowUpCircle },
 ];
 
 const STAFF_SECTIONS: SubNavItem<SettingsSection>[] = [
@@ -102,6 +104,7 @@ export function SettingsPage({ storage, reload, user, onPasswordChanged = () => 
       {section === "storage" && <StorageSettings storage={storage} reload={reload} />}
       {section === "boot" && <NetworkBoot />}
       {section === "scan" && <WinPeSetup />}
+      {section === "updates" && admin && <Updates />}
       {section === "client" && <ClientApp />}
       {section === "users" && user && (
         <>
