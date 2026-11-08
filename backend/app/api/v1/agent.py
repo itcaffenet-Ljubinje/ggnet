@@ -40,10 +40,11 @@ from app.api.v1.schemas import (
     AgentPackageFileOut,
     AgentPackageOut,
     AgentSecureBoot,
+    AgentUpdateOut,
 )
 from app.db.models import DiscoverySource, Machine, MachineMode, MachineStatus
 from app.db.session import get_db
-from app.services import discovery, pxe
+from app.services import agent_updates, discovery, pxe
 from app.services.agent_package import AgentPackage, bootstrap_script
 from app.services.power import take_command
 from app.services.pxe import PxeService
@@ -94,6 +95,7 @@ def heartbeat(
     prov: Provisioner = Depends(get_provisioner),
     settings: WritebackSettings = Depends(get_writeback_settings),
     pxe_service: PxeService = Depends(get_pxe_service),
+    package: AgentPackage = Depends(get_agent_package),
 ):
     inv = None
     if body.inventory is not None:
@@ -169,7 +171,22 @@ def heartbeat(
         drive_letter=machine.drive_letter if machine.mode is MachineMode.DISK else "D",
         command=command,
         secure_boot=_secure_boot_key(db, pxe_service) if machine.mode is MachineMode.BOOT else None,
+        update=_update(db, machine, body.agent_version, package, body.stopping),
     )
+
+
+def _update(db: Session, machine: Machine, agent_version: str, package: AgentPackage,
+            stopping: bool) -> AgentUpdateOut | None:
+    """The server's agent package, for a Disk Mode agent that is older (app.services.agent_updates)."""
+    settings = agent_updates.load_settings(db)
+    if not settings.auto_update or machine.mode is not MachineMode.DISK or stopping:
+        return None      # before info(): it hashes the package after every change
+    offered = agent_updates.offer(machine, agent_version, package.info(), settings, stopping)
+    if offered is None:
+        return None
+    return AgentUpdateOut(version=offered.version or "",
+                          files=[AgentPackageFileOut(name=f.name, size_bytes=f.size, sha256=f.sha256)
+                                 for f in offered.files])
 
 
 def _secure_boot_key(db: Session, service: PxeService) -> AgentSecureBoot | None:
@@ -187,8 +204,12 @@ def _secure_boot_key(db: Session, service: PxeService) -> AgentSecureBoot | None
 def package_info(
     package: AgentPackage = Depends(get_agent_package),
     server_url: str = Depends(get_server_url),
+    db: Session = Depends(get_db),
 ):
     info = package.info()
+    disk_pcs = db.scalars(select(Machine).where(Machine.mode == MachineMode.DISK).order_by(Machine.name))
+    outdated = [m.name for m in disk_pcs
+                if info is not None and agent_updates.is_older(m.agent_version, info.version)]
     return AgentPackageOut(
         available=info is not None,
         directory=str(package.directory),
@@ -197,6 +218,8 @@ def package_info(
         install_command=f"irm {server_url}/api/v1/agent/bootstrap.ps1 | iex",
         files=[AgentPackageFileOut(name=f.name, size_bytes=f.size, sha256=f.sha256)
                for f in (info.files if info else ())],
+        auto_update=agent_updates.load_settings(db).auto_update,
+        outdated=outdated,
     )
 
 

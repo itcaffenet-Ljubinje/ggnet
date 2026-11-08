@@ -580,6 +580,10 @@ export interface AgentPackage {
   server_url: string;
   install_command: string;
   files: { name: string; size_bytes: number; sha256: string }[];
+  /** Disk Mode PCs update their agent from this package. */
+  auto_update: boolean;
+  /** Disk Mode machines whose agent is older than the package. */
+  outdated: string[];
 }
 
 export type BulkKind = "on" | "shutdown" | "reboot" | "assign" | "pin" | "drive_letter" | "stop_keep_writeback";
@@ -856,6 +860,8 @@ export const api = {
     request<Image>("PUT", `/v1/images/${id}/default`, { default: isDefault }),
   getImageUpdates: () => request<ImageUpdate[]>("GET", "/v1/images/updates"),
   getAgentPackage: () => request<AgentPackage>("GET", "/v1/agent/package"),
+  setAgentAutoUpdate: (auto_update: boolean) =>
+    request<{ auto_update: boolean }>("PUT", "/v1/settings/agent", { auto_update }),
   getWinPe: () => request<WinPe>("GET", "/v1/winpe"),
   winPeFromIso: (path: string) => request<WinPe>("POST", "/v1/winpe/from-iso", { path }),
   removeDriverPackage: (name: string) => request<void>("DELETE", `/v1/winpe/drivers/${encodeURIComponent(name)}`),

@@ -68,6 +68,15 @@ Logs: Event Viewer → Windows Logs → Application, source `ggnet-agent`.
 
 The same command updates an existing install. `scripts/uninstall.ps1` removes it.
 
+Disk Mode PCs then update the agent by themselves (Settings → Client app → "Update the agent on Disk Mode PCs
+automatically", on by default): when the server's package is newer, the agent downloads its files from the
+server into `C:\Program Files\ggnet-agent\update\<version>`, checks each one's size and SHA-256 and starts
+`install.ps1 -Update` apart from the service. That stops the service, replaces `ggnet-agent.exe`, keeps
+`appsettings.json` and starts the service again (also when the copy fails); the game disk stays connected.
+Its output is in `update.log` next to it. A failed update is tried again an hour later. Boot Mode PCs are
+never updated this way: their agent comes with the OS image (Images → Prepare image). Updating ggNet
+(Settings → Updates) also brings the release's agent package to the server.
+
 Settings (`C:\Program Files\ggnet-agent\appsettings.json`, section `Agent`):
 `ServerUrl`, `DriveLetter` (D-Z), `HeartbeatSeconds` (5-3600), `ManageInitiatorName`, `HideLocalDisks`.
 
@@ -140,7 +149,9 @@ Response `200`:
   "portal_port": 3260,
   "game_image": "steam-main",
   "drive_letter": "D",
-  "command": null
+  "command": null,
+  "secure_boot": null,
+  "update": null
 }
 ```
 
@@ -151,6 +162,10 @@ Response `200`:
 - `command` is `"shutdown"` or `"reboot"` when the admin clicked Shutdown / Reboot in the UI
   (sent once; the server drops it after 2 minutes). The agent runs `shutdown.exe` with a
   10-second notice and ignores any other value.
+- `update` (Disk Mode, while automatic agent updates are on and this agent is older than the server's
+  package): `{"version": "0.2.0", "files": [{"name": "ggnet-agent.exe", "size_bytes": …, "sha256": "…"}, …]}`.
+  The agent fetches each file from `GET /api/v1/agent/download/<name>` (only ggnet-agent.exe, install.ps1,
+  uninstall.ps1), checks it and runs `install.ps1 -Update`, after any `command`.
 - The server's ACL allows only `initiator_iqn`; the agent must use that initiator name.
 - If `iscsi_target_iqn` changes or becomes null (disk switched, removed or reset in
   the UI), disconnect the old target before connecting a new one.

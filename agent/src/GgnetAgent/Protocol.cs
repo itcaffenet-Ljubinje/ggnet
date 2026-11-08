@@ -33,7 +33,13 @@ public sealed record AgentConfig(
     string? GameImage,
     string? DriveLetter = null,    // the letter the game image should get (set per machine in the UI)
     string? Command = null,        // "shutdown" | "reboot", sent once
-    SecureBootKey? SecureBoot = null);   // set while the server asks PCs to enroll its key
+    SecureBootKey? SecureBoot = null,    // set while the server asks PCs to enroll its key
+    AgentUpdate? Update = null);         // Disk Mode: the server's newer agent (AgentUpdater)
+
+/// <summary>The server's agent package: download each file, check it, run install.ps1.</summary>
+public sealed record AgentUpdate(string Version, IReadOnlyList<UpdateFile> Files);
+
+public sealed record UpdateFile(string Name, long SizeBytes, string Sha256);
 
 /// <summary>The ggNet Secure Boot key to enroll (DER, base64) and the MokManager password.</summary>
 public sealed record SecureBootKey(string Certificate, string Password);
