@@ -44,7 +44,7 @@ Status: **done** (backend and UI), **backend** (API exists, UI missing or partia
 | Per PC: Keep Writeback, Discard Writeback, Pin version | done |
 | Per PC: Apply Writebacks with a choice: OS only / game only / both (Boot Mode) | done |
 | Writeback state: Clean / In use / Starting (Boot Mode, iPXE handed over to Windows) / Pending reset / Kept, with the size the PC has written (measured every minute); orange over the large-writeback warning of Settings → Retention (not for Keep, no automatic action) | done |
-| Bulk dock at the bottom: quick select (all / online / offline), power, assign disk, pin, drive letter, mode, stop keeping writebacks, discard writebacks (PCs with Keep writeback are named and left alone), hide / show, delete | done |
+| Bulk dock at the bottom: quick select (all / online / offline), power, OS image (Boot Mode PCs), game image, pin, drive letter, mode, stop keeping writebacks, discard writebacks (PCs with Keep writeback are named and left alone), hide / show, delete | done |
 | Delete is refused while the PC is on (agent reports or iSCSI session), single and bulk | done |
 | Hide a PC (e.g. while it is repaired): out of the list and its counts until Show hidden | done |
 | Columns: choose MAC, Disks, Writeback, Network I/O, Link speed, Uptime, Agent; remembered in this browser | done |

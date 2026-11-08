@@ -781,7 +781,7 @@ class AgentPackageOut(BaseModel):
 
 
 BulkKind = Literal["on", "shutdown", "reboot", "assign", "pin", "drive_letter", "stop_keep_writeback",
-                   "hide", "show", "discard", "mode", "delete"]
+                   "hide", "show", "discard", "mode", "delete", "assign_os"]
 
 
 class BulkAction(BaseModel):
@@ -790,6 +790,7 @@ class BulkAction(BaseModel):
     machine_ids: list[int] = Field(min_length=1, max_length=500)
     action: BulkKind
     game_image_id: int | None = None   # assign: the disk, or None to remove it
+    os_image_id: int | None = None     # assign_os: the OS image of Boot Mode PCs (each keeps its game image)
     snapshot: str | None = None       # pin: a version, or None to follow the active one
     drive_letter: str | None = None   # drive_letter: D-Z
     mode: MachineMode | None = None   # mode: disk or boot (only machines without a disk)
@@ -805,6 +806,8 @@ class BulkAction(BaseModel):
             raise ValueError("drive_letter: required for the drive_letter action")
         if self.action == "mode" and self.mode is None:
             raise ValueError("mode: required for the mode action")
+        if self.action == "assign_os" and self.os_image_id is None:
+            raise ValueError("os_image_id: required for the assign_os action")
         return self
 
 

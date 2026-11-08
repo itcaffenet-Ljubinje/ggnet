@@ -138,3 +138,27 @@ def test_delete_skips_pcs_that_are_on(client, disk):
     assert results["pc01"]["ok"]
     assert not results["pc02"]["ok"] and "shut it down first" in results["pc02"]["error"]
     assert [m["name"] for m in client.get("/api/v1/machines").json()] == ["pc02"]
+
+
+def test_assign_os_image_to_boot_mode_pcs(client, disk):
+    win = client.post("/api/v1/images", json={"name": "win11", "size_gb": 10, "kind": "os"}).json()
+    client.post(f"/api/v1/images/{win['id']}/publish")
+    win2 = client.post("/api/v1/images", json={"name": "win11b", "size_gb": 10, "kind": "os"}).json()
+    client.post(f"/api/v1/images/{win2['id']}/publish")
+    a, b = _machines(client, "pc01", "pc02", mode="boot", game_image_id=disk["id"], os_image_id=win["id"])
+    (c,) = _machines(client, "pc03", game_image_id=disk["id"])
+    (d,) = _machines(client, "pc04", mode="boot")
+
+    results = {r["name"]: r for r in _bulk(client, [a["id"], b["id"], c["id"], d["id"]], "assign_os",
+                                           os_image_id=win2["id"])}
+    assert results["pc01"]["ok"] and results["pc02"]["ok"], results
+    assert not results["pc03"]["ok"] and "Disk Mode" in results["pc03"]["error"]
+    assert not results["pc04"]["ok"] and "needs a game image" in results["pc04"]["error"]
+    pcs = {m["name"]: m for m in client.get("/api/v1/machines").json()}
+    assert (pcs["pc01"]["os_image_id"], pcs["pc01"]["game_image_id"]) == (win2["id"], disk["id"])
+
+
+def test_assign_os_needs_an_image(client):
+    (a,) = _machines(client, "pc01", mode="boot")
+    r = client.post("/api/v1/machines/bulk", json={"machine_ids": [a["id"]], "action": "assign_os"})
+    assert r.status_code == 422

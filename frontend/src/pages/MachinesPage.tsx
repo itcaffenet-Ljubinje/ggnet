@@ -338,6 +338,7 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
           machines={picked}
           total={machines.length}
           disks={published}
+          osImages={disks.filter((d) => d.published && d.kind === "os")}
           versions={versions}
           busy={busy !== null}
           run={runBulk}
@@ -847,6 +848,8 @@ interface BulkDockProps {
   machines: Machine[];
   total: number;
   disks: Image[];
+  /** Published OS images, for the Boot Mode PCs in the selection. */
+  osImages: Image[];
   versions: Record<number, string[]>;
   busy: boolean;
   run: (label: string, action: BulkKind, extra?: Parameters<typeof api.bulk>[2], confirmText?: string) => void;
@@ -859,8 +862,10 @@ interface BulkDockProps {
 }
 
 /** Bulk operations on the selected machines, as a dock at the bottom of the screen. */
-function BulkDock({ machines, total, disks, versions, busy, run, all, select, clear, canManage }: BulkDockProps) {
+function BulkDock({ machines, total, disks, osImages, versions, busy, run, all, select, clear, canManage }: BulkDockProps) {
   const [disk, setDisk] = useState("");
+  const [osImage, setOsImage] = useState("");
+  const boot = machines.filter((m) => m.mode === "boot").length;
   const [version, setVersion] = useState("");
   const [letter, setLetter] = useState("D");
   const [mode, setMode] = useState<MachineMode | "">("");
@@ -926,6 +931,36 @@ function BulkDock({ machines, total, disks, versions, busy, run, all, select, cl
 
         {canManage && (
           <>
+        {boot > 0 && (
+          <div className="bulk-disk-assign">
+            <select aria-label="OS image for selected" value={osImage} onChange={(e) => setOsImage(e.target.value)}>
+              <option value="">OS image…</option>
+              {osImages.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="small"
+              disabled={busy || !osImage}
+              title="Boot Mode PCs only; each keeps its game image"
+              onClick={() =>
+                run(
+                  "OS image",
+                  "assign_os",
+                  { os_image_id: Number(osImage) },
+                  `Set the OS image of ${boot} Boot Mode PC(s)? Everything they wrote is lost. ${CLIENT_OFF}` +
+                    (boot < n ? `\n\n${n - boot} Disk Mode PC(s) in the selection are left as they are.` : ""),
+                )
+              }
+            >
+              Apply
+            </button>
+          </div>
+        )}
+
         <div className="bulk-disk-assign">
           <select aria-label="Game image for selected" value={disk} onChange={(e) => setDisk(e.target.value)}>
             <option value="">Game image…</option>

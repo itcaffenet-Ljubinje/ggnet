@@ -598,7 +598,8 @@ export type BulkKind =
   | "show"
   | "discard"
   | "mode"
-  | "delete";
+  | "delete"
+  | "assign_os";
 
 /** What happened to one machine in a bulk operation. */
 export interface BulkResult {
@@ -923,7 +924,13 @@ export const api = {
   bulk: (
     machine_ids: number[],
     action: BulkKind,
-    extra: { game_image_id?: number | null; snapshot?: string | null; drive_letter?: string; mode?: MachineMode } = {},
+    extra: {
+      game_image_id?: number | null;
+      os_image_id?: number;
+      snapshot?: string | null;
+      drive_letter?: string;
+      mode?: MachineMode;
+    } = {},
   ) => request<BulkResult[]>("POST", "/v1/machines/bulk", { machine_ids, action, ...extra }),
   power: (id: number, action: "on" | "shutdown" | "reboot") =>
     request<Machine>("POST", `/v1/machines/${id}/power`, { action }),

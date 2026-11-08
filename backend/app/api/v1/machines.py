@@ -250,6 +250,14 @@ def bulk(
             power(machine_id, PowerAction(action=body.action), db, wol)
         elif body.action == "assign":
             assign_disk(machine_id, MachineAssign(game_image_id=body.game_image_id), db, prov)
+        elif body.action == "assign_os":
+            m = _get(db, machine_id)
+            if m.mode is not MachineMode.BOOT:
+                conflict(f"'{m.name}' is in Disk Mode: it runs its own Windows, no OS image")
+            if m.game_image_id is None:
+                conflict(f"'{m.name}' needs a game image with its OS image; set both in its settings")
+            assign_disk(machine_id, MachineAssign(game_image_id=m.game_image_id, os_image_id=body.os_image_id),
+                        db, prov)
         elif body.action == "pin":
             pin_snapshot(machine_id, MachinePin(snapshot=body.snapshot), db, prov)
         elif body.action == "drive_letter":

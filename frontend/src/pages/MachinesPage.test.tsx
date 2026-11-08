@@ -653,6 +653,26 @@ describe("MachinesPage", () => {
       ]);
     });
 
+    it("sets the OS image of the selected Boot Mode PCs; no OS image select for Disk Mode only", async () => {
+      const fetchMock = stubFetch(200, []);
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      const pcs = [
+        machine({ id: 1, name: "pc01", mode: "boot", game_image_id: 1, os_image_id: 3 }),
+        machine({ id: 2, name: "pc02", game_image_id: 1 }),
+      ];
+      render(<MachinesPage disks={[...DISKS, OS_IMAGE]} machines={pcs} reload={vi.fn().mockResolvedValue(undefined)} />);
+      await userEvent.click(screen.getByLabelText("Select pc02"));
+      expect(screen.queryByLabelText("OS image for selected")).toBeNull();
+      await userEvent.click(screen.getByLabelText("Select pc01"));
+      const bar = screen.getByLabelText("Bulk actions");
+      await userEvent.selectOptions(within(bar).getByLabelText("OS image for selected"), "3");
+      await userEvent.click(within(bar).getAllByRole("button", { name: "Apply" })[0]);
+      expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("1 Disk Mode PC(s) in the selection are left"));
+      expect(actions(fetchMock)).toEqual([
+        { url: "/api/v1/machines/bulk", method: "POST", body: { machine_ids: [2, 1], action: "assign_os", os_image_id: 3 } },
+      ]);
+    });
+
     it("cannot delete while a selected PC is on", async () => {
       render(<MachinesPage disks={DISKS} machines={[{ ...three[0], last_seen_at: new Date().toISOString() }]}
                            reload={vi.fn()} />);
