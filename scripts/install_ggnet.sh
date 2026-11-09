@@ -626,6 +626,66 @@ EOF
 chmod 640 "$CONF_FILE"
 fi
 
+# ---------- 10a. the agent for the PCs (Settings -> Client app) ----------
+# The release's ggnet-agent-win-x64.zip, checked against its .sha256 and
+# unpacked into agent_dir, when that folder does not hold this version yet:
+# the PCs install it from there (one-line install), Disk Mode agents update
+# themselves from it and Prepare image puts it into OS images. A source tree
+# without a release (development) keeps whatever is in the folder.
+fetch_agent_package() {
+    local tag dir have tmp
+    tag="v$(tr -d '[:space:]' 2>/dev/null < "$SRC_DIR/VERSION" || true)"
+    dir="$(python3 - "$CONF_FILE" <<'PY'
+import sys, tomllib
+p = tomllib.load(open(sys.argv[1], "rb")).get("paths", {})
+print(p.get("agent_dir") or (p.get("data_dir", "/var/lib/ggnet") + "/agent"))
+PY
+)" || { red "Cannot read agent_dir from $CONF_FILE; the agent package is unchanged."; return; }
+    have="$(tr -d '[:space:]' 2>/dev/null < "$dir/VERSION" || true)"
+    if [[ "v$have" == "$tag" && -f "$dir/ggnet-agent.exe" ]]; then
+        info "Agent package $have is in $dir."
+        return
+    fi
+    info "Downloading the agent for the PCs ($tag)..."
+    tmp="$(mktemp -d)"
+    local base="https://github.com/$GGNET_REPO/releases/download/$tag"
+    if ! wget -qO "$tmp/ggnet-agent-win-x64.zip" "$base/ggnet-agent-win-x64.zip" \
+        || ! wget -qO "$tmp/ggnet-agent-win-x64.zip.sha256" "$base/ggnet-agent-win-x64.zip.sha256"; then
+        red "No agent package for $tag on GitHub (a development build?); Settings -> Client app stays as it is."
+        rm -rf "$tmp"; return
+    fi
+    if ! (cd "$tmp" && sha256sum -c --status ggnet-agent-win-x64.zip.sha256); then
+        red "SHA-256 mismatch for the agent package; Settings -> Client app stays as it is."
+        rm -rf "$tmp"; return
+    fi
+    mkdir -p "$dir"
+    # Each file replaced by a rename: a PC downloading meanwhile gets the old
+    # file or the new one, never half. Only files right in ggnet-agent/.
+    if python3 - "$tmp/ggnet-agent-win-x64.zip" "$dir" <<'PY'
+import os, sys, zipfile
+zip_path, target = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(zip_path) as z:
+    for info in z.infolist():
+        parts = info.filename.split("/")
+        if info.is_dir() or len(parts) != 2 or parts[0] != "ggnet-agent" or parts[1] in ("", ".", ".."):
+            continue
+        tmp = os.path.join(target, "." + parts[1] + ".new")
+        with z.open(info) as src, open(tmp, "wb") as dst:
+            while chunk := src.read(1 << 20):
+                dst.write(chunk)
+            dst.flush()
+            os.fsync(dst.fileno())
+        os.replace(tmp, os.path.join(target, parts[1]))
+PY
+    then
+        info "Agent package ${tag#v} in $dir."
+    else
+        red "Unpacking the agent package failed; Settings -> Client app stays as it is."
+    fi
+    rm -rf "$tmp"
+}
+fetch_agent_package
+
 # ---------- 10b. database (PostgreSQL) ----------
 setup_postgres
 if [[ "$OLD_DB_URL" == sqlite:///* ]]; then
