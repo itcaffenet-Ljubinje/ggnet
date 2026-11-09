@@ -16,6 +16,7 @@ import {
   Radar,
   RotateCw,
   Search,
+  Server,
   Settings as SettingsIcon,
   Trash2,
   Upload,
@@ -35,6 +36,7 @@ import {
   type Machine,
   type MachineMode,
   type MachineTraffic,
+  type VmInfo,
 } from "../api";
 import { AgentState, isOnline } from "../components/AgentState";
 import { DiscoveredPanel } from "../components/DiscoveredPanel";
@@ -43,6 +45,7 @@ import { ImageStatus } from "../components/ImageStatus";
 import { MachineSettings } from "../components/MachineSettings";
 import { Modal } from "../components/Modal";
 import { StatusBadge } from "../components/StatusBadge";
+import { CreateVm, VmControls } from "../components/VirtualMachines";
 import { formatBytes, formatDuration, formatLink, formatRate } from "../format";
 import { useAsyncAction } from "../useAsyncAction";
 
@@ -69,6 +72,20 @@ const hasWriteback = (m: Machine) => m.keep_writeback || m.writeback_dirty || m.
 export function MachinesPage({ disks, machines, traffic = {}, discovered = [], reload, canManage = true }: Props) {
   const { busy, error, setError, run } = useAsyncAction();
   const [adding, setAdding] = useState(false);
+  const [creatingVm, setCreatingVm] = useState(false);
+  // Live state of the VM machines (Proxmox), refreshed with the list.
+  const [vms, setVms] = useState<Record<number, VmInfo>>({});
+  const hasVms = machines.some((m) => m.vm_id != null);
+  useEffect(() => {
+    if (!hasVms) {
+      setVms({});
+      return;
+    }
+    api
+      .listVms()
+      .then((list) => setVms(Object.fromEntries(list.map((v) => [v.machine_id, v]))))
+      .catch(() => setVms({}));
+  }, [machines, hasVms]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [showHidden, setShowHidden] = useState(false);
@@ -236,7 +253,11 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
   }
 
   async function remove(m: Machine) {
-    if (!window.confirm(`Delete ${m.name} and its disk on the host?\n\n${CLIENT_OFF}`)) return;
+    const what =
+      m.vm_id != null
+        ? `Delete the virtual machine ${m.name} (VM ${m.vm_id}) with its writebacks?\n\nChanges not applied are lost.`
+        : `Delete ${m.name} and its disk on the host?\n\n${CLIENT_OFF}`;
+    if (!window.confirm(what)) return;
     await run(`delete-${m.id}`, () => api.deleteMachine(m.id));
     await reload();
   }
@@ -261,6 +282,8 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
       {adding && (
         <AddMachine disks={disks} busy={busy !== null} run={run} reload={reload} onClose={() => setAdding(false)} />
       )}
+
+      {creatingVm && <CreateVm disks={disks} reload={reload} onClose={() => setCreatingVm(false)} />}
 
       {canManage && (
         <DiscoveredPanel discovered={discovered} disks={disks} busy={busy !== null} run={run} reload={reload} />
@@ -325,6 +348,17 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
             </div>
           )}
           {canManage && (
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => setCreatingVm(true)}
+              title="A virtual machine on this server for working on images"
+            >
+              <Server size={16} />
+              Create VM
+            </button>
+          )}
+          {canManage && (
             <button type="button" onClick={() => setAdding(true)}>
               <Plus size={16} />
               Add machine
@@ -386,7 +420,10 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
             </thead>
             <tbody>
               {shown.map((m) => {
+                const vm = m.vm_id != null ? vms[m.id] : undefined;
                 const up = isOnline(m);
+                // A VM is on while Proxmox runs it, whatever its agent says.
+                const on = m.vm_id != null ? vm?.status === "running" : up;
                 const commandBusy = busy !== null || m.pending_command !== null;
                 return (
                   <tr key={m.id} className={selected.has(m.id) ? "row-selected" : undefined}>
@@ -420,12 +457,21 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
                               <span className="strong">{m.name}</span>
                             )}
                             <SecureBootIcon machine={m} />
-                            <span
-                              className={`mode-pill ${m.mode === "boot" ? "mode-pill-boot" : "mode-pill-disk"}`}
-                              title={m.mode === "boot" ? "Boot Mode: diskless" : "Disk Mode: local Windows"}
-                            >
-                              {m.mode === "boot" ? "BOOT" : "DISK"}
-                            </span>
+                            {m.vm_id != null ? (
+                              <span
+                                className="mode-pill mode-pill-vm"
+                                title={`Virtual machine ${m.vm_id} on this server: its OS and game writebacks are its drives`}
+                              >
+                                VM
+                              </span>
+                            ) : (
+                              <span
+                                className={`mode-pill ${m.mode === "boot" ? "mode-pill-boot" : "mode-pill-disk"}`}
+                                title={m.mode === "boot" ? "Boot Mode: diskless" : "Disk Mode: local Windows"}
+                              >
+                                {m.mode === "boot" ? "BOOT" : "DISK"}
+                              </span>
+                            )}
                           </div>
                           <div className="mono muted small">{m.reported_ip ?? "No IP reported"}</div>
                           {m.hidden && (
@@ -583,8 +629,12 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
                                 type="button"
                                 className="small"
                                 onClick={() => apply(m)}
-                                disabled={busy !== null || m.session_active === true}
-                                title={m.session_active ? `Shut down ${m.name} first` : "Make them new versions"}
+                                disabled={busy !== null || m.session_active === true || (m.vm_id != null && on)}
+                                title={
+                                  m.session_active || (m.vm_id != null && on)
+                                    ? `Shut down ${m.name} first`
+                                    : "Make them new versions"
+                                }
                               >
                                 <Upload size={13} />
                                 {busy === `apply-${m.id}` ? "Applying…" : "Apply writebacks"}
@@ -617,7 +667,9 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
 
                     <td>
                       <div className="actions-cell">
-                        {up ? (
+                        {m.vm_id != null ? (
+                          <VmControls machine={m} vm={vm} busy={busy !== null} run={run} reload={reload} />
+                        ) : up ? (
                           <>
                             <button
                               type="button"
@@ -667,14 +719,16 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
                               type="button"
                               className="icon-btn icon-btn-danger"
                               onClick={() => remove(m)}
-                              disabled={busy !== null || m.status === "editing" || up}
+                              disabled={busy !== null || m.status === "editing" || up || on}
                               aria-label={`Delete ${m.name}`}
                               title={
                                 m.status === "editing"
                                   ? "Finish editing the game image first"
-                                  : up
-                                    ? "Delete is not allowed while the PC is on; shut it down first"
-                                    : "Delete"
+                                  : up || on
+                                    ? "Delete is not allowed while it is on; shut it down first"
+                                    : m.vm_id != null
+                                      ? "Delete the VM and its writebacks"
+                                      : "Delete"
                               }
                             >
                               <Trash2 size={14} />

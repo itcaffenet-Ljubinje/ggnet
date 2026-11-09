@@ -253,6 +253,9 @@ class Machine(Base):
     # Kept out of the Machines list (Show hidden lists it), e.g. while it is
     # repaired; it still boots and reports like any other PC.
     hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa_false())
+    # A virtual machine on this Proxmox host (app.services.vms): its
+    # writebacks are the VM's drives, not iSCSI LUNs. None for a PC.
+    vm_id: Mapped[int | None] = mapped_column(Integer, unique=True, index=True, default=None)
     # The client wrote (was connected) since the clone was made; a clean
     # clone is never discarded again.
     writeback_dirty: Mapped[bool] = mapped_column(Boolean, default=False)

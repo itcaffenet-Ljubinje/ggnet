@@ -143,7 +143,7 @@ def test_reset_switches_to_new_snapshot(host, prov, published):
 def test_reset_stops_if_backstore_survives(host, prov, published):
     prov.provision("pc01", IQN, SNAP)
     host.fail_on[("targetcli", "/backstores/block", "delete")] = "Storage object in use"
-    with pytest.raises(ProvisioningError, match="iSCSI disk was not removed"):
+    with pytest.raises(ProvisioningError, match="disks were not removed"):
         prov.reset("pc01", IQN, CLONE, SNAP)
     assert CLONE in host.datasets          # clone untouched
 
@@ -151,7 +151,7 @@ def test_reset_stops_if_backstore_survives(host, prov, published):
 def test_reset_stops_if_backstores_cannot_be_listed(host, prov, published):
     prov.provision("pc01", IQN, SNAP)
     host.fail_on[("targetcli", "/backstores/block", "ls")] = "targetcli crashed"
-    with pytest.raises(ProvisioningError, match="iSCSI disk was not removed"):
+    with pytest.raises(ProvisioningError, match="disks were not removed"):
         prov.reset("pc01", IQN, CLONE, SNAP)
     assert CLONE in host.datasets
 

@@ -574,8 +574,51 @@ class MachineOut(BaseModel):
     session_changed_at: datetime | None
     booted_at: datetime | None
     ipxe_at: datetime | None             # Boot Mode: when iPXE last asked for the boot script
+    vm_id: int | None = None             # a virtual machine on this Proxmox host
     created_at: datetime
     updated_at: datetime
+
+
+# ── Virtual machines ──────────────────────────────────────────────────
+
+class VmCreate(BaseModel):
+    """A VM for working on images: an OS image and a game image as its local drives."""
+
+    name: str
+    os_image_id: int
+    game_image_id: int
+    cores: int = Field(4, ge=1, le=512)
+    memory_mb: int = Field(8192, ge=2048, le=4 * 1024 * 1024)
+    keep_writeback: bool = True         # it is where images are worked on
+
+    @field_validator("name")
+    @classmethod
+    def check_name(cls, v: str) -> str:
+        return _machine_name(v)
+
+
+class VmUpdate(BaseModel):
+    cores: int | None = Field(None, ge=1, le=512)
+    memory_mb: int | None = Field(None, ge=2048, le=4 * 1024 * 1024)
+
+
+class VmAction(BaseModel):
+    action: Literal["start", "shutdown", "stop", "reset", "reboot"]
+
+
+class VmSettingsIn(BaseModel):
+    bridge: str | None = Field(None, max_length=32)
+    storage: str | None = Field(None, max_length=64)
+    reserved_memory_gb: int = Field(16, ge=0, le=4096)
+
+
+class VmOut(BaseModel):
+    machine_id: int
+    vm_id: int
+    status: str | None                  # running / stopped / None: the VM is gone
+    cores: int | None
+    memory_mb: int | None
+    node: str
 
 
 # ── Agent ─────────────────────────────────────────────────────────────

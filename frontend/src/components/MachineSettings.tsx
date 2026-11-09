@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Cpu, HardDrive, Monitor, Network, Save, Settings, X } from "lucide-react";
+import { Cpu, HardDrive, Monitor, Network, Save, Server, Settings, X } from "lucide-react";
 
 import { api, type Image, type Machine, type MachineMode } from "../api";
 import { formatBytes, formatLink, formatNic } from "../format";
@@ -15,7 +15,7 @@ interface Props {
   reload: () => Promise<void>;
 }
 
-type Tab = "general" | "disks" | "network" | "hardware";
+type Tab = "general" | "disks" | "vm" | "network" | "hardware";
 
 // Game image letters; A-C are floppy and system drives.
 const LETTERS = "DEFGHIJKLMNOPQRSTUVWXYZ".split("");
@@ -40,6 +40,14 @@ export function MachineSettings({ machine: m, disks, onClose, reload }: Props) {
   const [pin, setPin] = useState(m.pinned_snapshot ?? "");
   const [versions, setVersions] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
+  // A virtual machine: cores and memory, read from Proxmox.
+  const isVm = m.vm_id != null;
+  const [vmCores, setVmCores] = useState<number | null>(null);
+  const [vmMemoryGb, setVmMemoryGb] = useState<number | null>(null);
+  const [vmLoaded, setVmLoaded] = useState<{ cores: number | null; memory: number | null }>({
+    cores: null,
+    memory: null,
+  });
 
   const osImages = disks.filter((d) => d.published && d.kind === "os");
   const gameImages = disks.filter((d) => d.published && d.kind !== "os");
@@ -53,6 +61,20 @@ export function MachineSettings({ machine: m, disks, onClose, reload }: Props) {
       .then((s) => setVersions(s.map((v) => v.name)))
       .catch(() => setVersions([]));
   }, [m.game_image_id]);
+
+  useEffect(() => {
+    if (!isVm) return;
+    api
+      .listVms()
+      .then((list) => {
+        const vm = list.find((v) => v.machine_id === m.id);
+        const memory = vm?.memory_mb ? Math.round(vm.memory_mb / 1024) : null;
+        setVmCores(vm?.cores ?? null);
+        setVmMemoryGb(memory);
+        setVmLoaded({ cores: vm?.cores ?? null, memory });
+      })
+      .catch(() => undefined);
+  }, [isVm, m.id]);
 
   const disksChanged =
     imageId !== (m.game_image_id ? String(m.game_image_id) : "") ||
@@ -109,6 +131,13 @@ export function MachineSettings({ machine: m, disks, onClose, reload }: Props) {
         );
       }
       if (keep !== m.keep_writeback) await api.setKeepWriteback(m.id, keep);
+      if (isVm && (vmCores !== vmLoaded.cores || vmMemoryGb !== vmLoaded.memory)) {
+        await api.updateVm(m.id, {
+          ...(vmCores !== null && vmCores !== vmLoaded.cores ? { cores: vmCores } : {}),
+          ...(vmMemoryGb !== null && vmMemoryGb !== vmLoaded.memory ? { memory_mb: vmMemoryGb * 1024 } : {}),
+        });
+        setVmLoaded({ cores: vmCores, memory: vmMemoryGb });
+      }
       if (!disksChanged && !modeChanged && (pin || null) !== m.pinned_snapshot) {
         await api.pinSnapshot(m.id, pin || null);
       }
@@ -120,6 +149,7 @@ export function MachineSettings({ machine: m, disks, onClose, reload }: Props) {
   const tabs: { id: Tab; label: string; icon: typeof Settings }[] = [
     { id: "general", label: "General", icon: Settings },
     { id: "disks", label: "Disks", icon: HardDrive },
+    ...(isVm ? [{ id: "vm" as Tab, label: "Virtual machine", icon: Server }] : []),
     { id: "network", label: "Network", icon: Network },
     { id: "hardware", label: "Hardware", icon: Cpu },
   ];
@@ -138,9 +168,13 @@ export function MachineSettings({ machine: m, disks, onClose, reload }: Props) {
               <span className={`badge ${online ? "badge-provisioned" : "badge-warn"}`}>
                 {online ? "Online" : "Offline"}
               </span>
-              <span className={`mode-pill ${m.mode === "boot" ? "mode-pill-boot" : "mode-pill-disk"}`}>
-                {m.mode === "boot" ? "Boot Mode" : "Disk Mode"}
-              </span>
+              {isVm ? (
+                <span className="mode-pill mode-pill-vm">VM {m.vm_id}</span>
+              ) : (
+                <span className={`mode-pill ${m.mode === "boot" ? "mode-pill-boot" : "mode-pill-disk"}`}>
+                  {m.mode === "boot" ? "Boot Mode" : "Disk Mode"}
+                </span>
+              )}
             </div>
             <p className="modal-subheading">
               {m.reported_ip ?? "No IP reported"} · MAC {m.mac ?? "not set"}
@@ -200,7 +234,14 @@ export function MachineSettings({ machine: m, disks, onClose, reload }: Props) {
                 <select
                   value={mode}
                   onChange={(e) => setMode(e.target.value as MachineMode)}
-                  title={hasDisk ? "Changing it makes the writebacks again; the PC must be powered off" : undefined}
+                  disabled={isVm}
+                  title={
+                    isVm
+                      ? "A VM always starts its OS image like a PC in Boot Mode"
+                      : hasDisk
+                        ? "Changing it makes the writebacks again; the PC must be powered off"
+                        : undefined
+                  }
                 >
                   <option value="disk">Disk (local Windows)</option>
                   <option value="boot">Boot (diskless)</option>
@@ -264,13 +305,47 @@ export function MachineSettings({ machine: m, disks, onClose, reload }: Props) {
             </div>
           )}
 
+          {tab === "vm" && isVm && (
+            <div className="form-grid-2 form-stacked">
+              <label>
+                CPU cores
+                <input
+                  type="number"
+                  min={1}
+                  value={vmCores ?? ""}
+                  onChange={(e) => setVmCores(e.target.value ? Number(e.target.value) : null)}
+                  disabled={vmLoaded.cores === null}
+                />
+              </label>
+              <label>
+                Memory (GB)
+                <input
+                  type="number"
+                  min={2}
+                  value={vmMemoryGb ?? ""}
+                  onChange={(e) => setVmMemoryGb(e.target.value ? Number(e.target.value) : null)}
+                  disabled={vmLoaded.memory === null}
+                />
+              </label>
+              <div className="form-stacked-note">
+                <span>Proxmox VM {m.vm_id}</span>
+                <span className="form-hint">
+                  Cores and memory change while the VM is off. Its drives are the OS writeback (sata0) and the game
+                  writeback (sata1); its network card, Secure Boot and TPM are set when it is created.
+                </span>
+              </div>
+            </div>
+          )}
+
           {tab === "network" && (
             <div className="form-grid-2">
               <div>
-                <div className="muted small">MAC (the PC's identity)</div>
+                <div className="muted small">{isVm ? "MAC (the VM's network card)" : "MAC (the PC's identity)"}</div>
                 <div className="mono">{m.mac ?? "—"}</div>
                 <div className="muted small">
-                  Fixed. A PC with a new network card is deleted and added again from New PCs.
+                  {isVm
+                    ? "Given by Proxmox when the VM was created."
+                    : "Fixed. A PC with a new network card is deleted and added again from New PCs."}
                 </div>
               </div>
               <div>
