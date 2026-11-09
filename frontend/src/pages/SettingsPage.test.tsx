@@ -1,6 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PxeStatus, Retention, RetentionAction, Storage } from "../api";
 import { calls } from "../test/fixtures";
@@ -62,6 +62,8 @@ function stubHost(retention: Retention = DEFAULTS) {
   return mock;
 }
 
+// General opens first; most of these tests are about Storage.
+beforeEach(() => window.localStorage.setItem("ggnet.section.settings", "storage"));
 afterEach(() => window.localStorage.clear());
 
 const actions = (mock: ReturnType<typeof vi.fn>) => calls(mock).filter((c) => c.method !== "GET");
@@ -158,6 +160,7 @@ describe("SettingsPage", () => {
     stubHost();
     render(<SettingsPage storage={STORAGE} reload={vi.fn()} />);
     expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([
+      "General",
       "Storage",
       "Network boot",
       "Hardware scan",

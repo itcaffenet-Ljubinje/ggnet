@@ -93,7 +93,10 @@ Status: **done** (backend and UI), **backend** (API exists, UI missing or partia
 | Client app: Disk Mode agents update themselves | done |
 | Retention: reserved space, warning threshold, unused version age, newest versions kept, dry-run preview, run now | done |
 | Network boot: PXE service state and restart, TFTP files (`snponly.efi`, `ipxe.efi`, `autoexec.ipxe`), iBFT gateway, unregistered PCs wait / boot locally (saved values override `[boot]` in config.toml) | done |
-| Restart services: ZFS, iSCSI target (PXE: done, in Network boot) | todo |
+| General: server name, IP, ggNet / Proxmox VE / kernel versions, uptime, database (PostgreSQL or SQLite, size, last backup before an update) | done |
+| General: services (ggNet, network boot, PostgreSQL) with state and Restart; the iSCSI target is shown but never restarted from the UI (every PC would lose its disk) | done |
+| General: reboot the server: lists the PCs that are on and the running VMs / containers, refused while a backup / copy / import runs, needs the word REBOOT | done |
+| Activity: Download CSV (newest first, formulas neutralised) | done |
 | Secure Boot: shim (signed by Microsoft) + iPXE signed with the ggNet key (made and re-signed by the installer), certificate download with fingerprint and MokManager how-to, per-PC Secure Boot state from the agent (lock in Machines) | done |
 | Secure Boot: key enrollment prepared by the agent (MokNew/MokAuth, no USB), switched on in Network boot with a MokManager password; per-PC key state (enrolled / confirm at next boot) | done |
 | Secure Boot: BIOS how-to per vendor | todo |

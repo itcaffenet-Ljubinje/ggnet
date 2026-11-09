@@ -215,3 +215,11 @@ def get_updates():
         version = "dev"
     return Updates(get_config(), CommandRunner(), version, backend)
 
+
+
+@lru_cache(maxsize=1)
+def get_host_control():
+    """Settings -> General: this server's services and reboot (app.services.host_control)."""
+    from app.services.host_control import HostControl
+
+    return HostControl(get_config())

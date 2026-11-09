@@ -512,6 +512,37 @@ export interface Pool {
   disks: PoolDisk[];
 }
 
+/** Settings → General: one of ggNet's services. */
+export interface HostService {
+  unit: string;
+  label: string;
+  purpose: string;
+  state: string;
+  sub_state: string;
+  since: string | null;
+  restartable: boolean;
+  note: string | null;
+}
+
+export interface General {
+  hostname: string;
+  version: string;
+  server_ip: string;
+  proxmox: string | null;
+  kernel: string;
+  uptime_seconds: number | null;
+  database: {
+    kind: string;
+    version: string | null;
+    size_bytes: number | null;
+    backups: { name: string; size_bytes: number; at: string }[];
+  };
+  services: HostService[];
+  guests: string[];
+  online_pcs: string[];
+  running_tasks: string[];
+}
+
 export interface ServerStatus {
   pool: Pool | null;
   arc: {
@@ -882,6 +913,13 @@ export const api = {
   removeDriverPackage: (name: string) => request<void>("DELETE", `/v1/winpe/drivers/${encodeURIComponent(name)}`),
   getStorage: () => request<Storage>("GET", "/v1/storage"),
   getServer: () => request<ServerStatus>("GET", "/v1/server"),
+  getGeneral: () => request<General>("GET", "/v1/server/general"),
+  restartService: (unit: string) =>
+    request<{ restarting_self: boolean; services: HostService[] }>(
+      "POST",
+      `/v1/server/services/${encodeURIComponent(unit)}/restart`,
+    ),
+  rebootServer: (confirm: string) => request<{ rebooting_in_seconds: number }>("POST", "/v1/server/reboot", { confirm }),
   scrub: (action: "start" | "stop") => request<ServerStatus>("POST", "/v1/server/scrub", { action }),
   trim: (action: "start" | "stop") => request<ServerStatus>("POST", "/v1/server/trim", { action }),
   readSmart: () => request<ServerStatus>("POST", "/v1/server/smart"),
