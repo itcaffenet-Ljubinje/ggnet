@@ -89,6 +89,7 @@ describe("NetworkBoot", () => {
           mok_enroll: false,
           mok_password: "ggnet",
           new_pc_name: "pc-{nn}",
+      network_boot: true,
         },
       },
     ]);
@@ -155,6 +156,7 @@ describe("NetworkBoot", () => {
           mok_enroll: true,
           mok_password: "cafe2026",
           new_pc_name: "pc-{nn}",
+      network_boot: true,
         },
       },
     ]);
@@ -190,7 +192,23 @@ describe("NetworkBoot", () => {
       mok_enroll: false,
       mok_password: "ggnet",
       new_pc_name: "komp-{nn}",
+      network_boot: true,
     });
   });
 
+
+  it("turns network boot off only after a warning", async () => {
+    const mock = stubHost();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+    render(<NetworkBoot />);
+    const box = await screen.findByRole("checkbox", { name: /Network boot/ });
+    expect(box).toBeChecked();
+    await userEvent.click(box);
+    expect(screen.getByText("Off: every PC boots its own disk")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Save/ }));
+    expect(actions(mock)).toEqual([]);                        // cancelled
+    await userEvent.click(screen.getByRole("button", { name: /Save/ }));
+    expect(confirm.mock.calls[0][0]).toContain("Turn network boot off?");
+    expect(actions(mock)[0].body).toMatchObject({ network_boot: false });
+  });
 });

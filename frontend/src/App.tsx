@@ -80,6 +80,7 @@ function Console({ user, onSignOut }: { user: User; onSignOut: () => void }) {
   const admin = user.role === "admin";
   const [tab, setTab] = useState<Tab>("machines");
   const [health, setHealth] = useState<Health | null>(null);
+  const [networkBoot, setNetworkBoot] = useState(true);
   const [disks, setDisks] = useState<Image[]>([]);
   const [machines, setMachines] = useState<Machine[]>([]);
   const [storage, setStorage] = useState<Storage | null>(null);
@@ -109,6 +110,10 @@ function Console({ user, onSignOut }: { user: User; onSignOut: () => void }) {
       .then((t) => setTraffic(Object.fromEntries(t.map((x) => [x.machine_id, x]))))
       .catch(() => setTraffic({}));
     api.listDiscovered().then(setDiscovered).catch(() => setDiscovered([]));
+    api
+      .getBootSettings()
+      .then((b) => setNetworkBoot(b.network_boot !== false))
+      .catch(() => setNetworkBoot(true));
   });
 
   useEffect(() => {
@@ -221,6 +226,11 @@ function Console({ user, onSignOut }: { user: User; onSignOut: () => void }) {
         {loadError && (
           <div className="banner banner-error" role="alert">
             Cannot load data: {loadError}
+          </div>
+        )}
+        {!networkBoot && (
+          <div className="banner banner-warn" role="alert">
+            Network boot is off: every PC boots its own disk. Turn it on again in Settings → Network boot.
           </div>
         )}
         {storage?.warning && (

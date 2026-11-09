@@ -3104,3 +3104,13 @@ tr.row-warn td {
   color: #f59e0b;
   border: 1px solid rgba(245, 158, 11, 0.45);
 }
+
+.network-boot-switch {
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+.network-boot-switch > span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}

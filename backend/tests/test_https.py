@@ -73,3 +73,75 @@ def test_the_session_cookie_is_secure_once_https_is_set_up(anon_client, cert, mo
     assert auth._secure(Req) is False
     monkeypatch.setattr(serve, "tls", lambda cfg=None: (8443, *cert))
     assert auth._secure(Req) is True
+
+
+class _Host:
+    """HostControl stand-in: records the restart of ggNet itself."""
+
+    unit = "ggnet.service"
+
+    def __init__(self):
+        self.restarted: list[str] = []
+
+    def restart(self, unit):
+        self.restarted.append(unit)
+        return True
+
+
+@pytest.fixture
+def host_ctl():
+    from app.api.deps import get_host_control
+    from app.main import app
+
+    h = _Host()
+    app.dependency_overrides[get_host_control] = lambda: h
+    yield h
+    app.dependency_overrides.pop(get_host_control, None)
+
+
+def test_a_new_self_signed_certificate_for_other_addresses(client, cert, monkeypatch, host_ctl):
+    monkeypatch.setattr(serve, "tls", lambda cfg=None: (8443, *cert))
+    old = cert[0].read_bytes()
+    r = client.put("https://testserver/api/v1/settings/tls",
+                   json={"names": ["192.168.0.40", " ggnet.cafe.local ", "192.168.0.40", "10.0.0.5"]})
+    assert r.status_code == 200, r.text
+    got = r.json()
+    assert set(got["names"]) == {"192.168.0.40", "ggnet.cafe.local", "10.0.0.5"} and got["restarting"] is True
+    assert host_ctl.restarted == ["ggnet"]
+    assert cert[0].read_bytes() != old and (cert[0].parent / "ggnet.crt.bak").read_bytes() == old
+    assert oct(cert[1].stat().st_mode)[-3:] == "600"
+
+
+@pytest.mark.parametrize("names", [["not a name!"], ["-bad.example"], []])
+def test_bad_addresses_are_refused(client, cert, monkeypatch, host_ctl, names):
+    monkeypatch.setattr(serve, "tls", lambda cfg=None: (8443, *cert))
+    old = cert[0].read_bytes()
+    assert client.put("https://testserver/api/v1/settings/tls", json={"names": names}).status_code in (409, 422)
+    assert cert[0].read_bytes() == old and host_ctl.restarted == []
+
+
+def test_the_cafes_own_certificate_is_never_replaced(client, tmp_path, monkeypatch, host_ctl):
+    ca_key, ca = tmp_path / "ca.key", tmp_path / "ca.crt"
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "30", "-subj", "/CN=Cafe CA",
+                    "-keyout", str(ca_key), "-out", str(ca)], check=True, capture_output=True)
+    key, csr, crt = tmp_path / "own.key", tmp_path / "own.csr", tmp_path / "own.crt"
+    subprocess.run(["openssl", "req", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=pve",
+                    "-keyout", str(key), "-out", str(csr)], check=True, capture_output=True)
+    subprocess.run(["openssl", "x509", "-req", "-in", str(csr), "-CA", str(ca), "-CAkey", str(ca_key),
+                    "-CAcreateserial", "-days", "30", "-out", str(crt)], check=True, capture_output=True)
+    monkeypatch.setattr(serve, "tls", lambda cfg=None: (8443, crt, key))
+    r = client.put("https://testserver/api/v1/settings/tls", json={"names": ["192.168.0.40"]})
+    assert r.status_code == 409 and "not self-signed" in r.json()["detail"]["error"]
+
+
+def test_the_windows_trust_script(client, cert, monkeypatch):
+    monkeypatch.setattr(serve, "tls", lambda cfg=None: (8443, *cert))
+    r = client.get("https://testserver/api/v1/settings/tls/trust.cmd")
+    assert r.status_code == 200
+    assert 'filename="ggnet-trust-certificate.cmd"' in r.headers["content-disposition"]
+    text = r.text
+    assert text.startswith("@echo off\r\n") and "X509Store('Root','LocalMachine')" in text
+    import base64
+    b64 = text.split("FromBase64String('")[1].split("'")[0]
+    der = subprocess.run(["openssl", "x509", "-in", str(cert[0]), "-outform", "DER"], capture_output=True).stdout
+    assert base64.b64decode(b64) == der

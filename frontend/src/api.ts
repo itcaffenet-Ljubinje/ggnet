@@ -398,6 +398,8 @@ export interface BootSettings {
   mok_password: string;
   /** New PC template: name with {n} or {nn} (the first free number), e.g. komp-{nn}. */
   new_pc_name: string;
+  /** Off: every PC boots its own disk (server maintenance); Disk Mode PCs are not affected. */
+  network_boot: boolean;
   /** Game image of a new PC; null: unknown PCs are not registered by Add new hardware. */
 }
 
@@ -442,6 +444,8 @@ export interface TlsStatus {
   not_after: string | null;
   sha256: string | null;
   self_signed: boolean;
+  /** After a new certificate: ggNet restarts to use it. */
+  restarting?: boolean;
 }
 
 export interface PxeStatus {
@@ -938,6 +942,7 @@ export const api = {
   getUpdate: (check = false) => request<UpdateStatus>("GET", `/v1/server/update${check ? "?check=true" : ""}`),
   startUpdate: (version: string) => request<UpdateStatus>("POST", "/v1/server/update", { version }),
   getTls: () => request<TlsStatus>("GET", "/v1/settings/tls"),
+  newCertificate: (names: string[]) => request<TlsStatus>("PUT", "/v1/settings/tls", { names }),
   restartPxe: () => request<PxeStatus>("POST", "/v1/pxe/restart"),
   saveRetention: (body: RetentionSettings) => request<Retention>("PUT", "/v1/settings/retention", body),
   previewRetention: (body: RetentionSettings) =>

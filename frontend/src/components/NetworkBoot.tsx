@@ -24,6 +24,7 @@ export function NetworkBoot() {
   const [mokEnroll, setMokEnroll] = useState(false);
   const [mokPassword, setMokPassword] = useState("ggnet");
   const [newPcName, setNewPcName] = useState("pc-{nn}");
+  const [networkBoot, setNetworkBoot] = useState(true);
   const [defaultGame, setDefaultGame] = useState<Image | null>(null);
   const [done, setDone] = useState(false);
 
@@ -35,6 +36,7 @@ export function NetworkBoot() {
     setMokEnroll(s.mok_enroll);
     setMokPassword(s.mok_password);
     setNewPcName(s.new_pc_name ?? "pc-{nn}");
+    setNetworkBoot(s.network_boot !== false);
   }
 
   useEffect(() => {
@@ -61,12 +63,22 @@ export function NetworkBoot() {
     e.preventDefault();
     setDone(false);
     const gateway = choice === "ip" ? ip.trim() : choice;
+    if (
+      !networkBoot &&
+      saved?.network_boot !== false &&
+      !window.confirm(
+        "Turn network boot off?\n\nFrom their next start every PC boots its own disk instead of ggNet " +
+          "(for server maintenance or an update). PCs that run now are not affected. Turn it on again here.",
+      )
+    )
+      return;
     const body = {
       gateway,
       unregistered,
       mok_enroll: mokEnroll,
       mok_password: mokPassword,
       new_pc_name: newPcName.trim(),
+      network_boot: networkBoot,
     };
     const ok = await run("save", async () => show(await api.saveBootSettings(body)));
     if (ok) setDone(true);
@@ -146,6 +158,21 @@ export function NetworkBoot() {
             <h3 className="card-title title-with-icon">
               <Monitor size={16} aria-hidden /> Booting PCs
             </h3>
+            <label className="check network-boot-switch">
+              <input type="checkbox" checked={networkBoot} onChange={(e) => setNetworkBoot(e.target.checked)} />
+              <span>
+                <span className="strong">Network boot</span>{" "}
+                {networkBoot ? (
+                  <span className="badge badge-provisioned">On</span>
+                ) : (
+                  <span className="badge badge-warn">Off: every PC boots its own disk</span>
+                )}
+                <span className="form-hint">
+                  Turn it off for server maintenance or an update: PCs then start their own disk until it is on
+                  again. Disk Mode PCs are not affected.
+                </span>
+              </span>
+            </label>
             <div className="form-grid-2 form-stacked">
               <label>
                 Gateway for Windows (iBFT)

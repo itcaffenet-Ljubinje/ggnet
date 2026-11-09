@@ -15,7 +15,7 @@ from dataclasses import asdict
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_provisioner, get_pxe_service
+from app.api.deps import get_host_control, get_provisioner, get_pxe_service
 from app.api.v1.errors import conflict, host_failed, not_found
 from app.api.v1.schemas import (
     AgentSettingsIn,
@@ -27,6 +27,7 @@ from app.api.v1.schemas import (
     RetentionOut,
     RetentionReportOut,
     StorageOut,
+    TlsNamesIn,
     TlsOut,
 )
 from app.db.session import get_db
@@ -157,6 +158,56 @@ def tls_status():
     port, cert, _ = secure
     info = cert_info(cert) or {}
     return TlsOut(enabled=True, url=f"https://{cfg['network']['server_ip']}:{port}", **info)
+
+
+@router.put("/settings/tls", response_model=TlsOut)
+def tls_names(body: TlsNamesIn, host=Depends(get_host_control)):
+    """
+    A new self-signed certificate for these addresses (e.g. a new IP or a DNS
+    name for the server). ggNet restarts to use it; every admin PC must trust
+    the new one again. A certificate the cafe put in itself is never replaced.
+    """
+    import socket
+
+    from app import serve
+    from app.services.host_control import HostError
+    from app.services.tls import TlsError, regenerate
+
+    secure = serve.tls()
+    if secure is None:
+        conflict("HTTPS is not set up: run the installer again")
+    _, cert, key = secure
+    try:
+        regenerate(cert, key, body.names, f"ggNet {socket.gethostname()}")
+    except TlsError as e:
+        conflict(str(e))
+    logger.warning("New self-signed HTTPS certificate for %s", ", ".join(body.names))
+    out = tls_status()
+    try:
+        out.restarting = host.restart(host.unit.removesuffix(".service")) if host.unit else False
+    except HostError as e:
+        logger.warning("Restart ggNet yourself to use the new certificate: %s", e)
+    return out
+
+
+@router.get("/settings/tls/trust.cmd")
+def tls_trust_script():
+    """A Windows .cmd that trusts the certificate on an admin PC (run as administrator)."""
+    from fastapi.responses import Response
+
+    from app import serve
+    from app.config import get_config
+    from app.services.tls import TlsError, trust_script
+
+    secure = serve.tls()
+    if secure is None:
+        not_found("HTTPS certificate", "ggnet.crt")
+    try:
+        text = trust_script(secure[1], get_config()["network"]["server_ip"])
+    except TlsError as e:
+        conflict(str(e))
+    return Response(text, media_type="application/octet-stream",
+                    headers={"Content-Disposition": 'attachment; filename="ggnet-trust-certificate.cmd"'})
 
 
 @router.get("/settings/tls/certificate")

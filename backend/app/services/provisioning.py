@@ -518,6 +518,12 @@ class Provisioner:
             if not self.zfs.set_snapshot_comment(f"{zvol_path}@{name}", comment):
                 raise self._fail(f"Setting the comment of {zvol_path}@{name} failed")
 
+    def mark_used(self, zvol_path: str, names: list[str], when: int) -> None:
+        """Stamp versions that are in use now (ggnet:last-used)."""
+        with self.lock:
+            for name in names:
+                self.zfs.set_last_used(f"{zvol_path}@{name}", when)
+
     def set_locked(self, zvol_path: str, name: str, locked: bool) -> None:
         """Lock one version against deletion, or unlock it."""
         with self.lock:

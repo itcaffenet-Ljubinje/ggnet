@@ -870,6 +870,8 @@ class BootSettingsIn(BaseModel):
     mok_password: str = Field("ggnet", pattern=r"^[a-z0-9]{4,16}$")
     # New PC template (Add new hardware): a name with {n} or {nn}, and the game image.
     new_pc_name: str = "pc-{nn}"
+    # Off: every PC boots its own disk (server maintenance); nothing is discarded.
+    network_boot: bool = True
 
     @field_validator("new_pc_name")
     @classmethod
@@ -1251,8 +1253,14 @@ class TaskOut(BaseModel):
     image_id: int | None = None
 
 
+class TlsNamesIn(BaseModel):
+    """A new self-signed certificate for these IP addresses and DNS names."""
+
+    names: list[str] = Field(min_length=1, max_length=20)
+
+
 class TlsOut(BaseModel):
-    """The web UI's HTTPS (Settings → Network boot)."""
+    """The web UI's HTTPS (Settings → General)."""
 
     enabled: bool
     url: str | None = None            # https://<service IP>:<port>
@@ -1261,6 +1269,7 @@ class TlsOut(BaseModel):
     not_after: str | None = None
     sha256: str | None = None
     self_signed: bool = False
+    restarting: bool = False          # a new certificate: ggNet restarts to use it
 
 
 class ReleaseOut(BaseModel):
