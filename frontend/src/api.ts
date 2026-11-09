@@ -241,6 +241,8 @@ export interface Snapshot {
   update?: string[] | null;
   /** What automatic removal (Settings → Retention) does with it, in words. */
   retention?: string | null;
+  /** When it was last in use (active, pinned, a PC on it); stamped hourly. */
+  last_used_at?: string | null;
 }
 
 /** The disk a new PC gets from `list`: the default one, else the only one; "" when there is a choice. */
@@ -418,9 +420,35 @@ export interface SecureBootKey {
 
 /** The PXE service (proxyDHCP + TFTP) as systemd sees it. */
 /** Settings → Updates: the installed and the newest ggNet. */
+export interface ReleaseInfo {
+  tag: string;
+  version: string;
+  name: string;
+  notes: string;
+  url: string;
+  published_at: string;
+  /** The version running now. */
+  installed?: boolean;
+  /** Older, and the database backup from before the update away from it is on the server. */
+  can_downgrade?: boolean;
+}
+
+export interface UpdateHistoryEntry {
+  id: string;
+  kind: "update" | "downgrade";
+  version: string | null;
+  from_version: string | null;
+  by: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  state: "running" | "done" | "failed";
+  exit: number | null;
+  database: string | null;
+}
+
 export interface UpdateStatus {
   current: string;
-  latest: { tag: string; version: string; name: string; notes: string; url: string; published_at: string } | null;
+  latest: ReleaseInfo | null;
   available: boolean;
   can_update: boolean;
   reason: string | null;
@@ -428,11 +456,14 @@ export interface UpdateStatus {
   job: {
     version: string | null;
     from_version: string | null;
+    kind?: "update" | "downgrade";
     started_at: string | null;
     state: "running" | "done" | "failed";
     exit: number | null;
     log: string[];
   } | null;
+  releases?: ReleaseInfo[];
+  history?: UpdateHistoryEntry[];
 }
 
 /** The web UI's HTTPS (Settings → Network boot). */
@@ -941,6 +972,8 @@ export const api = {
   getPxe: () => request<PxeStatus>("GET", "/v1/pxe"),
   getUpdate: (check = false) => request<UpdateStatus>("GET", `/v1/server/update${check ? "?check=true" : ""}`),
   startUpdate: (version: string) => request<UpdateStatus>("POST", "/v1/server/update", { version }),
+  startDowngrade: (version: string) => request<UpdateStatus>("POST", "/v1/server/update/downgrade", { version }),
+  updateLog: (id: string) => request<string[]>("GET", `/v1/server/update/history/${encodeURIComponent(id)}/log`),
   getTls: () => request<TlsStatus>("GET", "/v1/settings/tls"),
   newCertificate: (names: string[]) => request<TlsStatus>("PUT", "/v1/settings/tls", { names }),
   restartPxe: () => request<PxeStatus>("POST", "/v1/pxe/restart"),

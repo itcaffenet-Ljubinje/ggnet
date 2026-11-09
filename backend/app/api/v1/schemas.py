@@ -342,6 +342,7 @@ class SnapshotOut(BaseModel):
     # OS images: signs of an unfinished Windows update ([]: none); None: not checked.
     update: list[str] | None = None
     retention: str | None = None    # what automatic removal does with it, in words
+    last_used_at: datetime | None = None   # when it was last in use (stamped hourly); None: not seen in use
 
 
 class ImageUpdateOut(BaseModel):
@@ -1279,11 +1280,14 @@ class ReleaseOut(BaseModel):
     notes: str
     url: str
     published_at: str
+    installed: bool = False        # the version running now
+    can_downgrade: bool = False    # older, and its database backup is on this server
 
 
 class UpdateJobOut(BaseModel):
     version: str | None
     from_version: str | None = None
+    kind: str = "update"           # update | downgrade
     started_at: str | None
     state: str                     # running, done, failed
     exit: int | None
@@ -1300,6 +1304,23 @@ class UpdateOut(BaseModel):
     reason: str | None = None      # why not
     error: str | None = None       # why GitHub could not be read
     job: UpdateJobOut | None = None
+    releases: list[ReleaseOut] = []          # newest first, with their notes
+    history: list["UpdateHistoryOut"] = []   # newest first
+
+
+class UpdateHistoryOut(BaseModel):
+    """One update or downgrade done from Settings -> Updates."""
+
+    id: str
+    kind: str                      # update | downgrade
+    version: str | None            # to
+    from_version: str | None
+    by: str | None                 # who started it
+    started_at: str | None
+    finished_at: str | None
+    state: str                     # running, done, failed
+    exit: int | None
+    database: str | None = None    # downgrade: the dump put back
 
 
 class UpdateIn(BaseModel):

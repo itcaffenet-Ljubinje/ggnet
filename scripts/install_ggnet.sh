@@ -464,7 +464,7 @@ migrate_database() {
     if [[ "$url" == postgresql* ]] \
         && [[ -n "$(pg -d "$PG_DB" -c "SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'alembic_version'")" ]]; then
         install -d -m 700 "$DB_BACKUPS"
-        dump="$DB_BACKUPS/ggnet-$(date +%Y%m%d%H%M%S).dump"
+        dump="$DB_BACKUPS/ggnet-$(date +%Y%m%d%H%M%S)${PREV_VERSION:+-from-$PREV_VERSION}.dump"
         pg_dump -h /run/postgresql -Fc -f "$dump" "$PG_DB" || die "Backing up the database failed; nothing was changed."
         prune_backups 'ggnet-*.dump'
     fi
@@ -499,6 +499,10 @@ done
 zfs list -H "$DS_ROOT/writebacks" >/dev/null 2>&1 || zfs create -o sync=disabled "$DS_ROOT/writebacks"
 
 # ---------- 9. code + venv (system disk) ----------
+# The version this replaces names the database dump taken before the
+# migrations (10b), so Settings -> Updates can go back to it (downgrade).
+PREV_VERSION="$(tr -d '[:space:]' 2>/dev/null < "$INSTALL_DIR/VERSION" || true)"
+[[ "$PREV_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.]+)?$ ]] || PREV_VERSION=""
 info "Copying ggNet to $INSTALL_DIR..."
 systemctl stop ggnet >/dev/null 2>&1 || true
 mkdir -p "$INSTALL_DIR" "$DATA_DIR"/{tftp,http,logs,agent} "$CONF_DIR"

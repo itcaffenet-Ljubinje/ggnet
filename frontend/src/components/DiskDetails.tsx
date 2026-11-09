@@ -173,6 +173,9 @@ export function DiskDetails({ disk, onChanged, refreshKey, summary, canManage = 
             <tr>
               <th>Version</th>
               <th>Created</th>
+              <th title="When the version was last in use: active, pinned or a PC running on it (checked hourly)">
+                Last used
+              </th>
               <th>Data</th>
               <th>Only in this version</th>
               <th>Used by</th>
@@ -203,6 +206,13 @@ export function DiskDetails({ disk, onChanged, refreshKey, summary, canManage = 
                     )}
                   </td>
                   <td>{new Date(s.created_at).toLocaleString()}</td>
+                  <td className="small">
+                    {s.active || s.machines.length > 0 || s.pinned.length > 0
+                      ? "in use"
+                      : s.last_used_at
+                        ? new Date(s.last_used_at).toLocaleString()
+                        : "—"}
+                  </td>
                   <td>{formatBytes(s.referenced_bytes)}</td>
                   <td>{formatBytes(s.used_bytes)}</td>
                   <td>

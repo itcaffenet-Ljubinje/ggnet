@@ -637,6 +637,7 @@ def list_snapshots(
             locked=bool(v.get("locked")),
             update=v.get("update") if disk.kind is ImageKind.OS else None,
             retention=notes.get(v["name"]),
+            last_used_at=datetime.fromtimestamp(v["last_used"], timezone.utc) if v.get("last_used") else None,
         )
         for v in versions
     ]

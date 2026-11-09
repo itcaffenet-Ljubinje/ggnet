@@ -46,7 +46,11 @@ ggnet-update --version v0.2.0   # a given one
 ```
 
 Before its migrations, an update dumps the database (`pg_dump`) into `/var/lib/ggnet/db-backups` (the
-newest 5 are kept) and puts it back if a migration fails.
+newest 5 are kept, named after the version they were taken from) and puts it back if a migration fails.
+Settings → Updates lists every release with its notes and the updates done on this server with their logs,
+and can go back to a version this server ran before: it puts back the database dumped before the update
+away from that version (whatever was changed since is lost) and installs that release
+(`ggnet-update --version vX.Y.Z --restore-db <dump>`).
 
 The installer and every update also put the release's agent (`ggnet-agent-win-x64.zip`, checked against its
 `.sha256`) into `/var/lib/ggnet/agent`, which Settings → Client app offers to the PCs.

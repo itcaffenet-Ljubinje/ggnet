@@ -95,6 +95,8 @@ Status: **done** (backend and UI), **backend** (API exists, UI missing or partia
 | Network boot, in cards: PXE service (state, restart, boot files), Booting PCs (iBFT gateway, unregistered PCs wait / boot locally), New PCs (name, default game image), Secure Boot (key, certificate, key preparation on PCs); saved values override `[boot]` in config.toml. HTTPS moved to General | done |
 | General: Installation (installed from a release, or a development checkout: DEV mark in the header too) | done |
 | Network boot on/off: off sends every PC to its own disk (server maintenance), a banner says so on every page | done |
+| Updates: every release with its notes, previous updates with who / when / result / log, go back to a version this server ran (database put back from the dump taken before the update away from it) | done |
+| Images → versions: Last used (in use now, or when it last was) | done |
 | Retention: "unused for N days" counts from a version's last use (ggnet:last-used, stamped hourly), not its creation | done |
 | HTTPS (General): addresses in the self-signed certificate (IPs, DNS names) and a new certificate for them; "Download for Windows" .cmd trusts it on an admin PC | done |
 | General: server name, IP, ggNet / Proxmox VE / kernel versions, uptime, database (PostgreSQL or SQLite, size, last backup before an update) | done |
