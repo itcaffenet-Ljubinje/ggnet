@@ -116,7 +116,7 @@ class HostControl:
         self_restart = self.unit is not None and unit == self.unit.removesuffix(".service")
         if self_restart:
             # From a separate unit, a second later: this answer still reaches the browser.
-            cmd = ["systemd-run", "--on-active=2", "--collect", "--quiet",
+            cmd = ["systemd-run", "--on-active=2", "--timer-property=AccuracySec=100ms", "--collect", "--quiet",
                    f"--unit=ggnet-restart-{os.getpid()}", "/bin/systemctl", "restart", f"{unit}.service"]
         else:
             cmd = ["systemctl", "restart", f"{unit}.service"]
@@ -145,7 +145,8 @@ class HostControl:
     def reboot(self, word: str) -> None:
         if word.strip() != REBOOT_WORD:
             raise HostError(f"Type {REBOOT_WORD} to reboot the server")
-        ok, _, err = self.runner.run(["systemd-run", "--on-active=5", "--collect", "--quiet",
+        ok, _, err = self.runner.run(["systemd-run", "--on-active=5", "--timer-property=AccuracySec=100ms",
+                                      "--collect", "--quiet",
                                       "--unit=ggnet-reboot", "/bin/systemctl", "reboot"])
         if not ok:
             raise HostError(f"Cannot reboot the server: {err.strip()}")

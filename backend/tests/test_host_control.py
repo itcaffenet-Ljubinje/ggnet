@@ -95,6 +95,7 @@ def test_reboot_wants_the_word():
     assert not any(c[0] == "systemd-run" for c in runner.calls)
     host.reboot("REBOOT")
     assert runner.calls[-1][:2] == ["systemd-run", "--on-active=5"] and runner.calls[-1][-1] == "reboot"
+    assert "--timer-property=AccuracySec=100ms" in runner.calls[-1]      # not up to a minute late
 
 
 @pytest.fixture
