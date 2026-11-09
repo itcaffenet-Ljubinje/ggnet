@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Download, Lock, RefreshCw, RotateCw, Save, ShieldCheck } from "lucide-react";
+import { CheckCircle2, Download, Lock, Monitor, Network, Plus, RefreshCw, RotateCw, Save, XCircle } from "lucide-react";
 
-import { api, type BootSettings, type BootSettingsOut, type Image, type PxeStatus, type TlsStatus } from "../api";
+import { api, type BootSettings, type BootSettingsOut, type Image, type PxeStatus } from "../api";
 import { useAsyncAction } from "../useAsyncAction";
 import { ErrorBanner } from "./ErrorBanner";
 
@@ -73,143 +73,154 @@ export function NetworkBoot() {
   }
 
   const running = status?.state === "active";
-  const missing = status ? Object.entries(status.files).filter(([, there]) => !there).map(([f]) => f) : [];
 
   return (
-    <div className="card" aria-label="Network boot">
-      <h3 className="card-title">Network boot (PXE)</h3>
+    <>
       <ErrorBanner message={error} onClose={() => setError(null)} />
 
-      {status && (
-        <div className="pxe-status">
-          <span
-            className={`badge ${running ? "badge-provisioned" : status.state === "failed" ? "badge-error" : "badge-warn"}`}
-          >
-            {!status.installed ? "Not installed" : running ? "Running" : status.state === "failed" ? "Failed" : "Stopped"}
-          </span>
-          <span className="mono small">{status.unit}</span>
-          {running && status.since && (
-            <span className="muted small">since {new Date(status.since).toLocaleString()}</span>
-          )}
-          <span className="pxe-actions">
-            <button type="button" className="icon-btn" onClick={refresh} disabled={busy !== null} aria-label="Refresh">
-              <RefreshCw size={14} />
-            </button>
-            <button
-              type="button"
-              className="secondary small"
-              onClick={restart}
-              disabled={busy !== null || !status.installed}
-            >
-              <RotateCw size={13} />
-              {busy === "restart" ? "Restarting…" : "Restart"}
-            </button>
-          </span>
-        </div>
-      )}
-      {status && (
-        <p className="muted small">
-          TFTP {status.tftp_root}:{" "}
-          {Object.entries(status.files).map(([f, there], i) => (
-            <span key={f}>
-              {i > 0 && ", "}
-              <span className={there ? undefined : "error-text"}>
-                {f} {there ? "✓" : "missing"}
-              </span>
+      <div className="card" aria-label="PXE service">
+        <div className="card-head-row">
+          <h3 className="card-title title-with-icon">
+            <Network size={16} aria-hidden /> PXE service
+          </h3>
+          {status && (
+            <span className="pxe-actions">
+              <button type="button" className="icon-btn" onClick={refresh} disabled={busy !== null} aria-label="Refresh">
+                <RefreshCw size={14} />
+              </button>
+              <button
+                type="button"
+                className="secondary small"
+                onClick={restart}
+                disabled={busy !== null || !status.installed}
+              >
+                <RotateCw size={13} />
+                {busy === "restart" ? "Restarting…" : "Restart"}
+              </button>
             </span>
-          ))}
-          {missing.length > 0 && " (run the installer again to put them back)"}
+          )}
+        </div>
+        <p className="muted small">
+          proxyDHCP and TFTP: the router stays the DHCP server, ggNet only tells the PCs what to boot.
         </p>
-      )}
-
-      {status && <SecureBoot status={status} />}
-      <Https />
+        {status && (
+          <dl className="details">
+            <dt>State</dt>
+            <dd>
+              <span
+                className={`badge ${running ? "badge-provisioned" : status.state === "failed" ? "badge-error" : "badge-warn"}`}
+              >
+                {!status.installed ? "Not installed" : running ? "Running" : status.state === "failed" ? "Failed" : "Stopped"}
+              </span>{" "}
+              <span className="mono small">{status.unit}</span>
+              {running && status.since && (
+                <span className="muted small"> · since {new Date(status.since).toLocaleString()}</span>
+              )}
+            </dd>
+            <dt>Boot files</dt>
+            <dd>
+              <ul className="file-checks">
+                {Object.entries(status.files).map(([f, there]) => (
+                  <li key={f} className={there ? undefined : "error-text"}>
+                    {there ? <CheckCircle2 size={13} className="ok-icon" aria-hidden /> : <XCircle size={13} aria-hidden />}
+                    <span className="mono small">{f}</span> {there ? "" : "missing"}
+                  </li>
+                ))}
+              </ul>
+              <span className="muted small">
+                in <span className="mono">{status.tftp_root}</span>
+                {Object.values(status.files).some((there) => !there) && " · run the installer again to put them back"}
+              </span>
+            </dd>
+          </dl>
+        )}
+      </div>
 
       {saved && (
         <form onSubmit={save}>
           {!saved.saved && (
             <p className="small muted">Not saved in the web UI yet: these are the values from config.toml.</p>
           )}
-          <div className="settings-grid">
-            <label>
-              Gateway for Windows (iBFT)
-              <select value={choice} onChange={(e) => setChoice(e.target.value as GatewayChoice)}>
-                <option value="none">None, 0.0.0.0 (recommended)</option>
-                <option value="dhcp">The router's (from DHCP)</option>
-                <option value="ip">Another address…</option>
-              </select>
-              <span className="muted small">
-                With the router's gateway some PCs stopped at 0x7B; Windows gets its internet route anyway.
-              </span>
-            </label>
-            {choice === "ip" && (
+
+          <div className="card" aria-label="Booting PCs">
+            <h3 className="card-title title-with-icon">
+              <Monitor size={16} aria-hidden /> Booting PCs
+            </h3>
+            <div className="form-grid-2 form-stacked">
               <label>
-                Gateway address
-                <input value={ip} onChange={(e) => setIp(e.target.value)} placeholder="e.g. 192.168.0.40" required />
-              </label>
-            )}
-            <label>
-              Unregistered PCs
-              <select
-                value={unregistered}
-                onChange={(e) => setUnregistered(e.target.value as BootSettings["unregistered"])}
-              >
-                <option value="wait">Wait on screen until added</option>
-                <option value="local">Boot from their own disk</option>
-              </select>
-              <span className="muted small">A waiting PC boots as soon as it is added in Machines → New PCs.</span>
-            </label>
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={mokEnroll}
-                onChange={(e) => setMokEnroll(e.target.checked)}
-                disabled={!status?.secure_boot}
-              />
-              Prepare the Secure Boot key on PCs (no USB)
-            </label>
-            {mokEnroll && (
-              <label>
-                MokManager password
-                <input
-                  value={mokPassword}
-                  onChange={(e) => setMokPassword(e.target.value)}
-                  pattern="[a-z0-9]{4,16}"
-                  title="4 to 16 lower-case letters or digits (MokManager's keyboard is US)"
-                  required
-                />
-                <span className="muted small">
-                  The agent of each Boot Mode PC without the key asks for it. At its next boot the blue MokManager
-                  screen opens: Enroll MOK → Continue → Yes, type this password, Reboot. Until then MokManager waits
-                  10 s on every boot, so turn this off when the PCs are done.
+                Gateway for Windows (iBFT)
+                <select value={choice} onChange={(e) => setChoice(e.target.value as GatewayChoice)}>
+                  <option value="none">None, 0.0.0.0 (recommended)</option>
+                  <option value="dhcp">The router's (from DHCP)</option>
+                  <option value="ip">Another address…</option>
+                </select>
+                <span className="form-hint">
+                  With the router's gateway some PCs stopped at 0x7B; Windows gets its internet route anyway.
                 </span>
               </label>
-            )}
-            <h3 className="card-title">New PCs (Add new hardware)</h3>
-            <label>
-              Name
-              <input
-                value={newPcName}
-                onChange={(e) => setNewPcName(e.target.value)}
-                pattern="[A-Za-z0-9-]*\{nn?\}[A-Za-z0-9-]*"
-                title="With {nn} (01, 02 …) or {n} (1, 2 …) for the PC's number, e.g. komp-{nn}"
-                required
-              />
-            </label>
-            <p className="small">
-              Game image:{" "}
-              {defaultGame ? (
-                <span className="strong">{defaultGame.name}</span>
-              ) : (
-                <span className="warn-text">none, register new PCs by hand</span>
-              )}{" "}
-              <span className="muted">
-                (the default game image: Images → ⋮ → Make default). While Add new hardware is open on an image, a PC
-                ggNet does not know yet that boots from the network is registered with this name (the first free
-                number) and the default game image, in Boot Mode on that image, and goes straight through the wizard.
-              </span>
+              <label>
+                Unregistered PCs
+                <select
+                  value={unregistered}
+                  onChange={(e) => setUnregistered(e.target.value as BootSettings["unregistered"])}
+                >
+                  <option value="wait">Wait on screen until added</option>
+                  <option value="local">Boot from their own disk</option>
+                </select>
+                <span className="form-hint">A waiting PC boots as soon as it is added in Machines → New PCs.</span>
+              </label>
+              {choice === "ip" && (
+                <label>
+                  Gateway address
+                  <input value={ip} onChange={(e) => setIp(e.target.value)} placeholder="e.g. 192.168.0.40" required />
+                </label>
+              )}
+            </div>
+          </div>
+
+          <div className="card" aria-label="New PCs">
+            <h3 className="card-title title-with-icon">
+              <Plus size={16} aria-hidden /> New PCs (Add new hardware)
+            </h3>
+            <div className="form-grid-2 form-stacked">
+              <label>
+                Name
+                <input
+                  value={newPcName}
+                  onChange={(e) => setNewPcName(e.target.value)}
+                  pattern="[A-Za-z0-9-]*\{nn?\}[A-Za-z0-9-]*"
+                  title="With {nn} (01, 02 …) or {n} (1, 2 …) for the PC's number, e.g. komp-{nn}"
+                  required
+                />
+                <span className="form-hint">{"{nn}"} = 01, 02 … or {"{n}"} = 1, 2 …: the first free number.</span>
+              </label>
+              <div className="form-stacked-note">
+                <span>Game image</span>
+                {defaultGame ? (
+                  <span className="strong">{defaultGame.name}</span>
+                ) : (
+                  <span className="warn-text">none: register new PCs by hand</span>
+                )}
+                <span className="form-hint">The default game image (Images → ⋮ → Make default).</span>
+              </div>
+            </div>
+            <p className="muted small">
+              While Add new hardware is open on an image, a PC ggNet does not know yet that boots from the network is
+              registered with this name and the default game image, in Boot Mode on that image, and goes straight
+              through the wizard.
             </p>
           </div>
+
+          {status && (
+            <SecureBoot
+              status={status}
+              enroll={mokEnroll}
+              setEnroll={setMokEnroll}
+              password={mokPassword}
+              setPassword={setMokPassword}
+            />
+          )}
+
           <div className="actions-row">
             <button type="submit" disabled={busy !== null}>
               <Save size={14} />
@@ -219,7 +230,7 @@ export function NetworkBoot() {
           </div>
         </form>
       )}
-    </div>
+    </>
   );
 }
 
@@ -227,14 +238,22 @@ export function NetworkBoot() {
  * Secure Boot: shim (signed by Microsoft) starts iPXE signed with the ggNet
  * key. Each PC with Secure Boot on accepts that key once in MokManager.
  */
-function SecureBoot({ status }: { status: PxeStatus }) {
+interface SecureBootProps {
+  status: PxeStatus;
+  enroll: boolean;
+  setEnroll: (on: boolean) => void;
+  password: string;
+  setPassword: (p: string) => void;
+}
+
+function SecureBoot({ status, enroll, setEnroll, password, setPassword }: SecureBootProps) {
   const key = status.secure_boot;
   if (!key) {
     return (
-      <div className="secure-boot" aria-label="Secure Boot">
-        <h4 className="section-title">
-          <Lock size={14} /> Secure Boot
-        </h4>
+      <div className="card" aria-label="Secure Boot">
+        <h3 className="card-title title-with-icon">
+          <Lock size={16} aria-hidden /> Secure Boot
+        </h3>
         <p className="muted small">
           No Secure Boot key on this server yet: run the installer again to make it and sign iPXE.
         </p>
@@ -242,10 +261,10 @@ function SecureBoot({ status }: { status: PxeStatus }) {
     );
   }
   return (
-    <div className="secure-boot" aria-label="Secure Boot">
-      <h4 className="section-title">
-        <Lock size={14} /> Secure Boot
-      </h4>
+    <div className="card" aria-label="Secure Boot">
+      <h3 className="card-title title-with-icon">
+        <Lock size={16} aria-hidden /> Secure Boot
+      </h3>
       <dl className="details">
         <dt>Key</dt>
         <dd>{key.subject}</dd>
@@ -272,57 +291,33 @@ function SecureBoot({ status }: { status: PxeStatus }) {
       <p className="muted small">
         Once per PC: copy the certificate to a FAT32 USB stick, turn Secure Boot on in the BIOS and boot
         from the network. In the blue MokManager screen choose Enroll key from disk, pick ggnet-sb.cer,
-        check that the fingerprint matches, confirm and reboot.
+        check that the fingerprint matches, confirm and reboot. Or, without a USB stick:
       </p>
-    </div>
-  );
-}
-
-/**
- * The web UI's HTTPS: the PCs keep plain HTTP (iPXE, agent), people use
- * HTTPS. A self-signed certificate warns once per browser until it is trusted.
- */
-function Https() {
-  const [tls, setTls] = useState<TlsStatus | null>(null);
-  useEffect(() => {
-    api.getTls().then(setTls).catch(() => setTls(null));
-  }, []);
-  if (!tls) return null;
-  return (
-    <div className="secure-boot" aria-label="HTTPS">
-      <h3 className="card-title title-with-icon">
-        <ShieldCheck size={16} aria-hidden />
-        HTTPS for the web UI
-      </h3>
-      {!tls.enabled ? (
-        <p className="small warn-text">
-          The web UI runs on plain HTTP: run the installer again to set up HTTPS (the PCs stay on HTTP).
+      <div className="form-grid-2 form-stacked">
+        <label className="check">
+          <input type="checkbox" checked={enroll} onChange={(e) => setEnroll(e.target.checked)} />
+          Prepare the Secure Boot key on PCs (no USB)
+        </label>
+        {enroll && (
+          <label>
+            MokManager password
+            <input
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              pattern="[a-z0-9]{4,16}"
+              title="4 to 16 lower-case letters or digits (MokManager's keyboard is US)"
+              required
+            />
+          </label>
+        )}
+      </div>
+      {enroll && (
+        <p className="muted small">
+          The agent of each Boot Mode PC without the key asks for it. At its next boot the blue MokManager screen
+          opens: Enroll MOK → Continue → Yes, type this password, Reboot. Until then MokManager waits 10 s on every
+          boot, so turn this off when the PCs are done.
         </p>
-      ) : (
-        <>
-          <p className="small">
-            The web UI: <span className="mono">{tls.url}</span>. The PCs (iPXE, the agent) keep using plain HTTP;
-            a browser that opens it is sent here.
-          </p>
-          <p className="small muted">
-            {tls.self_signed ? "Self-signed certificate" : "Certificate"} for{" "}
-            <span className="mono">{tls.names.join(", ") || tls.subject}</span>, valid until {tls.not_after}.
-            <br />
-            SHA-256 <span className="mono small">{tls.sha256}</span>
-          </p>
-          {tls.self_signed && (
-            <p className="small muted">
-              The browser warns once about it. To trust it on an admin PC:{" "}
-              <a href="/api/v1/settings/tls/certificate" download="ggnet.crt">
-                <Download size={12} /> download the certificate
-              </a>
-              , open it, Install Certificate → Local Machine → Trusted Root Certification Authorities. Check that the
-              SHA-256 above matches.
-            </p>
-          )}
-        </>
       )}
     </div>
   );
 }
-

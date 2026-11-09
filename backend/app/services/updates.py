@@ -38,6 +38,20 @@ LOG_LINES = 40
 _TAG = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:[.-]([A-Za-z0-9.]+))?$")
 
 
+def development_checkout(cfg: dict[str, Any], app_dir: Path) -> bool:
+    """
+    Whether this ggNet runs from a source checkout (development: updated with
+    git) rather than from an install in `[updates] install_dir` (/opt/ggnet,
+    made by install_ggnet.sh from a release and updated in Settings -> Updates).
+    """
+    install_dir = Path((cfg.get("updates") or {}).get("install_dir") or INSTALL_DIR)
+    try:
+        app_dir.resolve().relative_to(install_dir.resolve())
+    except ValueError:
+        return True
+    return False
+
+
 class UpdateError(Exception):
     """Shown to the admin as is."""
 

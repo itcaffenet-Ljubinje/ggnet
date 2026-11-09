@@ -1327,6 +1327,9 @@ class DatabaseOut(BaseModel):
 class GeneralOut(BaseModel):
     hostname: str
     version: str                     # ggNet
+    install: Literal["installed", "development"]
+    app_dir: str                     # where the running code is (/opt/ggnet/backend on an install)
+    config_file: str
     server_ip: str
     proxmox: str | None
     kernel: str

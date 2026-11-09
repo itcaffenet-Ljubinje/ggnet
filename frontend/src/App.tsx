@@ -136,6 +136,14 @@ function Console({ user, onSignOut }: { user: User; onSignOut: () => void }) {
             </div>
             <span>ggNet</span>
           </div>
+          {health?.install === "development" && (
+            <span
+              className="dev-pill"
+              title={`Development build ${health.version}: runs from a source checkout and is updated with git, not from a release`}
+            >
+              DEV
+            </span>
+          )}
         </div>
 
         <nav className="desktop-nav">

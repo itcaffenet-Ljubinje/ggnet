@@ -5,6 +5,8 @@ export interface Health {
   version: string;
   pool: string;
   server_ip: string;
+  /** "development": runs from a source checkout (git); "installed": from a release in /opt/ggnet. */
+  install?: "installed" | "development";
 }
 
 /** Prepare image's options beyond what every image gets. */
@@ -527,6 +529,9 @@ export interface HostService {
 export interface General {
   hostname: string;
   version: string;
+  install: "installed" | "development";
+  app_dir: string;
+  config_file: string;
   server_ip: string;
   proxmox: string | null;
   kernel: string;

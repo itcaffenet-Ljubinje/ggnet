@@ -284,10 +284,17 @@ def general(db: Session = Depends(get_db), host=Depends(get_host_control), adder
     from app.db.models import Machine
     from app.main import read_version
 
+    import os
+
+    from app.services.updates import development_checkout
+
     cfg = get_config()
     info = host.overview()
+    app_dir = Path(__file__).resolve().parents[3]
     return GeneralOut(
         hostname=info["hostname"], version=read_version(),
+        install="development" if development_checkout(cfg, app_dir) else "installed",
+        app_dir=str(app_dir), config_file=os.environ.get("GGNET_CONFIG", "/etc/ggnet/config.toml"),
         server_ip=str((cfg.get("network") or {}).get("server_ip", "")),
         proxmox=info["proxmox"], kernel=info["kernel"], uptime_seconds=info["uptime_seconds"],
         database=_database(db, Path((cfg.get("paths") or {}).get("data_dir", "/var/lib/ggnet"))),

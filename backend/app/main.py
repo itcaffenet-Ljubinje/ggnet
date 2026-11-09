@@ -153,12 +153,16 @@ app.include_router(boot.router, prefix="/api/v1")
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
+    from app.services.updates import development_checkout
+
     cfg = get_config()
     return {
         "status": "ok",
         "version": app.version,
         "pool": cfg["storage"]["pool"],
         "server_ip": cfg["network"]["server_ip"],
+        # "development": runs from a source checkout (git), not an install in /opt/ggnet.
+        "install": "development" if development_checkout(cfg, Path(__file__).resolve().parents[1]) else "installed",
     }
 
 

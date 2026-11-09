@@ -111,6 +111,7 @@ def test_general_page(client, host_runner):
     client.post("/api/v1/agent/heartbeat", json={"name": "pc01", "agent_version": "0.1.9"})
     got = client.get("/api/v1/server/general").json()
     assert got["proxmox"].startswith("pve-manager/9")
+    assert got["install"] == "development" and got["app_dir"].endswith("backend")
     assert got["guests"] == ["VM 106 ccDISK", "CT 102 dns"]
     assert got["online_pcs"] == ["pc01"] and got["running_tasks"] == []
     assert got["database"]["kind"] in ("sqlite", "postgresql") and got["database"]["size_bytes"] > 0

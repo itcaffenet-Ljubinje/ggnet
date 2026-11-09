@@ -11,6 +11,17 @@ def test_health():
     body = r.json()
     assert body["status"] == "ok"
     assert "pool" in body
+    assert body["install"] == "development"          # the tests run from a checkout, not /opt/ggnet
+
+
+def test_installed_or_development(tmp_path):
+    from pathlib import Path
+
+    from app.services.updates import development_checkout
+
+    assert development_checkout({}, Path("/opt/ggnet/backend")) is False
+    assert development_checkout({}, Path("/root/ggnet/backend")) is True
+    assert development_checkout({"updates": {"install_dir": str(tmp_path)}}, tmp_path / "backend") is False
 
 
 def test_the_access_log_keeps_changes_errors_and_boots_only():

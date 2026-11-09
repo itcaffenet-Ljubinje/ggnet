@@ -4,6 +4,7 @@ import { CheckCircle2, Power, RotateCw, Server, TriangleAlert, XCircle } from "l
 import { api, type General as GeneralInfo, type HostService } from "../api";
 import { formatBytes, formatDuration } from "../format";
 import { ErrorBanner } from "./ErrorBanner";
+import { Https } from "./Https";
 import { Modal } from "./Modal";
 
 const REBOOT_WORD = "REBOOT";
@@ -73,7 +74,31 @@ export function General({ canManage = true }: { canManage?: boolean }) {
               {info.hostname} <span className="mono muted">{info.server_ip}</span>
             </dd>
             <dt>ggNet</dt>
-            <dd>{info.version}</dd>
+            <dd>
+              {info.version}{" "}
+              {info.install === "development" ? (
+                <span className="dev-pill" title="Runs from a source checkout">
+                  DEV
+                </span>
+              ) : (
+                <span className="badge badge-provisioned">installed</span>
+              )}
+            </dd>
+            <dt>Installation</dt>
+            <dd className="small">
+              {info.install === "development" ? (
+                <>
+                  Development: runs from the source checkout <span className="mono">{info.app_dir}</span>, updated
+                  with git (Settings → Updates does not apply).
+                </>
+              ) : (
+                <>
+                  Installed in <span className="mono">{info.app_dir}</span> from a release; updated in Settings →
+                  Updates.
+                </>
+              )}{" "}
+              Config <span className="mono">{info.config_file}</span>
+            </dd>
             <dt>Proxmox VE</dt>
             <dd className="small">{info.proxmox ?? "—"}</dd>
             <dt>Kernel</dt>
@@ -150,6 +175,8 @@ export function General({ canManage = true }: { canManage?: boolean }) {
           </div>
         )}
       </div>
+
+      <Https />
 
       {canManage && info && (
         <div className="card" aria-label="Reboot the server">
