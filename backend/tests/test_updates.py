@@ -178,3 +178,30 @@ def test_a_downgrade_goes_only_down(installed):
     u, _ = installed
     with pytest.raises(upd.UpdateError, match="not older"):
         u.start("v0.2.0", downgrade=True)
+
+
+def test_a_job_is_closed_from_its_own_exit_file_whatever_version_runs_later(client, installed):
+    """After a downgrade the older ggNet never closes the job; the next look at the history does."""
+    u, runner = installed
+    u.start("v0.2.0")
+    entry = u.history()[0]
+    cmd = [c for c in runner.calls if c[0] == "systemd-run"][-1]
+    job_exit = Path(entry["log"]).with_suffix(".exit")
+    assert f"echo $code > {job_exit}" in cmd[-1]
+    # An older version took over: update.json no longer names this job.
+    u.state_file.write_text('{"version": "v0.0.9"}')
+    runner.active = False
+    assert u.history()[0]["state"] == "unknown"           # ended, its result not recorded
+    u._save_history([{**entry, "state": "running"}])
+    job_exit.write_text("0\n")
+    closed = u.history()[0]
+    assert (closed["state"], closed["exit"]) == ("done", 0) and closed["finished_at"]
+    job_exit.write_text("3\n")
+    u._save_history([{**entry, "state": "running"}])
+    assert u.history()[0]["state"] == "failed"
+
+
+def test_a_running_job_stays_running(installed):
+    u, runner = installed
+    u.start("v0.2.0")
+    assert runner.active and u.history()[0]["state"] == "running"

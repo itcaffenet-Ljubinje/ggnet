@@ -261,6 +261,10 @@ function UpdateHistory({ history }: { history: UpdateHistoryEntry[] }) {
                     <span className="badge badge-provisioned">done</span>
                   ) : h.state === "running" ? (
                     <span className="badge badge-blue">running</span>
+                  ) : h.state === "unknown" ? (
+                    <span className="badge" title="It ended under an older ggNet, which did not record how: see the log">
+                      ended
+                    </span>
                   ) : (
                     <span className="badge badge-error">failed{h.exit !== null ? ` (${h.exit})` : ""}</span>
                   )}
