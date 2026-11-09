@@ -1296,3 +1296,53 @@ class UpdateOut(BaseModel):
 class UpdateIn(BaseModel):
     version: str                   # the release tag, e.g. v0.2.0
 
+
+
+# ── Settings -> General (app.services.host_control) ─────────────────
+
+class ServiceOut(BaseModel):
+    unit: str
+    label: str
+    purpose: str
+    state: str                       # active, inactive, failed, … ("unknown" if unreadable)
+    sub_state: str
+    since: datetime | None
+    restartable: bool
+    note: str | None = None
+
+
+class DatabaseBackupOut(BaseModel):
+    name: str
+    size_bytes: int
+    at: datetime
+
+
+class DatabaseOut(BaseModel):
+    kind: str                        # postgresql | sqlite
+    version: str | None
+    size_bytes: int | None
+    backups: list[DatabaseBackupOut]   # newest first: what updates keep in <data_dir>/db-backups
+
+
+class GeneralOut(BaseModel):
+    hostname: str
+    version: str                     # ggNet
+    server_ip: str
+    proxmox: str | None
+    kernel: str
+    uptime_seconds: int | None
+    database: DatabaseOut
+    services: list[ServiceOut]
+    # What a reboot would interrupt:
+    guests: list[str]                # running Proxmox VMs and containers
+    online_pcs: list[str]
+    running_tasks: list[str]
+
+
+class RestartOut(BaseModel):
+    restarting_self: bool            # ggNet itself: the web UI is back in a few seconds
+    services: list[ServiceOut]
+
+
+class RebootIn(BaseModel):
+    confirm: str                     # the word REBOOT

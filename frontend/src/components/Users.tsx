@@ -171,6 +171,9 @@ export function ActivityCard() {
     <div className="card" aria-label="Activity">
       <h3 className="card-title section-title">
         <History size={15} /> Activity
+        <a className="link-btn small card-title-action" href="/api/v1/activity/export.csv" download>
+          Download CSV
+        </a>
       </h3>
       <ErrorBanner message={error} onClose={() => setError(null)} />
       {entries && entries.length === 0 && <p className="muted small">Nothing changed yet.</p>}

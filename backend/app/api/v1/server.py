@@ -8,14 +8,21 @@ cache's maximum.
 from __future__ import annotations
 
 from dataclasses import asdict
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_provisioner, get_server_monitor, get_updates
+from app.api.deps import get_hardware_adder, get_host_control, get_provisioner, get_server_monitor, get_updates
 from app.api.v1.errors import conflict, host_failed
 from app.api.v1.schemas import (
+    DatabaseBackupOut,
+    DatabaseOut,
+    GeneralOut,
+    RebootIn,
+    RestartOut,
+    ServiceOut,
     ReleaseOut,
     UpdateIn,
     UpdateJobOut,
@@ -36,6 +43,10 @@ from app.db.session import get_db
 from app.services import maintenance
 from app.services.provisioning import Provisioner
 from app.services.server_status import GiB, ServerMonitor, arc_limits, disk_device
+
+import logging
+
+logger = logging.getLogger("ggnet.api.server")
 
 router = APIRouter(prefix="/server", tags=["server"])
 
@@ -226,3 +237,94 @@ def start_update(body: UpdateIn, updates=Depends(get_updates)):
         conflict(str(e))
     return _update_out(updates)
 
+
+# ── Settings -> General (app.services.host_control) ──────────────────
+
+def _database(db: Session, data_dir: Path) -> DatabaseOut:
+    from sqlalchemy import text
+
+    engine = db.get_bind()
+    kind, version, size = engine.dialect.name, None, None
+    try:
+        if kind == "postgresql":
+            version = db.execute(text("SHOW server_version")).scalar()
+            size = db.execute(text("SELECT pg_database_size(current_database())")).scalar()
+        elif kind == "sqlite":
+            version = db.execute(text("SELECT sqlite_version()")).scalar()
+            path = engine.url.database
+            size = Path(path).stat().st_size if path and path != ":memory:" else None
+    except Exception as e:                      # only a view: never fail the page for it
+        logger.warning("Reading the database's size failed: %s", e)
+    backups = []
+    folder = data_dir / "db-backups"
+    try:
+        for f in sorted(folder.iterdir(), key=lambda f: f.stat().st_mtime, reverse=True):
+            if f.is_file() and f.name.startswith("ggnet-"):
+                st = f.stat()
+                backups.append(DatabaseBackupOut(name=f.name, size_bytes=st.st_size,
+                                                 at=datetime.fromtimestamp(st.st_mtime, timezone.utc)))
+    except OSError:
+        pass
+    return DatabaseOut(kind=kind, version=str(version) if version else None,
+                       size_bytes=int(size) if size is not None else None, backups=backups[:10])
+
+
+def _services(host) -> list[ServiceOut]:
+    return [ServiceOut(**asdict(s)) for s in host.services()]
+
+
+@router.get("/general", response_model=GeneralOut)
+def general(db: Session = Depends(get_db), host=Depends(get_host_control), adder=Depends(get_hardware_adder)):
+    """This server, its services and what a reboot would interrupt."""
+    from sqlalchemy import select
+
+    from app.api.v1.machines import agent_online
+    from app.api.v1.tasks import tasks
+    from app.config import get_config
+    from app.db.models import Machine
+    from app.main import read_version
+
+    cfg = get_config()
+    info = host.overview()
+    return GeneralOut(
+        hostname=info["hostname"], version=read_version(),
+        server_ip=str((cfg.get("network") or {}).get("server_ip", "")),
+        proxmox=info["proxmox"], kernel=info["kernel"], uptime_seconds=info["uptime_seconds"],
+        database=_database(db, Path((cfg.get("paths") or {}).get("data_dir", "/var/lib/ggnet"))),
+        services=_services(host), guests=host.running_guests(),
+        online_pcs=[m.name for m in db.scalars(select(Machine).order_by(Machine.name)) if agent_online(m)],
+        running_tasks=[t.title for t in tasks(db, adder) if t.status in ("queued", "running")],
+    )
+
+
+@router.post("/services/{unit}/restart", response_model=RestartOut)
+def restart_service(unit: str, host=Depends(get_host_control)):
+    """Restart one of ggNet's services (never the iSCSI target: every PC would lose its disk)."""
+    from app.services.host_control import HostError
+
+    try:
+        self_restart = host.restart(unit)
+    except HostError as e:
+        conflict(str(e))
+    return RestartOut(restarting_self=self_restart, services=[] if self_restart else _services(host))
+
+
+@router.post("/reboot", status_code=202)
+def reboot(body: RebootIn, db: Session = Depends(get_db), host=Depends(get_host_control),
+           adder=Depends(get_hardware_adder)):
+    """
+    Reboot the server in 5 s. It is the Proxmox host: its VMs and containers
+    stop too and every running PC loses its disks. Refused while a backup,
+    restore, copy, import or Add new hardware runs (it would be cut off).
+    """
+    from app.api.v1.tasks import tasks
+    from app.services.host_control import HostError
+
+    running = [t.title for t in tasks(db, adder) if t.status in ("queued", "running")]
+    if running:
+        conflict(f"Wait for {', '.join(running)} to finish (or cancel it) first")
+    try:
+        host.reboot(body.confirm)
+    except HostError as e:
+        conflict(str(e))
+    return {"rebooting_in_seconds": 5}

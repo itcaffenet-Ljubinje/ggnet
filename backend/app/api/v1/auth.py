@@ -5,6 +5,8 @@ password, and, for admins, the users and the activity log.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -176,6 +178,26 @@ def list_activity(limit: int = 200, db: Session = Depends(get_db)):
     """The newest entries of the activity log (admin)."""
     limit = max(1, min(limit, 1000))
     return db.scalars(select(Activity).order_by(Activity.id.desc()).limit(limit)).all()
+
+
+@activity.get("/export.csv")
+def export_activity(limit: int = 10000, db: Session = Depends(get_db)):
+    """The activity log as CSV (newest first), for a spreadsheet or the records."""
+    import csv
+    import io
+
+    limit = max(1, min(limit, 100_000))
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(["time_utc", "user", "action", "status", "ip_address"])
+    for a in db.scalars(select(Activity).order_by(Activity.id.desc()).limit(limit)):
+        # A cell starting with = + - @ is a formula in a spreadsheet: keep it text.
+        action = "'" + a.action if a.action[:1] in "=+-@" else a.action
+        w.writerow([a.at.astimezone(timezone.utc).isoformat(timespec="seconds"), a.username or "",
+                    action, a.status_code, a.ip_address or ""])
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+    return Response(out.getvalue(), media_type="text/csv; charset=utf-8",
+                         headers={"Content-Disposition": f'attachment; filename="ggnet-activity-{stamp}.csv"'})
 
 
 def _secure(request: Request) -> bool:
