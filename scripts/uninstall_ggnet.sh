@@ -80,6 +80,8 @@ echo "ggNet has been removed."
 if [[ -n "$ROOT_DS" ]] && zfs list -H "$ROOT_DS" >/dev/null 2>&1; then
     echo
     echo "ZFS datasets were left untouched: $ROOT_DS"
-    echo "To delete them (IRREVERSIBLE, all images are lost):"
+    echo "To delete them (IRREVERSIBLE, all images are lost), first release ggNet's holds on"
+    echo "the image versions (they keep a version from being deleted by mistake):"
+    echo "   zfs list -H -t snapshot -o name -r $ROOT_DS | xargs -r -n1 zfs release ggnet:protected 2>/dev/null"
     echo "   zfs destroy -r $ROOT_DS"
 fi
