@@ -2,8 +2,17 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { vmConsoleUrl, type Image, type Machine } from "../api";
+import type { Image, Machine } from "../api";
 import { CreateVm, VmControls, VmSettingsCard, vmMemoryLimit } from "./VirtualMachines";
+
+vi.mock("@novnc/novnc", () => ({
+  default: class extends EventTarget {
+    scaleViewport = false;
+    disconnect() {}
+    focus() {}
+    sendCtrlAltDel() {}
+  },
+}));
 
 const HOST = {
   available: true, problem: null, node: "pve1", cpus: 32, memory_mb: 196608,
@@ -25,12 +34,6 @@ function machine(over: Partial<Machine> = {}): Machine {
 }
 
 describe("virtual machines", () => {
-  it("opens the Proxmox console of the VM on the address the browser uses", () => {
-    const url = vmConsoleUrl({ machine_id: 7, vm_id: 104, status: "running", cores: 4, memory_mb: 8192, node: "pve1" },
-      "work-vm", "192.168.0.40");
-    expect(url).toBe("https://192.168.0.40:8006/?console=kvm&novnc=1&vmid=104&vmname=ggnet-work-vm&node=pve1&resize=scale");
-  });
-
   it("keeps the reserved memory for the host", () => {
     expect(vmMemoryLimit(HOST)).toBe(196608 - 16 * 1024);
     expect(vmMemoryLimit({ available: false, problem: "no" })).toBeNull();
@@ -77,7 +80,8 @@ describe("virtual machines", () => {
     expect(JSON.parse((mock.mock.calls[0][1] as RequestInit).body as string)).toEqual({ action: "start" });
     rerender(<VmControls machine={machine()} vm={{ ...vm, status: "running" }} busy={false} run={run}
       reload={async () => undefined} />);
-    expect(screen.getByRole("link", { name: "Console of work-vm" })).toHaveAttribute("target", "_blank");
+    await userEvent.click(screen.getByRole("button", { name: "Console of work-vm" }));
+    expect(await screen.findByRole("dialog", { name: "Console of work-vm" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Start work-vm" })).toBeNull();
     rerender(<VmControls machine={machine()} vm={undefined} busy={false} run={run} reload={async () => undefined} />);
     expect(screen.getByText("VM missing")).toBeInTheDocument();

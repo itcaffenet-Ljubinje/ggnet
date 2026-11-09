@@ -1,10 +1,9 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { lazy, Suspense, useEffect, useState, type FormEvent } from "react";
 import { MonitorPlay, Play, Power, RotateCw, Save, Server, Square, X } from "lucide-react";
 
 import {
   api,
   preselectDisk,
-  vmConsoleUrl,
   type Image,
   type Machine,
   type VmActionKind,
@@ -14,6 +13,9 @@ import {
 import { useAsyncAction } from "../useAsyncAction";
 import { ErrorBanner } from "./ErrorBanner";
 import { Modal } from "./Modal";
+
+// noVNC is loaded only when a console is opened.
+const VmConsole = lazy(() => import("./VmConsole").then((m) => ({ default: m.VmConsole })));
 
 const GB = 1024;
 
@@ -201,6 +203,7 @@ interface VmControlsProps {
 /** Start, console and power buttons of a VM in the Machines list (in place of Wake-on-LAN and the agent's). */
 export function VmControls({ machine: m, vm, busy, run, reload }: VmControlsProps) {
   const running = vm?.status === "running";
+  const [console, setConsole] = useState(false);
 
   async function act(action: VmActionKind) {
     const ask = ASK[action];
@@ -232,16 +235,20 @@ export function VmControls({ machine: m, vm, busy, run, reload }: VmControlsProp
   }
   return (
     <>
-      <a
+      {console && (
+        <Suspense fallback={null}>
+          <VmConsole machine={m} onClose={() => setConsole(false)} />
+        </Suspense>
+      )}
+      <button
+        type="button"
         className="icon-btn"
-        href={vmConsoleUrl(vm, m.name)}
-        target="_blank"
-        rel="noreferrer"
+        onClick={() => setConsole(true)}
         aria-label={`Console of ${m.name}`}
-        title="Console (opens Proxmox; sign in there with a Proxmox account)"
+        title="Console: the VM's screen, keyboard and mouse"
       >
         <MonitorPlay size={14} />
-      </a>
+      </button>
       <button
         type="button"
         className="icon-btn"

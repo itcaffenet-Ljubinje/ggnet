@@ -26,9 +26,12 @@ from __future__ import annotations
 import json
 import logging
 import re
+import secrets
 import socket
+import threading
+import time
 from dataclasses import asdict, dataclass
-from typing import Sequence
+from typing import Callable, Sequence
 
 from sqlalchemy.orm import Session
 
@@ -43,6 +46,8 @@ VM_TARGET = "proxmox-vm"
 VM_IQN_RE = re.compile(r":vm-(\d+)$")
 # Drive per writeback: the OS boots from sata0.
 DRIVES = {"os": "sata0", "game": "sata1"}
+# How long Windows may take to shut down when asked (then qm gives up; the VM keeps running).
+SHUTDOWN_TIMEOUT = 600
 # qm status of a VM that does not exist (removed outside ggNet).
 MISSING = "missing"
 ACTIONS = ("start", "shutdown", "stop", "reset", "reboot")
@@ -99,6 +104,8 @@ class ProxmoxHost:
     def __init__(self, runner):
         self.runner = runner
         self._node: str | None = None
+        # Runs a slow action (a Windows shutdown) without holding up the request.
+        self.spawn: Callable[[Callable[[], None]], None] = _in_thread
 
     def _json(self, *args: str):
         ok, out, _ = self.runner.run(["pvesh", "get", *args, "--output-format", "json"], quiet=True)
@@ -199,7 +206,10 @@ class ProxmoxHost:
         return m.group(1) if m else None
 
     def statuses(self) -> dict[int, dict]:
-        """VM ID -> {status, cpus, memory_mb} of every VM, in one call."""
+        """
+        VM ID -> {status, cpus, memory_mb} of every VM, in one call. Proxmox
+        updates the status here every few seconds; `status()` is live.
+        """
         rows = self._json("/cluster/resources", "--type", "vm") or []
         return {int(r["vmid"]): {"status": r.get("status"), "cpus": int(r.get("maxcpu") or 0),
                                  "memory_mb": int(r.get("maxmem") or 0) // 2**20,
@@ -207,10 +217,23 @@ class ProxmoxHost:
                 for r in rows if isinstance(r, dict) and r.get("vmid") is not None}
 
     def action(self, vmid: int, action: str) -> bool:
-        """start / shutdown (ACPI) / stop / reset / reboot, as a Proxmox task (not waited for)."""
+        """
+        start / stop (power off) / reset are done when this returns. shutdown
+        and reboot ask Windows (ACPI) and are only started: Windows may take
+        minutes, and `qm` waits for it (up to SHUTDOWN_TIMEOUT).
+        """
         if action not in ACTIONS:
             raise ValueError(action)
-        return self.runner.run(["pvesh", "create", f"/nodes/{self.node()}/qemu/{vmid}/status/{action}"])[0]
+        if action in ("start", "stop", "reset"):
+            return self.runner.run(["qm", action, str(vmid)])[0]
+
+        def slow() -> None:
+            cmd = ["qm", action, str(vmid), "--timeout", str(SHUTDOWN_TIMEOUT)]
+            if not self.runner.run(cmd, timeout=SHUTDOWN_TIMEOUT + 60)[0]:
+                logger.warning("VM %s: %s did not finish: %s", vmid, action, self.runner.last_error)
+
+        self.spawn(slow)
+        return True
 
     def set_drives(self, vmid: int, drives: dict[str, str]) -> bool:
         args = ["qm", "set", str(vmid)]
@@ -236,6 +259,10 @@ class ProxmoxHost:
         return self.runner.run(["qm", "destroy", str(vmid), "--purge", "1", "--skiplock", "1"])[0]
 
 
+def _in_thread(work: Callable[[], None]) -> None:
+    threading.Thread(target=work, name="ggnet-vm-action", daemon=True).start()
+
+
 def default_bridge(bridges: list[dict], interface: str | None) -> str | None:
     """ggNet's own interface when it is a bridge, else the host's first bridge."""
     names = [b["name"] for b in bridges]
@@ -250,6 +277,51 @@ def default_storage(storages: list[dict], pool: str) -> str | None:
         if s.get("type") == "zfspool" and str(s.get("pool") or "").split("/")[0] == pool:
             return s["name"]
     return storages[0]["name"] if storages else None
+
+
+# ── Console ───────────────────────────────────────────────────────────
+
+CONSOLE_TICKET_SECONDS = 30
+_PASSWORD_CHARS = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+@dataclass
+class ConsoleTicket:
+    vmid: int
+    password: str          # the VM's VNC password for this one connection (VNC uses 8 characters)
+    expires: float
+
+
+class ConsoleTickets:
+    """
+    One-time tickets for the console: a signed-in admin asks for one, the
+    browser opens the console websocket with it within CONSOLE_TICKET_SECONDS.
+    The websocket itself cannot carry the sign-in, so the ticket is its proof.
+    """
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic):
+        self.clock = clock
+        self._tickets: dict[str, ConsoleTicket] = {}
+        self._lock = threading.Lock()
+
+    def issue(self, vmid: int) -> tuple[str, str]:
+        key = secrets.token_urlsafe(24)
+        password = "".join(secrets.choice(_PASSWORD_CHARS) for _ in range(8))
+        now = self.clock()
+        with self._lock:
+            self._tickets = {k: t for k, t in self._tickets.items() if t.expires > now}
+            self._tickets[key] = ConsoleTicket(vmid, password, now + CONSOLE_TICKET_SECONDS)
+        return key, password
+
+    def take(self, key: str) -> ConsoleTicket | None:
+        with self._lock:
+            t = self._tickets.pop(key, None)
+        return t if t is not None and t.expires > self.clock() else None
+
+
+def console_command(vmid: int) -> list[str]:
+    """VNC of the VM on stdin/stdout; LC_PVE_TICKET (the ticket's password) is its password for 30 s."""
+    return ["qm", "vncproxy", str(vmid)]
 
 
 # ── The VM's drives in place of iSCSI LUNs ────────────────────────────

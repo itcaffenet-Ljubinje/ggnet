@@ -150,6 +150,30 @@ def test_actions_follow_the_vm_state(client, host, disks):
     assert host.vms[100]["status"] == "stopped"
 
 
+def test_shutdown_and_restart_are_asked_of_windows_with_a_timeout(client, host, disks):
+    m = _vm(client, disks)
+    _action(client, m, "start")
+    assert _action(client, m, "reboot").status_code == 200
+    assert ["qm", "reboot", "100", "--timeout", "600"] in host.calls
+    r = client.post(f"/api/v1/machines/{m['id']}/power", json={"action": "shutdown"})
+    assert r.status_code == 200, r.text
+    assert ["qm", "shutdown", "100", "--timeout", "600"] in host.calls
+    assert host.vms[100]["status"] == "stopped"
+
+
+def test_list_shows_the_live_state_not_the_cluster_cache(client, host, disks, monkeypatch):
+    m = _vm(client, disks)
+    _action(client, m, "start")
+    real = host._pvesh
+
+    def stale(args):                              # /cluster/resources still says stopped
+        ok, out, err = real(args)
+        return (ok, out.replace('"running"', '"stopped"'), err) if args[1] == "/cluster/resources" else (ok, out, err)
+
+    monkeypatch.setattr(host, "_pvesh", stale)
+    assert client.get("/api/v1/vms").json()[0]["status"] == "running"
+
+
 def test_power_on_a_vm_starts_it_instead_of_wake_on_lan(client, host, disks):
     m = _vm(client, disks)
     r = client.post(f"/api/v1/machines/{m['id']}/power", json={"action": "on"})
@@ -239,3 +263,54 @@ def test_traffic_skips_vms(client, host, disks):
 def test_vm_routes_refuse_a_pc(client):
     r = client.post("/api/v1/machines", json={"name": "pc1"})
     assert client.post(f"/api/v1/vms/{r.json()['id']}/action", json={"action": "start"}).status_code == 409
+
+
+# ── Console ───────────────────────────────────────────────────────────
+
+def test_console_tickets_are_one_time_and_short_lived():
+    from app.services.vms import ConsoleTickets
+
+    now = [1000.0]
+    t = ConsoleTickets(clock=lambda: now[0])
+    key, password = t.issue(104)
+    assert len(password) == 8                    # VNC passwords are 8 characters
+    assert t.take(key).vmid == 104
+    assert t.take(key) is None                   # used
+    key, _ = t.issue(104)
+    now[0] += 31
+    assert t.take(key) is None                   # expired
+    assert t.take("made-up") is None
+
+
+def test_console_needs_a_running_vm(client, host, disks):
+    m = _vm(client, disks)
+    assert client.post(f"/api/v1/vms/{m['id']}/console").status_code == 409
+
+
+def test_console_websocket_pipes_the_vnc_proxy(client, host, disks, monkeypatch):
+    from starlette.websockets import WebSocketDisconnect
+
+    from app.services import vms
+
+    seen = {}
+
+    def fake_proxy(vmid):
+        seen["vmid"] = vmid
+        # Stands in for `qm vncproxy`: says hello, shows the password it got, echoes the rest.
+        return ["sh", "-c", 'printf "RFB $LC_PVE_TICKET\\n"; exec cat']
+
+    monkeypatch.setattr(vms, "console_command", fake_proxy)
+    m = _vm(client, disks)
+    _action(client, m, "start")
+    r = client.post(f"/api/v1/vms/{m['id']}/console")
+    assert r.status_code == 200, r.text
+    c = r.json()
+    with client.websocket_connect(c["path"], subprotocols=["binary"]) as ws:
+        assert ws.receive_bytes() == f"RFB {c['password']}\n".encode()
+        ws.send_bytes(b"key-press")
+        assert ws.receive_bytes() == b"key-press"
+    assert seen["vmid"] == 100
+    # The ticket was used up.
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(c["path"]) as ws:
+            ws.receive_bytes()

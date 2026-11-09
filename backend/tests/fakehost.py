@@ -103,8 +103,11 @@ class FakeHost:
         vm = self.vms[vmid]
         if verb == "status":
             return self._ok(f"status: {vm['status']}\n")
-        if verb == "stop":
+        if verb in ("stop", "shutdown"):
             vm["status"] = "stopped"
+            return self._ok()
+        if verb in ("start", "reset", "reboot"):
+            vm["status"] = "running"
             return self._ok()
         if verb == "destroy":
             del self.vms[vmid]
@@ -126,13 +129,6 @@ class FakeHost:
             while self.next_vmid in self.vms:
                 self.next_vmid += 1
             return self._ok(f"{self.next_vmid}\n")
-        if verb == "create":
-            parts = path.strip("/").split("/")      # nodes/<node>/qemu/<id>/status/<action>
-            vmid, action = int(parts[3]), parts[5]
-            if vmid not in self.vms:
-                return self._no_vm(vmid)
-            self.vms[vmid]["status"] = "stopped" if action in ("stop", "shutdown") else "running"
-            return self._ok("UPID:pve1:0001:start\n")
         node = f"/nodes/{self.node}"
         if path == "/cluster/status":
             data = [{"type": "cluster", "name": "c"}, {"type": "node", "name": self.node, "local": 1}]

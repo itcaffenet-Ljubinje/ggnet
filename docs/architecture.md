@@ -472,8 +472,11 @@ LUNs on the shared target.
   Cores are limited to the host's threads, memory to the host's less what Settings keeps for the host.
 - Delete detaches the writebacks first, removes them, then `qm destroy --purge` (the EFI and TPM state go with
   the VM). A VM removed in Proxmox counts as off, so its machine can still be deleted.
-- Console: the Proxmox noVNC console in a new tab (Proxmox's own sign-in). Planned: a console inside ggNet and
-  a VM that starts from the network like a PC (only on the bridge ggNet's network boot answers on).
+- Console: noVNC in a ggNet dialog. `POST /vms/{id}/console` (signed in) gives a one-time ticket (30 s) and a
+  random 8-character VNC password; the browser opens `wss://…/api/v1/vm-console/<ticket>` and the backend pipes
+  it to `qm vncproxy <vmid>` with `LC_PVE_TICKET=<password>`. No Proxmox sign-in is needed. Shutdown and Restart
+  ask Windows (`qm shutdown|reboot --timeout 600`) in the background; Start, Power off and Reset are waited for.
+- Planned: a VM that starts from the network like a PC (only on the bridge ggNet's network boot answers on).
 
 ---
 

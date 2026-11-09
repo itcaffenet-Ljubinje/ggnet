@@ -147,6 +147,7 @@ def prov(host: FakeHost) -> Provisioner:
         ISCSIManager(config=ISCSIConfig(portal="192.168.10.1:3260"), runner=host),
     )
     p.zfs.sleep = lambda seconds: None      # destroy()'s busy retries do not wait in tests
+    p.vms.host.spawn = lambda work: work()  # a VM shutdown is waited for in tests
     return p
 
 

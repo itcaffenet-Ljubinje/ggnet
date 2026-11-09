@@ -10,9 +10,12 @@ it; everything about its writebacks is the machine's routes
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
+from functools import lru_cache
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -31,6 +34,14 @@ from app.services.vms import ProxmoxHost, VmSettings
 logger = logging.getLogger("ggnet.api.vms")
 
 router = APIRouter(prefix="/vms", tags=["vms"])
+# The console websocket: no sign-in of its own (a websocket cannot carry the
+# session header); the one-time ticket from POST /vms/{id}/console is the proof.
+console = APIRouter(tags=["vms"])
+
+
+@lru_cache(maxsize=1)
+def get_console_tickets() -> vms.ConsoleTickets:
+    return vms.ConsoleTickets()
 
 
 def get_vm_host(prov: Provisioner = Depends(get_provisioner)) -> ProxmoxHost:
@@ -128,7 +139,10 @@ def list_vms(db: Session = Depends(get_db), host: ProxmoxHost = Depends(get_vm_h
     out = []
     for m in machines:
         vm = live.get(m.vm_id) or {}
-        out.append(VmOut(machine_id=m.id, vm_id=m.vm_id, status=vm.get("status"),
+        # The cluster view lags a few seconds behind a start or stop; ask the VM itself.
+        state = host.status(m.vm_id)
+        out.append(VmOut(machine_id=m.id, vm_id=m.vm_id,
+                         status=None if state in (None, vms.MISSING) else state,
                          cores=vm.get("cpus"), memory_mb=vm.get("memory_mb"),
                          node=vm.get("node") or host.node()))
     return out
@@ -201,7 +215,10 @@ def update_vm(machine_id: int, body: VmUpdate, db: Session = Depends(get_db),
 @router.post("/{machine_id}/action", response_model=MachineOut)
 def vm_action(machine_id: int, body: VmAction, db: Session = Depends(get_db),
               host: ProxmoxHost = Depends(get_vm_host)):
-    """Start, Shutdown (Windows shuts down), Stop (power off), Reset, Reboot; not waited for."""
+    """
+    Start, Stop (power off) and Reset are done when this answers; Shutdown
+    and Reboot (Windows does them) are started and the list shows when the VM is off.
+    """
     m = _get_vm(db, machine_id)
     state = host.status(m.vm_id)
     if state is None:
@@ -228,3 +245,64 @@ def delete_vm(machine_id: int, db: Session = Depends(get_db),
     """The machine with its writebacks and the VM; it must be off (same as DELETE /machines/{id})."""
     _get_vm(db, machine_id)
     return delete_machine(machine_id, db, prov)
+
+
+# ── Console ───────────────────────────────────────────────────────────
+
+@router.post("/{machine_id}/console")
+def open_console(machine_id: int, db: Session = Depends(get_db), host: ProxmoxHost = Depends(get_vm_host),
+                 tickets: vms.ConsoleTickets = Depends(get_console_tickets)):
+    """A one-time ticket for the console websocket of a running VM, and its VNC password."""
+    m = _get_vm(db, machine_id)
+    state = host.status(m.vm_id)
+    if state in (None, vms.MISSING) or state == "stopped":
+        conflict(f"'{m.name}' is not running; start it first")
+    key, password = tickets.issue(m.vm_id)
+    return {"path": f"/api/v1/vm-console/{key}", "password": password,
+            "expires_in": vms.CONSOLE_TICKET_SECONDS}
+
+
+async def _pump_out(proc: asyncio.subprocess.Process, ws: WebSocket) -> None:
+    while chunk := await proc.stdout.read(65536):
+        await ws.send_bytes(chunk)
+
+
+async def _pump_in(proc: asyncio.subprocess.Process, ws: WebSocket) -> None:
+    while True:
+        msg = await ws.receive()
+        if msg["type"] == "websocket.disconnect":
+            return
+        data = msg.get("bytes") or (msg.get("text") or "").encode()
+        proc.stdin.write(data)
+        await proc.stdin.drain()
+
+
+@console.websocket("/vm-console/{key}")
+async def console_socket(ws: WebSocket, key: str, tickets: vms.ConsoleTickets = Depends(get_console_tickets)):
+    """The VM's screen (VNC) for noVNC: bytes both ways between the browser and `qm vncproxy`."""
+    ticket = tickets.take(key)
+    if ticket is None:
+        await ws.close(code=4403, reason="The console ticket is unknown or expired")
+        return
+    offered = ws.scope.get("subprotocols") or []
+    await ws.accept(subprotocol="binary" if "binary" in offered else None)
+    proc = await asyncio.create_subprocess_exec(
+        *vms.console_command(ticket.vmid), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL, env={**os.environ, "LC_PVE_TICKET": ticket.password})
+    logger.info("Console of VM %s opened", ticket.vmid)
+    tasks = [asyncio.create_task(_pump_out(proc, ws)), asyncio.create_task(_pump_in(proc, ws))]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        for t in tasks:
+            t.cancel()
+        if proc.returncode is None:
+            proc.kill()
+        await proc.wait()
+        try:
+            await ws.close()
+        except RuntimeError:
+            pass          # already closed
+        logger.info("Console of VM %s closed", ticket.vmid)

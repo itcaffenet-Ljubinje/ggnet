@@ -794,19 +794,6 @@ export interface VmCreate {
 
 export type VmActionKind = "start" | "shutdown" | "stop" | "reset" | "reboot";
 
-/** The Proxmox console of a VM, in a new browser tab (Proxmox's own sign-in). */
-export function vmConsoleUrl(vm: VmInfo, name: string, host = window.location.hostname): string {
-  const q = new URLSearchParams({
-    console: "kvm",
-    novnc: "1",
-    vmid: String(vm.vm_id),
-    vmname: `ggnet-${name}`,
-    node: vm.node,
-    resize: "scale",
-  });
-  return `https://${host}:8006/?${q.toString()}`;
-}
-
 /** A PC that knocked (iPXE or its agent) but is not registered yet. */
 export interface Discovered {
   id: number;
@@ -1102,6 +1089,9 @@ export const api = {
   updateVm: (id: number, body: { cores?: number; memory_mb?: number }) =>
     request<Machine>("PATCH", `/v1/vms/${id}`, body),
   vmAction: (id: number, action: VmActionKind) => request<Machine>("POST", `/v1/vms/${id}/action`, { action }),
+  /** A one-time ticket for the console websocket and the VM's VNC password for it. */
+  openVmConsole: (id: number) =>
+    request<{ path: string; password: string; expires_in: number }>("POST", `/v1/vms/${id}/console`),
 
   listDiscovered: () => request<Discovered[]>("GET", "/v1/discovery"),
   claimDiscovered: (id: number, body: DiscoveryClaim) =>
