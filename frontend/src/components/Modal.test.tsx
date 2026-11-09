@@ -43,4 +43,22 @@ describe("Modal", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(opener).toHaveFocus();
   });
+
+  it("with a dialog opened from another, Escape closes only the top one", async () => {
+    const outer = vi.fn();
+    const inner = vi.fn();
+    render(
+      <>
+        <Modal label="Details" onClose={outer}>
+          <button type="button">In details</button>
+        </Modal>
+        <Modal label="Copy" onClose={inner}>
+          <button type="button">In copy</button>
+        </Modal>
+      </>,
+    );
+    await userEvent.keyboard("{Escape}");
+    expect(inner).toHaveBeenCalledTimes(1);
+    expect(outer).not.toHaveBeenCalled();
+  });
 });

@@ -190,7 +190,7 @@ describe("ImagesPage", () => {
     ]);
   });
 
-  it("opens an image's details page from its name or the menu, and goes back", async () => {
+  it("opens an image's details in a dialog over the list, from its name or the menu", async () => {
     stubFetch(200, []);
     render(
       <ImagesPage
@@ -200,10 +200,15 @@ describe("ImagesPage", () => {
       />,
     );
     await userEvent.click(screen.getByRole("button", { name: "cs2" }));
-    expect(screen.getByRole("heading", { level: 2, name: "cs2" })).toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: "Snapshots" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Writebacks" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Images" }));
+    const dialog = screen.getByRole("dialog", { name: "Image cs2" });
+    expect(within(dialog).getByRole("heading", { level: 2, name: "cs2" })).toBeInTheDocument();
+    expect(await within(dialog).findByRole("heading", { name: "Snapshots" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("heading", { name: "Writebacks" })).toBeInTheDocument();
+    // The list stays behind it; there is no back button, the dialog closes.
+    expect(screen.getByText("draft")).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await userEvent.keyboard("{Escape}");
     await menu("draft", "Details");
     expect(screen.getByText(/A draft has no snapshots or writebacks yet/)).toBeInTheDocument();
   });

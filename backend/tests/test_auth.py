@@ -124,6 +124,9 @@ def test_staff_may_only_power_pcs(anon_client, tmp_path):
     r = anon_client.post("/api/v1/machines/bulk", json={"machine_ids": [m["id"]], "action": "assign",
                                                        "game_image_id": None})
     assert r.status_code == 403
+    for action in ("hide", "discard", "delete"):
+        r = anon_client.post("/api/v1/machines/bulk", json={"machine_ids": [m["id"]], "action": action})
+        assert r.status_code == 403, action
     # Power is theirs (pc01 has no MAC, so turning it on fails, but not for want of rights).
     r = anon_client.post(f"/api/v1/machines/{m['id']}/power", json={"action": "on"})
     assert r.status_code not in (401, 403), r.text

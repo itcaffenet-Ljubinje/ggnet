@@ -250,6 +250,9 @@ class Machine(Base):
     # Writeback lifecycle: the server discards the writeback
     # after every disconnect unless keep_writeback is set.
     keep_writeback: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Kept out of the Machines list (Show hidden lists it), e.g. while it is
+    # repaired; it still boots and reports like any other PC.
+    hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa_false())
     # The client wrote (was connected) since the clone was made; a clean
     # clone is never discarded again.
     writeback_dirty: Mapped[bool] = mapped_column(Boolean, default=False)

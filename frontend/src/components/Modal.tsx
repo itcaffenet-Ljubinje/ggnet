@@ -32,6 +32,9 @@ export function Modal({ label, onClose, className = "", closeOnBackdrop = false,
     }
     function key(e: KeyboardEvent) {
       if (!node) return;
+      // A dialog opened from this one (e.g. Copy from an image's details) owns the keys.
+      const open = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
+      if (open[open.length - 1] !== node) return;
       if (e.key === "Escape") {
         e.stopPropagation();
         close.current();

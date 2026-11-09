@@ -632,6 +632,91 @@ describe("MachinesPage", () => {
         { url: "/api/v1/machines/bulk", method: "POST", body: { machine_ids: [1, 2], action: "pin", snapshot: "base" } },
       ]);
     });
+
+    it("hides, discards and deletes the selected PCs; PCs that keep their writeback are named", async () => {
+      const fetchMock = stubFetch(200, []);
+      const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+      const kept = [three[0], { ...three[1], keep_writeback: true }];
+      render(<MachinesPage disks={DISKS} machines={kept} reload={vi.fn().mockResolvedValue(undefined)} />);
+      await userEvent.click(screen.getByLabelText("Select all machines"));
+      const bar = screen.getByLabelText("Bulk actions");
+
+      await userEvent.click(within(bar).getByRole("button", { name: "Hide" }));
+      await userEvent.click(within(bar).getByRole("button", { name: "Discard writebacks" }));
+      expect(confirm.mock.calls[0][0]).toContain('"Keep writeback" ON are not touched: pc02');
+      await userEvent.click(within(bar).getByRole("button", { name: "Delete" }));
+      await userEvent.selectOptions(within(bar).getByLabelText("Mode for selected"), "boot");
+      await userEvent.click(within(bar).getAllByRole("button", { name: "Apply" }).at(-1)!);
+
+      expect(actions(fetchMock).map((c) => [c.body.action, c.body.mode])).toEqual([
+        ["hide", undefined], ["discard", undefined], ["delete", undefined], ["mode", "boot"],
+      ]);
+    });
+
+    it("sets the OS image of the selected Boot Mode PCs; no OS image select for Disk Mode only", async () => {
+      const fetchMock = stubFetch(200, []);
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      const pcs = [
+        machine({ id: 1, name: "pc01", mode: "boot", game_image_id: 1, os_image_id: 3 }),
+        machine({ id: 2, name: "pc02", game_image_id: 1 }),
+      ];
+      render(<MachinesPage disks={[...DISKS, OS_IMAGE]} machines={pcs} reload={vi.fn().mockResolvedValue(undefined)} />);
+      await userEvent.click(screen.getByLabelText("Select pc02"));
+      expect(screen.queryByLabelText("OS image for selected")).toBeNull();
+      await userEvent.click(screen.getByLabelText("Select pc01"));
+      const bar = screen.getByLabelText("Bulk actions");
+      await userEvent.selectOptions(within(bar).getByLabelText("OS image for selected"), "3");
+      await userEvent.click(within(bar).getAllByRole("button", { name: "Apply" })[0]);
+      expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("1 Disk Mode PC(s) in the selection are left"));
+      expect(actions(fetchMock)).toEqual([
+        { url: "/api/v1/machines/bulk", method: "POST", body: { machine_ids: [2, 1], action: "assign_os", os_image_id: 3 } },
+      ]);
+    });
+
+    it("cannot delete while a selected PC is on", async () => {
+      render(<MachinesPage disks={DISKS} machines={[{ ...three[0], last_seen_at: new Date().toISOString() }]}
+                           reload={vi.fn()} />);
+      await userEvent.click(screen.getByLabelText("Select pc01"));
+      expect(within(screen.getByLabelText("Bulk actions")).getByRole("button", { name: "Delete" })).toBeDisabled();
+    });
+  });
+
+  it("keeps hidden PCs out of the list and its counts until Show hidden", async () => {
+    const machines = [machine({ id: 1, name: "pc01" }), machine({ id: 2, name: "pc02", hidden: true })];
+    render(<MachinesPage disks={DISKS} machines={machines} reload={vi.fn()} />);
+    expect(screen.queryByText("pc02")).toBeNull();
+    expect(screen.getByRole("button", { name: "All (1)" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Show hidden (1)" }));
+    expect(screen.getByText("pc02")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All (2)" })).toBeInTheDocument();
+    expect(screen.getByTitle("Hidden: shown only with Show hidden")).toBeInTheDocument();
+  });
+
+  it("cannot delete a PC that is on", () => {
+    render(<MachinesPage disks={DISKS} machines={[machine({ last_seen_at: new Date().toISOString() })]} reload={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Delete pc01" })).toBeDisabled();
+  });
+
+  it("chooses the columns and remembers them", async () => {
+    window.localStorage.clear();
+    const on = machine({ last_seen_at: new Date().toISOString(), link_speed_mbps: 1000,
+                         booted_at: new Date(Date.now() - 2 * 3600_000).toISOString() });
+    const { unmount } = render(<MachinesPage disks={DISKS} machines={[on]} reload={vi.fn()} />);
+    expect(screen.queryByRole("columnheader", { name: "Uptime" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Columns" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Uptime" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Link speed" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "MAC" }));
+    expect(screen.getByRole("columnheader", { name: "Uptime" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "MAC" })).toBeNull();
+    expect(screen.getByText("1 Gbit/s")).toBeInTheDocument();
+    unmount();
+
+    render(<MachinesPage disks={DISKS} machines={[on]} reload={vi.fn()} />);
+    expect(screen.getByRole("columnheader", { name: "Link" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "MAC" })).toBeNull();
+    window.localStorage.clear();
   });
 
   it("staff see the PCs and use the power controls, but no admin control", async () => {

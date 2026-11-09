@@ -101,3 +101,64 @@ def test_bulk_validation(client, body):
 def test_each_machine_once(client, wol):
     (a,) = _machines(client, "pc01", mac="aa:bb:cc:dd:ee:01")
     assert len(_bulk(client, [a["id"], a["id"]], "on")) == 1 and wol == ["aa:bb:cc:dd:ee:01"]
+
+
+def test_hide_show_and_mode(client):
+    a, b = _machines(client, "pc01", "pc02")
+    assert all(r["ok"] for r in _bulk(client, [a["id"], b["id"]], "hide"))
+    assert [m["hidden"] for m in client.get("/api/v1/machines").json()] == [True, True]
+    _bulk(client, [a["id"]], "show")
+    assert [m["hidden"] for m in client.get("/api/v1/machines").json()] == [False, True]
+    assert all(r["ok"] for r in _bulk(client, [a["id"], b["id"]], "mode", mode="boot"))
+    assert {m["mode"] for m in client.get("/api/v1/machines").json()} == {"boot"}
+
+
+def test_mode_needs_a_mode_and_no_disk(client, disk):
+    (a,) = _machines(client, "pc01", game_image_id=disk["id"])
+    r = client.post("/api/v1/machines/bulk", json={"machine_ids": [a["id"]], "action": "mode"})
+    assert r.status_code == 422
+    (res,) = _bulk(client, [a["id"]], "mode", mode="boot")
+    assert not res["ok"] and "no disk" in res["error"]
+
+
+def test_discard_leaves_kept_writebacks_and_running_pcs_alone(client, host, disk):
+    a, b, c = _machines(client, "pc01", "pc02", "pc03", game_image_id=disk["id"])
+    client.put(f"/api/v1/machines/{b['id']}/keep-writeback", json={"enabled": True})
+    host.sessions.add(c["initiator_iqn"])
+    results = {r["name"]: r for r in _bulk(client, [a["id"], b["id"], c["id"]], "discard")}
+    assert results["pc01"]["ok"]
+    assert not results["pc02"]["ok"] and "keeps its writeback" in results["pc02"]["error"]
+    assert not results["pc03"]["ok"] and "still connected" in results["pc03"]["error"]
+
+
+def test_delete_skips_pcs_that_are_on(client, disk):
+    a, b = _machines(client, "pc01", "pc02", game_image_id=disk["id"])
+    _beat(client, "pc02")
+    results = {r["name"]: r for r in _bulk(client, [a["id"], b["id"]], "delete")}
+    assert results["pc01"]["ok"]
+    assert not results["pc02"]["ok"] and "shut it down first" in results["pc02"]["error"]
+    assert [m["name"] for m in client.get("/api/v1/machines").json()] == ["pc02"]
+
+
+def test_assign_os_image_to_boot_mode_pcs(client, disk):
+    win = client.post("/api/v1/images", json={"name": "win11", "size_gb": 10, "kind": "os"}).json()
+    client.post(f"/api/v1/images/{win['id']}/publish")
+    win2 = client.post("/api/v1/images", json={"name": "win11b", "size_gb": 10, "kind": "os"}).json()
+    client.post(f"/api/v1/images/{win2['id']}/publish")
+    a, b = _machines(client, "pc01", "pc02", mode="boot", game_image_id=disk["id"], os_image_id=win["id"])
+    (c,) = _machines(client, "pc03", game_image_id=disk["id"])
+    (d,) = _machines(client, "pc04", mode="boot")
+
+    results = {r["name"]: r for r in _bulk(client, [a["id"], b["id"], c["id"], d["id"]], "assign_os",
+                                           os_image_id=win2["id"])}
+    assert results["pc01"]["ok"] and results["pc02"]["ok"], results
+    assert not results["pc03"]["ok"] and "Disk Mode" in results["pc03"]["error"]
+    assert not results["pc04"]["ok"] and "needs a game image" in results["pc04"]["error"]
+    pcs = {m["name"]: m for m in client.get("/api/v1/machines").json()}
+    assert (pcs["pc01"]["os_image_id"], pcs["pc01"]["game_image_id"]) == (win2["id"], disk["id"])
+
+
+def test_assign_os_needs_an_image(client):
+    (a,) = _machines(client, "pc01", mode="boot")
+    r = client.post("/api/v1/machines/bulk", json={"machine_ids": [a["id"]], "action": "assign_os"})
+    assert r.status_code == 422

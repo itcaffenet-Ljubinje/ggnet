@@ -32,6 +32,7 @@ export function machine(overrides: Partial<Machine> = {}): Machine {
     reported_ip: null,
     reported_mac: null,
     link_speed_mbps: null,
+    hidden: false,
     hardware: null,
     status: "idle",
     last_error: null,
