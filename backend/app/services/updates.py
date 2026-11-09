@@ -209,11 +209,47 @@ class Updates:
     # ── History ──
 
     def history(self) -> list[dict]:
+        """
+        Every update and downgrade, newest first. One that has ended is closed
+        here from its own exit file (update-<id>.exit, next to its log), so it
+        is closed whatever version runs now: after a downgrade the older
+        ggNet never closes what the newer one started.
+        """
         try:
             items = json.loads(self.history_file.read_text())
         except (OSError, ValueError):
             return []
-        return items if isinstance(items, list) else []
+        if not isinstance(items, list):
+            return []
+        changed = False
+        current = self._current_id()
+        busy: bool | None = None                # asked of systemd at most once
+        for e in items:
+            if not isinstance(e, dict) or e.get("state") != "running" or not e.get("log"):
+                continue
+            exit_file = Path(e["log"]).with_suffix(".exit")
+            try:
+                code = int(exit_file.read_text().strip())
+                ended = datetime.fromtimestamp(exit_file.stat().st_mtime, timezone.utc).isoformat(timespec="seconds")
+            except (OSError, ValueError):
+                if busy is None:
+                    busy = self.running()
+                if e.get("id") == current or busy:
+                    continue
+                # Ended without its own exit file (started by an older ggNet, or killed).
+                code, ended = None, None
+            e.update(state="done" if code == 0 else ("failed" if code is not None else "unknown"),
+                     exit=code, finished_at=ended)
+            changed = True
+        if changed:
+            self._save_history(items)
+        return items
+
+    def _current_id(self) -> str | None:
+        try:
+            return json.loads(self.state_file.read_text()).get("id")
+        except (OSError, ValueError, AttributeError):
+            return None
 
     def _save_history(self, items: list[dict]) -> None:
         tmp = self.history_file.with_suffix(".tmp")
@@ -257,7 +293,11 @@ class Updates:
         status = self.state_file.with_suffix(".exit")
         status.unlink(missing_ok=True)
         args = f"--version {tag}" + (f" --restore-db {dump}" if dump else "")
-        script = (f"{UPDATER} {args} > {log} 2>&1; echo $? > {status}; ln -sf {log.name} {self.log_file}")
+        # The exit code goes next to the job's own log too: the history closes the
+        # job from it even when another version of ggNet runs afterwards.
+        job_exit = log.with_suffix(".exit")
+        script = (f"{UPDATER} {args} > {log} 2>&1; code=$?; echo $code > {job_exit}; echo $code > {status}; "
+                  f"ln -sf {log.name} {self.log_file}")
         ok, _, err = self.runner.run(["systemd-run", f"--unit={UNIT}", "--collect", "--quiet",
                                       "--description=ggNet update", "/bin/bash", "-c", script])
         if not ok:

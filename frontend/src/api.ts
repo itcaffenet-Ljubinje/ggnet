@@ -441,7 +441,8 @@ export interface UpdateHistoryEntry {
   by: string | null;
   started_at: string | null;
   finished_at: string | null;
-  state: "running" | "done" | "failed";
+  /** unknown: it ended, but under an older ggNet that did not record how. */
+  state: "running" | "done" | "failed" | "unknown";
   exit: number | null;
   database: string | null;
 }
