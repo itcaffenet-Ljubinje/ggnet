@@ -164,6 +164,7 @@ describe("SettingsPage", () => {
       "Storage",
       "Network boot",
       "Hardware scan",
+      "Virtual machines",
       "Client app",
       "Users",
       "Updates",

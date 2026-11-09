@@ -727,8 +727,84 @@ export interface Machine {
   session_active: boolean | null;
   session_changed_at: string | null;
   booted_at: string | null;
+  /** A virtual machine on this Proxmox host (its writebacks are its drives); absent/null for a PC. */
+  vm_id?: number | null;
   created_at: string;
   updated_at: string;
+}
+
+/** Live state of a VM machine, read from Proxmox. */
+export interface VmInfo {
+  machine_id: number;
+  vm_id: number;
+  /** running / stopped / null: the VM cannot be read or is gone */
+  status: string | null;
+  cores: number | null;
+  memory_mb: number | null;
+  node: string;
+}
+
+export interface VmBridge {
+  name: string;
+  cidr: string | null;
+  ports: string | null;
+  active: boolean;
+  comments: string | null;
+}
+
+export interface VmStorage {
+  name: string;
+  type: string | null;
+  pool: string | null;
+  avail: number | null;
+}
+
+export interface VmSettings {
+  /** null: chosen automatically (ggNet's own interface, else the first bridge) */
+  bridge: string | null;
+  /** null: a storage on ggNet's pool, else the first one for VM disks */
+  storage: string | null;
+  reserved_memory_gb: number;
+}
+
+/** Whether VMs can be made on this host, and what it offers. */
+export interface VmHost {
+  available: boolean;
+  problem: string | null;
+  node?: string;
+  cpus?: number;
+  memory_mb?: number;
+  bridges?: VmBridge[];
+  storages?: VmStorage[];
+  /** What new VMs get now (the setting, or the automatic choice). */
+  bridge?: string | null;
+  storage?: string | null;
+  settings?: VmSettings;
+  service_interface?: string | null;
+}
+
+export interface VmCreate {
+  name: string;
+  os_image_id: number;
+  game_image_id: number;
+  cores: number;
+  memory_mb: number;
+  keep_writeback: boolean;
+}
+
+export type VmActionKind = "start" | "shutdown" | "stop" | "reset" | "reboot";
+
+/** The Proxmox console of a VM, in a new browser tab (Proxmox's own sign-in). */
+export function vmConsoleUrl(vm: VmInfo, name: string, host = window.location.hostname): string {
+  const q = new URLSearchParams({
+    console: "kvm",
+    novnc: "1",
+    vmid: String(vm.vm_id),
+    vmname: `ggnet-${name}`,
+    node: vm.node,
+    resize: "scale",
+  });
+  return `https://${host}:8006/?${q.toString()}`;
 }
 
 /** A PC that knocked (iPXE or its agent) but is not registered yet. */
@@ -1018,6 +1094,14 @@ export const api = {
     request<Machine>("POST", `/v1/machines/${id}/power`, { action }),
   discardWriteback: (id: number) => request<Machine>("POST", `/v1/machines/${id}/discard-writeback`),
   deleteMachine: (id: number) => request<void>("DELETE", `/v1/machines/${id}`),
+
+  vmHost: () => request<VmHost>("GET", "/v1/vms/host"),
+  saveVmSettings: (s: VmSettings) => request<{ ok: boolean }>("PUT", "/v1/vms/settings", s),
+  listVms: () => request<VmInfo[]>("GET", "/v1/vms"),
+  createVm: (body: VmCreate) => request<Machine>("POST", "/v1/vms", body),
+  updateVm: (id: number, body: { cores?: number; memory_mb?: number }) =>
+    request<Machine>("PATCH", `/v1/vms/${id}`, body),
+  vmAction: (id: number, action: VmActionKind) => request<Machine>("POST", `/v1/vms/${id}/action`, { action }),
 
   listDiscovered: () => request<Discovered[]>("GET", "/v1/discovery"),
   claimDiscovered: (id: number, body: DiscoveryClaim) =>

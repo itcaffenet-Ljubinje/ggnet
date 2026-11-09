@@ -450,6 +450,31 @@ in the image itself, not per PC.
 
 Disk Mode PC that PXE-boots by mistake: the same `exit` script, so it falls through to its local disk.
 
+### Virtual machines for working on images
+
+Machines → Create VM makes a Proxmox VM on the ggNet host (`qm`, `pvesh`; app.services.vms) that is a machine
+like a PC in Boot Mode: it gets an OS writeback and a game writeback, Windows in it is personalized with its
+name, its writebacks are discarded when it is off (unless it keeps them) and Apply Writebacks turns them into
+the images' next versions. The difference is where the writebacks are exposed: the VM's local drives instead of
+LUNs on the shared target.
+
+- The machine's initiator IQN is `<iqn_prefix>:vm-<vmid>`; the Provisioner sends such a machine's attach /
+  remove / session calls to `VmDisks` instead of the iSCSI manager: attach = `qm set --sata0 <os writeback>
+  --sata1 <game writeback> --boot order=sata0`, remove = `qm set --delete sata0,sata1`, "logged in" = the VM is
+  not stopped. Every rule that waits for a PC to be off (discard, apply, rename, delete) works unchanged.
+- The VM: q35, OVMF with the Secure Boot keys enrolled (`efidisk0 …,pre-enrolled-keys=1`), TPM 2.0
+  (`tpmstate0 …,version=v2.0`), `cpu host`, no ballooning, an e1000e card. Proxmox gives the MAC; it is the
+  machine's MAC.
+- Nothing about the host is assumed. The node name comes from `/cluster/status`, the VM ID from
+  `/cluster/nextid`, the bridge and the storage for the EFI and TPM state from what the host has (Settings →
+  Virtual machines; automatic: ggNet's own interface when it is a bridge, else the first bridge; a ZFS storage
+  on ggNet's pool, else the first storage for VM disks). ggNet never creates or changes bridges or storages.
+  Cores are limited to the host's threads, memory to the host's less what Settings keeps for the host.
+- Delete detaches the writebacks first, removes them, then `qm destroy --purge` (the EFI and TPM state go with
+  the VM). A VM removed in Proxmox counts as off, so its machine can still be deleted.
+- Console: the Proxmox noVNC console in a new tab (Proxmox's own sign-in). Planned: a console inside ggNet and
+  a VM that starts from the network like a PC (only on the bridge ggNet's network boot answers on).
+
 ---
 
 ## 5. Web UI
@@ -509,7 +534,7 @@ network throughput of the iSCSI interface.
 | Boot Mode: Apply Writebacks for the OS image (OS only / game only / both), watcher boot window after iPXE | done |
 | Boot Mode: fixed IPv4 → DHCP and old drive letters forgotten in each OS writeback; agent hides local disks | done |
 | Boot Mode: agent installed into the OS image by the server | planned |
-| Maintenance VM: the installer offers one Proxmox VM (UEFI, TPM, no disk, stopped; its ID in config.toml); Images → OS image → Edit in VM attaches the image, Finish makes a new version | planned |
+| Maintenance VM: replaced by Virtual machines (Machines → Create VM, section 4): a VM is a machine whose writebacks are its drives | done |
 | Boot Mode: first diskless boot on real PCs (dev dnsmasq + `snponly.efi`, 4 PCs, 2 board types) | done |
 | Boot Mode: proxyDHCP / TFTP set up by the installer (`ggnet-pxe`, answers every PC); unregistered PCs wait for registration | done |
 | Boot Mode: import `.vhdx` into an OS image (new GUIDs, boot-start iSCSI, NDIS NIC driver), Add new hardware wizard, Secure Boot (shim + MOK) | planned |

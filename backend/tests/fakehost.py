@@ -37,6 +37,15 @@ class FakeHost:
         self.lio_batch_missing = False                  # rtslib-fb not installed
         self.copy_bytes = 1000                          # size of a `zfs send` stream
         self.image_files: dict[str, int] = {}           # path -> virtual size, for qemu-img
+        # Proxmox: VM ID -> {"status": ..., "config": {option: value}}
+        self.vms: dict[int, dict] = {}
+        self.next_vmid = 100
+        self.node = "pve1"
+        self.host_cpus, self.host_memory = 32, 192 << 30
+        self.bridges = [{"iface": "vmbr0", "cidr": "192.168.0.10/24", "active": 1},
+                        {"iface": "vmbr1", "cidr": "10.0.0.1/24", "active": 1}]
+        self.storages = [{"storage": "local-zfs", "type": "zfspool", "pool": "rpool/data"},
+                         {"storage": "tank-vm", "type": "zfspool", "pool": "tank/vm"}]
 
     # ── Runner interface ──────────────────────────────────────────────
 
@@ -52,6 +61,10 @@ class FakeHost:
             return self._targetcli(cmd[1:])
         if cmd[0] == "udevadm":
             return self._ok()
+        if cmd[0] == "qm":
+            return self._qm(cmd[1:])
+        if cmd[0] == "pvesh":
+            return self._pvesh(cmd[1:])
         if cmd[:2] == ["qemu-img", "info"]:
             path = cmd[-1]
             if path not in self.image_files:
@@ -64,6 +77,85 @@ class FakeHost:
                 return self._cat_stats(cmd[1:])
             return self._cat(cmd[1])
         raise AssertionError(f"FakeHost does not know command: {cmd}")
+
+    # ── Proxmox (qm, pvesh) ───────────────────────────────────────────
+
+    def add_vm(self, vmid: int, status: str = "stopped", **config: str) -> None:
+        self.vms[vmid] = {"status": status, "config": dict(config)}
+
+    def _no_vm(self, vmid: int):
+        return self._err(f"Configuration file 'nodes/{self.node}/qemu-server/{vmid}.conf' does not exist")
+
+    def _qm(self, args: list[str]):
+        verb, vmid = args[0], int(args[1])
+        opts = args[2:]
+        if verb == "create":
+            if vmid in self.vms:
+                return self._err(f"VM {vmid} already exists")
+            config = dict(zip((o[2:] for o in opts[::2]), opts[1::2]))
+            if "net0" in config and "=" not in config["net0"].split(",")[0]:
+                model, _, rest = config["net0"].partition(",")
+                config["net0"] = f"{model}=BC:24:11:00:00:{vmid % 256:02X},{rest}"
+            self.vms[vmid] = {"status": "stopped", "config": config}
+            return self._ok()
+        if vmid not in self.vms:
+            return self._no_vm(vmid)
+        vm = self.vms[vmid]
+        if verb == "status":
+            return self._ok(f"status: {vm['status']}\n")
+        if verb == "stop":
+            vm["status"] = "stopped"
+            return self._ok()
+        if verb == "destroy":
+            del self.vms[vmid]
+            return self._ok()
+        if verb == "set":
+            pairs = list(zip(opts[::2], opts[1::2]))
+            for key, value in pairs:
+                if key == "--delete":
+                    for k in value.split(","):
+                        vm["config"].pop(k, None)
+                elif key != "--skiplock":
+                    vm["config"][key[2:]] = value
+            return self._ok()
+        raise AssertionError(f"FakeHost does not know qm {verb}")
+
+    def _pvesh(self, args: list[str]):
+        verb, path = args[0], args[1]
+        if verb == "get" and path == "/cluster/nextid":
+            while self.next_vmid in self.vms:
+                self.next_vmid += 1
+            return self._ok(f"{self.next_vmid}\n")
+        if verb == "create":
+            parts = path.strip("/").split("/")      # nodes/<node>/qemu/<id>/status/<action>
+            vmid, action = int(parts[3]), parts[5]
+            if vmid not in self.vms:
+                return self._no_vm(vmid)
+            self.vms[vmid]["status"] = "stopped" if action in ("stop", "shutdown") else "running"
+            return self._ok("UPID:pve1:0001:start\n")
+        node = f"/nodes/{self.node}"
+        if path == "/cluster/status":
+            data = [{"type": "cluster", "name": "c"}, {"type": "node", "name": self.node, "local": 1}]
+        elif path == f"{node}/status":
+            data = {"cpuinfo": {"cpus": self.host_cpus}, "memory": {"total": self.host_memory}}
+        elif path == f"{node}/network":
+            data = self.bridges
+        elif path == f"{node}/storage":
+            data = [{"storage": s["storage"], "type": s["type"]} for s in self.storages]
+        elif path == "/storage":
+            data = self.storages
+        elif path == "/cluster/resources":
+            data = [{"vmid": i, "status": v["status"], "node": self.node,
+                     "maxcpu": int(v["config"].get("cores", 1)),
+                     "maxmem": int(v["config"].get("memory", 512)) << 20} for i, v in self.vms.items()]
+        elif path.startswith(f"{node}/qemu/") and path.endswith("/config"):
+            vmid = int(path.split("/")[4])
+            if vmid not in self.vms:
+                return self._no_vm(vmid)
+            data = self.vms[vmid]["config"]
+        else:
+            raise AssertionError(f"FakeHost does not know pvesh {args}")
+        return self._ok(json.dumps(data))
 
     def run_stream(self, cmd: list[str], on_output, timeout: Optional[int] = None, cancel=None):
         """`qemu-img convert ... <file> /dev/zvol/<zvol>`: progress lines, the zvol must exist."""

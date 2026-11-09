@@ -40,6 +40,7 @@ from app.api.v1.schemas import (
     KeepWriteback,
     MachinePin,
     PowerAction,
+    VmAction,
     MachineTrafficOut,
     MachineAssign,
     MachineCreate,
@@ -59,6 +60,7 @@ from app.services.provisioning import (
     WritebackApply,
 )
 from app.services.traffic import TrafficMonitor
+from app.services.vms import vmid_of
 from app.services.writebacks import discard
 
 logger = logging.getLogger("ggnet.api.machines")
@@ -66,6 +68,7 @@ logger = logging.getLogger("ggnet.api.machines")
 router = APIRouter(prefix="/machines", tags=["machines"])
 
 DUPLICATE = "A machine with that name, IQN or MAC address already exists"
+VM_IQN = "IQNs ending in ':vm-<number>' belong to virtual machines (Machines -> Create VM)"
 
 # The agent beats every 30 s; like the UI, 90 s without one counts as offline.
 AGENT_ONLINE = timedelta(seconds=90)
@@ -247,7 +250,7 @@ def bulk(
         raise HTTPException(403, detail={"error": f"Your role ({user.role.value}) cannot do this"})
     def run(machine_id: int) -> None:
         if body.action in ("on", "shutdown", "reboot"):
-            power(machine_id, PowerAction(action=body.action), db, wol)
+            power(machine_id, PowerAction(action=body.action), db, wol, prov)
         elif body.action == "assign":
             assign_disk(machine_id, MachineAssign(game_image_id=body.game_image_id), db, prov)
         elif body.action == "assign_os":
@@ -305,6 +308,7 @@ def machine_traffic(
     mapped = db.scalars(select(Machine).where(
         Machine.status.in_([MachineStatus.PROVISIONED, MachineStatus.EDITING]),
         Machine.iscsi_target_iqn.is_not(None),
+        Machine.vm_id.is_(None),                 # a VM's drives are not on the iSCSI target
     ))
     for m in mapped:
         counters = prov.iscsi.acl_traffic(m.initiator_iqn, m.iscsi_target_iqn,
@@ -331,6 +335,8 @@ def create_machine(
     Register a machine; with `game_image_id` (and `os_image_id` in Boot Mode)
     it is provisioned right away.
     """
+    if body.initiator_iqn and vmid_of(body.initiator_iqn) is not None:
+        conflict(VM_IQN)
     disk = None
     os_image = _os_image(db, body.mode, body.name, body.game_image_id, body.os_image_id)
     if body.game_image_id is not None:
@@ -373,12 +379,24 @@ def update_machine(
     # The IQN is in the ACL and the mode decides the disks; they cannot change
     # on the host while the machine has a disk. The name is in the writeback
     # paths and backstore names: a powered-off PC is renamed on the host too.
+    if machine.vm_id is not None:
+        fixed = sorted(k for k in ("initiator_iqn", "mode", "mac", "drive_letter")
+                       if k in changes and changes[k] != getattr(machine, k))
+        if fixed:
+            conflict(f"{', '.join(fixed)} of a virtual machine cannot change")
+    elif changes.get("initiator_iqn") and vmid_of(changes["initiator_iqn"]) is not None:
+        conflict(VM_IQN)
+
     host_bound = {k for k in ("initiator_iqn", "mode") if k in changes
                   and changes[k] != getattr(machine, k)}
     if host_bound and (_has_host_state(machine) or machine.game_image_id is not None):
         conflict(f"{', '.join(sorted(host_bound))} can only change while the machine has no disk")
     if "name" in changes and changes["name"] != machine.name and _has_host_state(machine):
         _rename_on_host(db, prov, machine, changes["name"])
+    if "name" in changes and changes["name"] != machine.name and machine.vm_id is not None:
+        # Only the name Proxmox shows; the VM is found by its ID.
+        if not prov.vms.host.rename(machine.vm_id, changes["name"]):
+            logger.warning("VM %s keeps its old name: %s", machine.vm_id, prov.vms.host.runner.last_error)
 
     if changes.get("mode", machine.mode) is MachineMode.BOOT:
         if changes.get("drive_letter", "D") != "D":
@@ -560,12 +578,20 @@ def power(
     body: PowerAction,
     db: Session = Depends(get_db),
     wol=Depends(get_wol_sender),
+    prov: Provisioner = Depends(get_provisioner),
 ):
     """
     Turn On sends Wake-on-LAN now. Shutdown and Reboot wait for the agent's
     next heartbeat (up to its interval) and expire after a few minutes.
+    A virtual machine is started, shut down and rebooted by Proxmox instead.
     """
     machine = _get(db, machine_id)
+    if machine.vm_id is not None:
+        from app.api.v1.vms import vm_action      # vms imports this module
+
+        vm_action(machine_id, VmAction(action="start" if body.action == "on" else body.action),
+                  db, prov.vms.host)
+        return machine
     if body.action == "on":
         mac = machine.mac or machine.reported_mac
         if mac is None:
@@ -734,6 +760,10 @@ def delete_machine(
     _shut_down_first(prov, machine)
     if _has_host_state(machine):
         _deprovision(db, prov, machine)
+    if machine.vm_id is not None and not prov.vms.host.destroy(machine.vm_id):
+        db.commit()        # the writebacks are gone; the machine stays until its VM is removed
+        host_failed(f"Removing VM {machine.vm_id} failed: {prov.vms.host.runner.last_error}",
+                    machine_id=machine.id)
     db.delete(machine)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { ArrowUpCircle, Cpu, Download, HardDrive, Network, Server, UserRound, Users } from "lucide-react";
+import { ArrowUpCircle, Boxes, Cpu, Download, HardDrive, Network, Server, UserRound, Users } from "lucide-react";
 
 import {
   api,
@@ -16,6 +16,7 @@ import { NetworkBoot } from "../components/NetworkBoot";
 import { SubNav, useSection, type SubNavItem } from "../components/SubNav";
 import { AccountCard, ActivityCard, UsersCard } from "../components/Users";
 import { Updates } from "../components/Updates";
+import { VmSettingsCard } from "../components/VirtualMachines";
 import { WinPeSetup } from "../components/WinPeSetup";
 import { formatBytes } from "../format";
 import { useAsyncAction } from "../useAsyncAction";
@@ -79,13 +80,14 @@ function settingsOf(r: Retention): RetentionSettings {
   return s;
 }
 
-type SettingsSection = "general" | "storage" | "boot" | "scan" | "client" | "users" | "updates" | "account";
+type SettingsSection = "general" | "storage" | "boot" | "scan" | "vms" | "client" | "users" | "updates" | "account";
 
 const ADMIN_SECTIONS: SubNavItem<SettingsSection>[] = [
   { id: "general", label: "General", icon: Server },
   { id: "storage", label: "Storage", icon: HardDrive },
   { id: "boot", label: "Network boot", icon: Network },
   { id: "scan", label: "Hardware scan", icon: Cpu },
+  { id: "vms", label: "Virtual machines", icon: Boxes },
   { id: "client", label: "Client app", icon: Download },
   { id: "users", label: "Users", icon: Users },
   { id: "updates", label: "Updates", icon: ArrowUpCircle },
@@ -107,6 +109,7 @@ export function SettingsPage({ storage, reload, user, onPasswordChanged = () => 
       {section === "storage" && <StorageSettings storage={storage} reload={reload} />}
       {section === "boot" && <NetworkBoot />}
       {section === "scan" && <WinPeSetup />}
+      {section === "vms" && admin && <VmSettingsCard />}
       {section === "updates" && admin && <Updates />}
       {section === "client" && <ClientApp canManage={admin} />}
       {section === "users" && user && (

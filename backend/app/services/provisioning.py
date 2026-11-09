@@ -32,6 +32,7 @@ from typing import Callable
 
 from app.disk_grow import GrowResult, PartitionGrower
 from app.iscsi_manager import SLOTS, Disk, ISCSIManager
+from app.services.vms import VmDisks, vmid_of
 from app.windows_setup import ImagePrep, OsSetup, WindowsSetup
 from app.zfs_manager import ZFSManager
 
@@ -138,6 +139,8 @@ class Provisioner:
         self.iscsi = iscsi
         # Boot Mode: writes the PC's identity into its fresh OS writeback.
         self.windows = windows
+        # VM machines: their writebacks are the VM's drives (app.services.vms).
+        self.vms = VmDisks(zfs.runner)
         # Grows a disk's data partition after its zvol got bigger (grow_disk).
         self.grower = PartitionGrower(zfs.runner)
         self.lock = threading.Lock()
@@ -152,6 +155,10 @@ class Provisioner:
             return self._machine_locks.setdefault(name, threading.Lock())
 
     # ── Helpers ───────────────────────────────────────────────────────
+
+    def _target(self, initiator_iqn: str):
+        """Where a machine's writebacks are exposed: the shared iSCSI target, or its VM."""
+        return self.vms if vmid_of(initiator_iqn) is not None else self.iscsi
 
     def _fail(self, msg: str, runner=None) -> ProvisioningError:
         detail = (runner or self.zfs.runner).last_error
@@ -201,9 +208,10 @@ class Provisioner:
         `save=False` when the disks are mapped again right after (attach saves);
         `legacy=False` when the machine is known to be on the shared target.
         """
-        names = self.iscsi.remove(machine_name, initiator_iqn, save=save, legacy=legacy)
-        if names is None or any(self.iscsi.backstore_name(machine_name, slot) in names for slot in SLOTS):
-            raise self._fail("The iSCSI disk was not removed", self.iscsi.runner)
+        target = self._target(initiator_iqn)
+        names = target.remove(machine_name, initiator_iqn, save=save, legacy=legacy)
+        if names is None or any(target.backstore_name(machine_name, slot) in names for slot in SLOTS):
+            raise self._fail("The disks were not removed", target.runner)
 
     # ── Spare writebacks ──────────────────────────────────────────────
 
@@ -610,11 +618,11 @@ class Provisioner:
             self._clear()
             if self.zfs.get_property(zvol_path, "readonly") != "off":
                 raise self._fail(f"{zvol_path} is not a writable draft")
-            iqn = self.iscsi.attach(
+            iqn = self._target(initiator_iqn).attach(
                 machine_name, initiator_iqn, [Disk("game", self.zfs.zvol_device_path(zvol_path))]
             )
             if iqn is None:
-                raise self._fail("Exposing the master over iSCSI failed", self.iscsi.runner)
+                raise self._fail("Exposing the master failed", self._target(initiator_iqn).runner)
         return iqn
 
     def finish_edit(self, machine_name: str, initiator_iqn: str) -> None:
@@ -661,9 +669,10 @@ class Provisioner:
                 made.append(clone)
             os_clone = clones[1][1] if os_snapshot_path is not None else None
             problem = self._set_up_os(os_clone, os_setup)
-            iqn = self.iscsi.attach(machine_name, initiator_iqn, self._disks(clones[0][1], os_clone))
+            iqn = self._target(initiator_iqn).attach(machine_name, initiator_iqn,
+                                                     self._disks(clones[0][1], os_clone))
             if iqn is None:
-                err = self._fail("Exposing the disk over iSCSI failed", self.iscsi.runner)
+                err = self._fail("Exposing the disk failed", self._target(initiator_iqn).runner)
                 # attach() cleaned up its own iSCSI state; roll back the clones.
                 rollback()
                 raise err
@@ -693,7 +702,7 @@ class Provisioner:
         """
         if (os_clone_zvol is None) != (os_snapshot_path is None):
             raise ProvisioningError("An OS writeback needs both its zvol and its snapshot")
-        legacy = target_iqn != self.iscsi.target_iqn()
+        legacy = target_iqn != self._target(initiator_iqn).target_iqn()
         with self._machine_lock(machine_name), self.lock:
             t0 = time.monotonic()
             self._clear()
@@ -720,10 +729,10 @@ class Provisioner:
                 # A renamed zvol gets its /dev/zvol link from udev a moment later.
                 self.zfs.runner.run(["udevadm", "settle", "--timeout=10"], quiet=True)
             t_disks = time.monotonic()
-            iqn = self.iscsi.attach(machine_name, initiator_iqn, self._disks(clone_zvol, os_clone_zvol),
-                                    fresh=True)
+            iqn = self._target(initiator_iqn).attach(machine_name, initiator_iqn,
+                                                     self._disks(clone_zvol, os_clone_zvol), fresh=True)
             if iqn is None:
-                raise self._fail("Exposing the disk over iSCSI failed", self.iscsi.runner)
+                raise self._fail("Exposing the disk failed", self._target(initiator_iqn).runner)
             t_end = time.monotonic()
             logger.info("Reset of %s in %.1f s (unmap %.1f, writebacks %.1f%s, map %.1f)",
                         machine_name, t_end - t0, t_detach - t0, t_disks - t_detach,
@@ -758,14 +767,15 @@ class Provisioner:
                     err = self._fail(f"Renaming {old} to {new} failed")
                     break
                 done.append((old, new))
+            target = self._target(initiator_iqn)
             if err is None:
-                if self.iscsi.attach(new_name, initiator_iqn, self._disks(new_clone, new_os)) is not None:
+                if target.attach(new_name, initiator_iqn, self._disks(new_clone, new_os)) is not None:
                     return new_clone, new_os
-                err = self._fail("Exposing the renamed disks over iSCSI failed", self.iscsi.runner)
+                err = self._fail("Exposing the renamed disks failed", target.runner)
             for old, new in reversed(done):
                 if not self.zfs.rename_dataset(new, old):
                     logger.error("Rollback: %s left as %s", old, new)
-            if self.iscsi.attach(old_name, initiator_iqn, self._disks(clone_zvol, os_clone_zvol)) is None:
+            if target.attach(old_name, initiator_iqn, self._disks(clone_zvol, os_clone_zvol)) is None:
                 logger.error("Rollback: the disks of %s could not be mapped again", old_name)
             raise err
 
@@ -888,7 +898,7 @@ class Provisioner:
 
     def session_active(self, initiator_iqn: str, target_iqn: str | None = None) -> bool | None:
         """Live LIO session state of a machine; None when unknown."""
-        return self.iscsi.session_active(initiator_iqn, target_iqn)
+        return self._target(initiator_iqn).session_active(initiator_iqn, target_iqn)
 
     def set_keep_writeback(self, clone_zvol: str, keep: bool, os_clone_zvol: str | None = None) -> None:
         """
@@ -945,7 +955,7 @@ class Provisioner:
                         f"{err}; applied before the failure: "
                         + ", ".join(f"{m}@{s}" for m, s in applied.items())
                         + ". Reset the machine.", applied)
-                if self.iscsi.attach(machine_name, initiator_iqn,
+                if self._target(initiator_iqn).attach(machine_name, initiator_iqn,
                                      self._disks(clone_zvol, os_clone_zvol)) is None:
                     logger.error("Apply failed and the writebacks of %s could not be mapped again",
                                  machine_name)
