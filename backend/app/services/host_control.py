@@ -31,6 +31,7 @@ logger = logging.getLogger("ggnet.host")
 
 ISCSI_UNIT = "rtslib-fb-targetctl"
 REBOOT_WORD = "REBOOT"
+DETECT: Any = object()     # HostControl(unit=...): find it in /proc/self/cgroup
 _UNIT_RE = re.compile(r"^[A-Za-z0-9@._:-]{1,200}\.service$")
 
 
@@ -65,10 +66,11 @@ def own_unit(cgroup: Path = Path("/proc/self/cgroup")) -> str | None:
 
 class HostControl:
     def __init__(self, cfg: dict[str, Any], runner: CommandRunner | None = None,
-                 unit: str | None = None):
+                 unit: str | None = DETECT):
+        """`unit`: the service running ggNet; by default read from this process's cgroup, None for none."""
         self.cfg = cfg
         self.runner = runner or CommandRunner(timeout=20)
-        self.unit = unit if unit is not None else own_unit()
+        self.unit = own_unit() if unit is DETECT else unit
 
     # ── Services ──
 

@@ -45,6 +45,14 @@ def test_own_unit_from_the_cgroup(tmp_path):
     assert own_unit(f) is None
 
 
+def test_its_own_unit_is_found_unless_given(monkeypatch):
+    import app.services.host_control as hc
+
+    monkeypatch.setattr(hc, "own_unit", lambda: "ggnet.service")
+    assert HostControl(CFG, Runner()).unit == "ggnet.service"
+    assert HostControl(CFG, Runner(), unit=None).unit is None      # e.g. the tests, a CI runner
+
+
 def test_services_with_their_state_and_the_iscsi_target_locked():
     host = HostControl(CFG, Runner(), unit="ggnet.service")
     got = {s.unit: s for s in host.services()}
