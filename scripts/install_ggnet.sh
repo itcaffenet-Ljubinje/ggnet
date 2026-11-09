@@ -317,11 +317,16 @@ case "$WEB_BIND_MODE" in
 esac
 
 # ---------- 6. summary ----------
+# Not "$([[ … ]] && echo …)" inside the text: when the test is false the
+# assignment fails, and set -e ends the script without a word (every
+# --update, where autotrim is already on).
+TRIM_NOTE=""
+[[ $SET_AUTOTRIM -eq 1 ]] && TRIM_NOTE=" -> on"
 SUMMARY="Software:     $INSTALL_DIR  (system disk)
 App data:     $DATA_DIR
 Config:       $CONF_FILE
 
-ZFS pool:     $POOL  ($POOL_HEALTH, ashift $POOL_ASHIFT, autotrim $POOL_AUTOTRIM$([[ $SET_AUTOTRIM -eq 1 ]] && echo " -> on"))
+ZFS pool:     $POOL  ($POOL_HEALTH, ashift $POOL_ASHIFT, autotrim $POOL_AUTOTRIM$TRIM_NOTE)
 Datasets:     $DS_ROOT/{images,writebacks,snapshots,iscsi_targets,imports}
 
 Service IF:   $IFACE  ($SERVICE_CIDR)
@@ -341,7 +346,18 @@ fi
 # ---------- 7. packages ----------
 info "Installing packages..."
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
+# A Proxmox VE host without a subscription keeps its enterprise repositories
+# enabled after the install, and they answer 401: apt-get update then fails
+# though every package ggNet needs comes from Debian. Only an error from
+# another repository stops the install.
+if ! APT_OUT="$(apt-get update -qq 2>&1)"; then
+    if grep -E '^(E|Err):' <<<"$APT_OUT" | grep -v 'enterprise\.proxmox\.com' | grep -q .; then
+        echo "$APT_OUT" >&2
+        die "apt-get update failed (see above)."
+    fi
+    red "Note: the Proxmox enterprise repository needs a subscription (401). ggNet needs none of its"
+    red "packages, so the install goes on; Proxmox's own updates want the no-subscription repository."
+fi
 # dnsmasq-base: the binary only (no dnsmasq.service that would also serve DNS);
 # ggNet runs its own instance, ggnet-pxe. ipxe: snponly.efi / ipxe.efi for TFTP.
 # Secure Boot: shim-signed (shim signed by Microsoft, and its MokManager),
