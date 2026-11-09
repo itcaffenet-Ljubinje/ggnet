@@ -48,6 +48,9 @@ ggnet-update --version v0.2.0   # a given one
 Before its migrations, an update dumps the database (`pg_dump`) into `/var/lib/ggnet/db-backups` (the
 newest 5 are kept) and puts it back if a migration fails.
 
+The installer and every update also put the release's agent (`ggnet-agent-win-x64.zip`, checked against its
+`.sha256`) into `/var/lib/ggnet/agent`, which Settings → Client app offers to the PCs.
+
 A release is made by pushing a tag that matches `VERSION` (`git tag v0.2.0 && git push origin v0.2.0`); the
 Release workflow builds the packages and their checksums.
 

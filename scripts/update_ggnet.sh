@@ -47,51 +47,7 @@ echo "==> Checking its SHA-256..."
 tar -xzf "$TMP_DIR/ggnet.tar.gz" -C "$TMP_DIR"
 [[ -f "$TMP_DIR/ggnet/scripts/install_ggnet.sh" ]] || die "The package has no installer."
 echo "==> Installing $(cat "$TMP_DIR/ggnet/VERSION" 2>/dev/null || echo "$VERSION")..."
+# The installer also brings the release's agent package for the PCs.
 bash "$TMP_DIR/ggnet/scripts/install_ggnet.sh" --update --source "$TMP_DIR/ggnet"
 
-# The release's agent for the PCs (Settings -> Client app): Disk Mode agents
-# update themselves from it, OS images get it with Prepare image. A problem
-# here leaves the old agent package and does not undo the server update.
-update_agent() {
-    local conf="${GGNET_CONFIG:-/etc/ggnet/config.toml}" dir
-    dir="$(python3 - "$conf" <<'PY'
-import sys, tomllib
-c = tomllib.load(open(sys.argv[1], "rb"))
-p = c.get("paths", {})
-print(p.get("agent_dir") or (p.get("data_dir", "/var/lib/ggnet") + "/agent"))
-PY
-)" || { echo "WARNING: cannot read the agent folder from $conf; the agent package is unchanged." >&2; return; }
-    if ! wget -qO "$TMP_DIR/ggnet-agent-win-x64.zip" "$BASE/ggnet-agent-win-x64.zip" \
-        || ! wget -qO "$TMP_DIR/ggnet-agent-win-x64.zip.sha256" "$BASE/ggnet-agent-win-x64.zip.sha256"; then
-        echo "WARNING: the release has no checked agent package; the PCs keep their agent." >&2
-        return
-    fi
-    if ! (cd "$TMP_DIR" && sha256sum -c --status ggnet-agent-win-x64.zip.sha256); then
-        echo "WARNING: SHA-256 mismatch for the agent package; the PCs keep their agent." >&2
-        return
-    fi
-    # Unpack beside the folder, then replace each file by a rename: a PC
-    # downloading during the update gets the old file or the new, never half.
-    mkdir -p "$dir"
-    python3 - "$TMP_DIR/ggnet-agent-win-x64.zip" "$dir" <<'PY' || { echo "WARNING: unpacking the agent package failed; the PCs keep their agent." >&2; return; }
-import os, sys, zipfile
-zip_path, target = sys.argv[1], sys.argv[2]
-with zipfile.ZipFile(zip_path) as z:
-    for info in z.infolist():
-        parts = info.filename.split("/")
-        # Only the files right in ggnet-agent/: never a path out of the folder.
-        if info.is_dir() or len(parts) != 2 or parts[0] != "ggnet-agent" or parts[1] in ("", ".", ".."):
-            continue
-        tmp = os.path.join(target, "." + parts[1] + ".new")
-        with z.open(info) as src, open(tmp, "wb") as dst:
-            while chunk := src.read(1 << 20):
-                dst.write(chunk)
-            dst.flush()
-            os.fsync(dst.fileno())
-        os.replace(tmp, os.path.join(target, parts[1]))
-PY
-    echo "==> Agent package $(cat "$dir/VERSION" 2>/dev/null || echo "?") in $dir."
-}
-echo "==> Updating the agent package for the PCs..."
-update_agent
 echo "==> ggNet updated."

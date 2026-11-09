@@ -63,8 +63,9 @@ export function ClientApp({ canManage = true }: { canManage?: boolean }) {
       {error && <p className="error-text small">{error}</p>}
       {pkg && !pkg.available && (
         <p className="small warn-text">
-          The agent files are not on the server yet. Put ggnet-agent.exe, install.ps1 and uninstall.ps1 (from the
-          release's ggnet-agent-win-x64.zip) into <span className="mono">{pkg.directory}</span>.
+          The agent files are not on the server yet. The installer and every update bring them from the ggNet
+          release (ggnet-agent-win-x64.zip); a development build has none. Or put ggnet-agent.exe, install.ps1 and
+          uninstall.ps1 into <span className="mono">{pkg.directory}</span> yourself.
         </p>
       )}
       {pkg?.available && (
