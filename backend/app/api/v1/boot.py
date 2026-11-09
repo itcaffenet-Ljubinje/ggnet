@@ -16,6 +16,8 @@ boot falls through to its next boot device instead of stopping in iPXE:
                                 key press boots the local disk instead.
                                 `[boot] unregistered = "local"` exits at once
                                 (also set in the web UI: Settings → Network boot).
+  network boot turned off       exit for every PC (Settings → Network boot:
+                                server maintenance, an update)
 
 autoexec.ipxe (scripts/install_ggnet.sh) also sends the boot NIC's PCI IDs
 (pci, cls, sub, rev); the server keeps them as the PC's `boot_nic`. A PC
@@ -214,6 +216,10 @@ def ipxe_script(
 
     # [boot] settings: config.toml's, or the ones saved in the web UI.
     cfg = pxe.effective_config(db)
+    if not (cfg.get("boot") or {}).get("network_boot", True):
+        # Before anything else: no discovery, no writeback reset, no wizard.
+        logger.info("iPXE request from %s: network boot is off, local disk", mac)
+        return exit_script("ggNet: network boot is turned off (Settings -> Network boot). Booting from local disk.")
     nic = boot_nic_id(pci, cls, sub, rev)
     m = _find(db, mac)
     if m is None:

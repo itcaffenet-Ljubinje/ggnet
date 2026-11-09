@@ -812,3 +812,21 @@ def test_a_restarting_pc_boots_on_its_spares(client, host, prov, disks, windows,
         refresh_spares(db, prov)
     assert not [d for d in host.datasets if d.endswith("_spare")]
     engine.dispose()
+
+
+def test_network_boot_off_sends_every_pc_to_its_own_disk(client, host, disks):
+    m = _boot_machine(client, disks)
+    assert "sanboot" in _ipxe(client)
+    off = client.put("/api/v1/settings/boot", json={"gateway": "none", "network_boot": False})
+    assert off.status_code == 200 and off.json()["network_boot"] is False
+    host.calls.clear()
+    script = _ipxe(client)
+    assert "network boot is turned off" in script and script.rstrip().endswith("exit")
+    assert "sanboot" not in script
+    assert host.calls == []                                   # no writeback reset, nothing on the host
+    unknown = _ipxe(client, "aa-bb-cc-dd-ee-99")
+    assert "network boot is turned off" in unknown
+    assert client.get("/api/v1/discovery").json() == []       # not even listed as a new PC
+    client.put("/api/v1/settings/boot", json={"gateway": "none", "network_boot": True})
+    assert "sanboot" in _ipxe(client)
+    assert _get(client, m)["status"] == "provisioned"

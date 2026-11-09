@@ -9,6 +9,9 @@ import { General } from "./General";
 const INFO: GeneralInfo = {
   hostname: "pve",
   version: "0.2.0",
+  install: "development",
+  app_dir: "/root/ggnet/backend",
+  config_file: "/var/lib/ggnet-dev/config.toml",
   server_ip: "192.168.0.40",
   proxmox: "pve-manager/9.1.1",
   kernel: "7.0.14-28-pve",
@@ -42,6 +45,8 @@ describe("General", () => {
     render(<General />);
     expect(await screen.findByText("pve-manager/9.1.1")).toBeInTheDocument();
     expect(screen.getByText(/PostgreSQL 17.11/)).toBeInTheDocument();
+    expect(screen.getByText("DEV")).toBeInTheDocument();
+    expect(screen.getByText(/Development: runs from the source checkout/)).toBeInTheDocument();
     expect(screen.getByText("failed")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Restart Network boot" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Restart iSCSI target" })).toBeNull();

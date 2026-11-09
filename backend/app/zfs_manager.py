@@ -40,6 +40,10 @@ LOCK_PROP = "ggnet:locked"
 # (a version never changes): "none", or the signs found, comma-separated
 # (app.windows_setup.update_signs). Unset: not checked yet.
 UPDATE_PROP = "ggnet:update"
+# When a version was last in use (Unix time): active, pinned or a PC's
+# writeback made from it. Stamped hourly (app.services.retention.stamp_in_use);
+# "unused for N days" counts from it, or from the version's creation.
+LAST_USED_PROP = "ggnet:last-used"
 
 # Datasets under root_dataset that ggNet creates and manages.
 _CHILD_KEYS = ("images", "writebacks", "snapshots", "iscsi_targets", "imports")
@@ -799,7 +803,7 @@ class ZFSManager:
             return None
         ok, out, _ = self._run([
             "zfs", "list", "-H", "-p", "-t", "snapshot",
-            "-o", f"name,creation,used,refer,clones,{COMMENT_PROP},{LOCK_PROP},{UPDATE_PROP}",
+            "-o", f"name,creation,used,refer,clones,{COMMENT_PROP},{LOCK_PROP},{UPDATE_PROP},{LAST_USED_PROP}",
             "-s", "createtxg", "-d", "1", dataset,
         ])
         if not ok:
@@ -807,7 +811,9 @@ class ZFSManager:
         snaps = []
         for line in out.splitlines():
             parts = line.split("\t")
-            if len(parts) != 8 or "@" not in parts[0]:
+            if len(parts) == 8:              # an older listing without last-used
+                parts.append("-")
+            if len(parts) != 9 or "@" not in parts[0]:
                 continue
             snaps.append({
                 "name": parts[0].partition("@")[2],
@@ -818,6 +824,7 @@ class ZFSManager:
                 "comment": None if parts[5] in ("", "-") else parts[5],
                 "locked": parts[6] == "on",
                 "update": update_state(parts[7]),
+                "last_used": _int(parts[8]) if parts[8] not in ("", "-") else None,
             })
         return snaps
 
@@ -847,6 +854,15 @@ class ZFSManager:
         if "@" not in snapshot:
             return None
         return update_state(self.get_property(snapshot, UPDATE_PROP))
+
+    def set_last_used(self, snapshot: str, when: int) -> bool:
+        """Record that a version is in use now (LAST_USED_PROP, Unix time)."""
+        if "@" not in snapshot or not self._is_managed(snapshot):
+            return False
+        ok, _, err = self._run(["zfs", "set", f"{LAST_USED_PROP}={int(when)}", snapshot])
+        if not ok:
+            logger.error("Marking %s as in use failed: %s", snapshot, err)
+        return ok
 
     def set_snapshot_lock(self, snapshot: str, locked: bool) -> bool:
         """Lock a version against deletion, or unlock it."""

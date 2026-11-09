@@ -8,7 +8,8 @@ pool is full. Settings come from the web UI (the `settings` table):
   reserved_percent         part of the pool kept free (a refreservation)
   warning_percent          the UI warns when the pool is fuller than this
   unused_snapshot_days     a version not active, not pinned, not locked, not the origin
-                           of any PC's writeback and older than this ...
+                           of any PC's writeback, and not in use for this long (since
+                           it was last in use, ggnet:last-used, else since its creation) ...
   keep_newest_snapshots    ... is deleted, except the newest N of each disk
   inactive_writeback_hours a Keep Writeback PC that has been off this long
                            gets its writeback discarded
@@ -133,6 +134,35 @@ def kept_because(disk: Image, versions: list[dict], s: RetentionSettings) -> dic
     return kept
 
 
+def unused_since(v: dict) -> datetime:
+    """Since when a version is not in use: its last use (stamped hourly), else its creation."""
+    return datetime.fromtimestamp(max(v["creation"] or 0, v.get("last_used") or 0), timezone.utc)
+
+
+def stamp_in_use(db: Session, prov: Provisioner, now: datetime | None = None) -> int:
+    """
+    Mark every version in use right now (active, pinned, or a PC's writeback
+    made from it) with its last use. Runs every round, also while automatic
+    removal is off, so turning it on later never takes a version that was
+    in use until yesterday for an old one. Returns how many were stamped.
+    """
+    now = now or _now()
+    stamped = 0
+    for disk in db.scalars(select(Image).where(Image.snapshot.is_not(None))):
+        try:
+            versions = prov.snapshots(disk.zvol_path)
+        except ProvisioningError as e:
+            logger.warning("Cannot list the versions of %s: %s", disk.name, e)
+            continue
+        pinned = {m.pinned_snapshot for m in disk.machines if m.pinned_snapshot}
+        names = [v["name"] for v in versions
+                 if v["name"] == disk.snapshot or v["name"] in pinned or v["clones"]]
+        if names:
+            prov.mark_used(disk.zvol_path, names, int(now.timestamp()))
+            stamped += len(names)
+    return stamped
+
+
 def version_notes(disk: Image, versions: list[dict], s: RetentionSettings,
                   now: datetime | None = None) -> dict[str, str]:
     """What automatic removal (Settings → Retention) does with each version, in words."""
@@ -145,7 +175,7 @@ def version_notes(disk: Image, versions: list[dict], s: RetentionSettings,
         if v["name"] in kept:
             notes[v["name"]] = kept[v["name"]]
             continue
-        due = datetime.fromtimestamp(v["creation"], timezone.utc) + timedelta(days=s.unused_snapshot_days)
+        due = unused_since(v) + timedelta(days=s.unused_snapshot_days)
         when = "at the next run" if due <= now else f"from {due.date().isoformat()}"
         notes[v["name"]] = (f"would be removed {when} (dry run: only reported)" if s.dry_run
                             else f"removed automatically {when}, unless a PC uses it")
@@ -163,10 +193,11 @@ def plan(db: Session, prov: Provisioner, s: RetentionSettings, now: datetime | N
         for v in versions:
             if v["name"] in kept:
                 continue
-            age = now - datetime.fromtimestamp(v["creation"], timezone.utc)
+            age = now - unused_since(v)
             if age >= timedelta(days=s.unused_snapshot_days):
-                actions.append(Action("snapshot", f"{disk.name}@{v['name']}",
-                                      f"not used, {age.days} days old"))
+                reason = (f"not used for {age.days} days" if v.get("last_used")
+                          else f"never used, {age.days} days old")
+                actions.append(Action("snapshot", f"{disk.name}@{v['name']}", reason))
 
     keepers = db.scalars(select(Machine).where(
         Machine.keep_writeback.is_(True),
@@ -228,8 +259,9 @@ def run(db: Session, prov: Provisioner, s: RetentionSettings, dry_run: bool,
 
 
 def tick(make_session: Callable[[], Session], prov: Provisioner, now: datetime | None = None) -> Report | None:
-    """One hourly round: nothing unless the admin turned retention on."""
+    """One hourly round: versions in use are stamped; removal only if the admin turned it on."""
     with make_session() as db:
+        stamp_in_use(db, prov, now)
         s, _ = load_settings(db)
         if not s.enabled:
             return None

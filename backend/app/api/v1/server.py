@@ -14,8 +14,15 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_hardware_adder, get_host_control, get_provisioner, get_server_monitor, get_updates
-from app.api.v1.errors import conflict, host_failed
+from app.api.deps import (
+    get_hardware_adder,
+    get_host_control,
+    get_provisioner,
+    get_server_monitor,
+    get_updates,
+    require_user,
+)
+from app.api.v1.errors import conflict, host_failed, not_found
 from app.api.v1.schemas import (
     DatabaseBackupOut,
     DatabaseOut,
@@ -24,6 +31,7 @@ from app.api.v1.schemas import (
     RestartOut,
     ServiceOut,
     ReleaseOut,
+    UpdateHistoryOut,
     UpdateIn,
     UpdateJobOut,
     UpdateOut,
@@ -39,6 +47,7 @@ from app.api.v1.schemas import (
     PoolActionIn,
     ServerOut,
 )
+from app.db.models import User
 from app.db.session import get_db
 from app.services import maintenance
 from app.services.provisioning import Provisioner
@@ -207,13 +216,27 @@ def _update_out(updates, check: bool = False) -> UpdateOut:
         reason = f"{release.tag} has no ggnet.tar.gz.sha256; it cannot be installed from here"
     if reason is None and job is not None and job["state"] == "running":
         reason = "an update is running"
+    releases, _ = updates.releases(force=check)
+    busy = job is not None and job["state"] == "running"
     return UpdateOut(
         current=updates.version,
         latest=ReleaseOut(tag=release.tag, version=release.version, name=release.name, notes=release.notes,
                           url=release.url, published_at=release.published_at) if release else None,
         available=available, can_update=available and reason is None, reason=reason, error=error,
-        job=UpdateJobOut(version=job["version"], from_version=job.get("from"), started_at=job["started_at"],
-                         state=job["state"], exit=job["exit"], log=job["log"]) if job else None,
+        job=UpdateJobOut(version=job["version"], from_version=job.get("from"), kind=job.get("kind", "update"),
+                         started_at=job["started_at"], state=job["state"], exit=job["exit"],
+                         log=job["log"]) if job else None,
+        releases=[ReleaseOut(tag=r.tag, version=r.version, name=r.name, notes=r.notes, url=r.url,
+                             published_at=r.published_at, installed=r.version == updates.version,
+                             can_downgrade=(problem is None and not busy and r.checked
+                                            and newer(updates.version, r.version)
+                                            and updates.downgrade_dump(r.version) is not None))
+                  for r in releases],
+        history=[UpdateHistoryOut(id=e["id"], kind=e.get("kind", "update"), version=e.get("version"),
+                                  from_version=e.get("from"), by=e.get("by"), started_at=e.get("started_at"),
+                                  finished_at=e.get("finished_at"), state=e.get("state", "failed"),
+                                  exit=e.get("exit"), database=e.get("database"))
+                 for e in updates.history() if e.get("id")],
     )
 
 
@@ -224,7 +247,7 @@ def update_status(check: bool = False, updates=Depends(get_updates)):
 
 
 @router.post("/update", response_model=UpdateOut)
-def start_update(body: UpdateIn, updates=Depends(get_updates)):
+def start_update(body: UpdateIn, updates=Depends(get_updates), user: User = Depends(require_user)):
     """Install a release: ggnet-update runs as its own unit and restarts ggnet (PCs keep running)."""
     from app.services.updates import UpdateError
 
@@ -232,10 +255,40 @@ def start_update(body: UpdateIn, updates=Depends(get_updates)):
     if release is None or release.tag != body.version:
         conflict(f"{body.version} is not the newest release")
     try:
-        updates.start(body.version)
+        updates.start(body.version, user=user.username)
     except UpdateError as e:
         conflict(str(e))
     return _update_out(updates)
+
+
+@router.post("/update/downgrade", response_model=UpdateOut)
+def start_downgrade(body: UpdateIn, updates=Depends(get_updates), user: User = Depends(require_user)):
+    """
+    Go back to an older release this server ran before: its database is put
+    back from the dump taken before the update away from it (what changed
+    since is lost), then the older release is installed.
+    """
+    from app.services.updates import UpdateError
+
+    releases, _ = updates.releases()
+    if not any(r.tag == body.version and r.checked for r in releases):
+        conflict(f"{body.version} is not a release that can be installed from here")
+    try:
+        updates.start(body.version, user=user.username, downgrade=True)
+    except UpdateError as e:
+        conflict(str(e))
+    return _update_out(updates)
+
+
+@router.get("/update/history/{job_id}/log", response_model=list[str])
+def update_history_log(job_id: str, updates=Depends(get_updates)):
+    """The whole log of one update or downgrade."""
+    if not job_id.isdigit():
+        not_found("Update", job_id)
+    log = updates.history_log(job_id)
+    if log is None:
+        not_found("Update", job_id)
+    return log
 
 
 # ── Settings -> General (app.services.host_control) ──────────────────
@@ -284,10 +337,17 @@ def general(db: Session = Depends(get_db), host=Depends(get_host_control), adder
     from app.db.models import Machine
     from app.main import read_version
 
+    import os
+
+    from app.services.updates import development_checkout
+
     cfg = get_config()
     info = host.overview()
+    app_dir = Path(__file__).resolve().parents[3]
     return GeneralOut(
         hostname=info["hostname"], version=read_version(),
+        install="development" if development_checkout(cfg, app_dir) else "installed",
+        app_dir=str(app_dir), config_file=os.environ.get("GGNET_CONFIG", "/etc/ggnet/config.toml"),
         server_ip=str((cfg.get("network") or {}).get("server_ip", "")),
         proxmox=info["proxmox"], kernel=info["kernel"], uptime_seconds=info["uptime_seconds"],
         database=_database(db, Path((cfg.get("paths") or {}).get("data_dir", "/var/lib/ggnet"))),

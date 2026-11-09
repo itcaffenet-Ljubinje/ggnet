@@ -65,6 +65,9 @@ class BootSettings:
     # default game image (Images -> Make default), in Boot Mode on the wizard's
     # image. No default game image: it is not.
     new_pc_name: str = "pc-{nn}"
+    # Off: every PC boots its own disk (server maintenance, an update); iPXE
+    # still asks, ggNet answers "exit". Disk Mode PCs are not affected.
+    network_boot: bool = True
 
 
 def new_pc_name(pattern: str, taken: set[str]) -> str | None:
@@ -84,6 +87,7 @@ def _defaults(cfg: dict[str, Any]) -> BootSettings:
         mok_enroll=bool(boot.get("mok_enroll", False)),
         mok_password=str(boot.get("mok_password") or "ggnet"),
         new_pc_name=str(boot.get("new_pc_name") or "pc-{nn}"),
+        network_boot=bool(boot.get("network_boot", True)),
     )
 
 

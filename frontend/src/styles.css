@@ -3072,3 +3072,66 @@ tr.row-warn td {
     max-height: calc(100vh - 16px);
   }
 }
+
+/* Settings → Network boot */
+.card-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.file-checks {
+  list-style: none;
+  margin: 0 0 4px;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+.file-checks li {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+/* The header's DEV mark: this ggNet runs from a source checkout. */
+.dev-pill {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(245, 158, 11, 0.18);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.45);
+}
+
+.network-boot-switch {
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+.network-boot-switch > span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Settings → Updates: releases */
+.release-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.release-list summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.release-list pre {
+  white-space: pre-wrap;
+  margin: 6px 0;
+}

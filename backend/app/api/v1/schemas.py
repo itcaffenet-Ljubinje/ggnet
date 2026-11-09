@@ -342,6 +342,7 @@ class SnapshotOut(BaseModel):
     # OS images: signs of an unfinished Windows update ([]: none); None: not checked.
     update: list[str] | None = None
     retention: str | None = None    # what automatic removal does with it, in words
+    last_used_at: datetime | None = None   # when it was last in use (stamped hourly); None: not seen in use
 
 
 class ImageUpdateOut(BaseModel):
@@ -870,6 +871,8 @@ class BootSettingsIn(BaseModel):
     mok_password: str = Field("ggnet", pattern=r"^[a-z0-9]{4,16}$")
     # New PC template (Add new hardware): a name with {n} or {nn}, and the game image.
     new_pc_name: str = "pc-{nn}"
+    # Off: every PC boots its own disk (server maintenance); nothing is discarded.
+    network_boot: bool = True
 
     @field_validator("new_pc_name")
     @classmethod
@@ -1251,8 +1254,14 @@ class TaskOut(BaseModel):
     image_id: int | None = None
 
 
+class TlsNamesIn(BaseModel):
+    """A new self-signed certificate for these IP addresses and DNS names."""
+
+    names: list[str] = Field(min_length=1, max_length=20)
+
+
 class TlsOut(BaseModel):
-    """The web UI's HTTPS (Settings → Network boot)."""
+    """The web UI's HTTPS (Settings → General)."""
 
     enabled: bool
     url: str | None = None            # https://<service IP>:<port>
@@ -1261,6 +1270,7 @@ class TlsOut(BaseModel):
     not_after: str | None = None
     sha256: str | None = None
     self_signed: bool = False
+    restarting: bool = False          # a new certificate: ggNet restarts to use it
 
 
 class ReleaseOut(BaseModel):
@@ -1270,11 +1280,14 @@ class ReleaseOut(BaseModel):
     notes: str
     url: str
     published_at: str
+    installed: bool = False        # the version running now
+    can_downgrade: bool = False    # older, and its database backup is on this server
 
 
 class UpdateJobOut(BaseModel):
     version: str | None
     from_version: str | None = None
+    kind: str = "update"           # update | downgrade
     started_at: str | None
     state: str                     # running, done, failed
     exit: int | None
@@ -1291,6 +1304,23 @@ class UpdateOut(BaseModel):
     reason: str | None = None      # why not
     error: str | None = None       # why GitHub could not be read
     job: UpdateJobOut | None = None
+    releases: list[ReleaseOut] = []          # newest first, with their notes
+    history: list["UpdateHistoryOut"] = []   # newest first
+
+
+class UpdateHistoryOut(BaseModel):
+    """One update or downgrade done from Settings -> Updates."""
+
+    id: str
+    kind: str                      # update | downgrade
+    version: str | None            # to
+    from_version: str | None
+    by: str | None                 # who started it
+    started_at: str | None
+    finished_at: str | None
+    state: str                     # running, done, failed
+    exit: int | None
+    database: str | None = None    # downgrade: the dump put back
 
 
 class UpdateIn(BaseModel):
@@ -1327,6 +1357,9 @@ class DatabaseOut(BaseModel):
 class GeneralOut(BaseModel):
     hostname: str
     version: str                     # ggNet
+    install: Literal["installed", "development"]
+    app_dir: str                     # where the running code is (/opt/ggnet/backend on an install)
+    config_file: str
     server_ip: str
     proxmox: str | None
     kernel: str

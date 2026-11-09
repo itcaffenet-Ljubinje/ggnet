@@ -50,7 +50,7 @@ describe("NetworkBoot", () => {
     render(<NetworkBoot />);
     expect(await screen.findByText("Running")).toBeInTheDocument();
     expect(screen.getByText("ggnet-pxe")).toBeInTheDocument();
-    expect(screen.getByText("autoexec.ipxe missing")).toBeInTheDocument();
+    expect(screen.getByText("autoexec.ipxe").closest("li")).toHaveTextContent("missing");
     expect(screen.getByText(/values from config.toml/)).toBeInTheDocument();
   });
 
@@ -89,6 +89,7 @@ describe("NetworkBoot", () => {
           mok_enroll: false,
           mok_password: "ggnet",
           new_pc_name: "pc-{nn}",
+      network_boot: true,
         },
       },
     ]);
@@ -155,6 +156,7 @@ describe("NetworkBoot", () => {
           mok_enroll: true,
           mok_password: "cafe2026",
           new_pc_name: "pc-{nn}",
+      network_boot: true,
         },
       },
     ]);
@@ -163,13 +165,23 @@ describe("NetworkBoot", () => {
   it("cannot prepare the key before the server has one", async () => {
     stubHost();
     render(<NetworkBoot />);
-    expect(await screen.findByLabelText(/Prepare the Secure Boot key on PCs/)).toBeDisabled();
+    expect(await screen.findByText(/No Secure Boot key on this server yet/)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Prepare the Secure Boot key on PCs/)).toBeNull();
+  });
+
+  it("puts each part in its own card", async () => {
+    stubHost();
+    render(<NetworkBoot />);
+    for (const card of ["PXE service", "Booting PCs", "New PCs", "Secure Boot"]) {
+      expect(await screen.findByLabelText(card)).toBeInTheDocument();
+    }
+    expect(screen.queryByLabelText("HTTPS")).toBeNull();      // in Settings → General now
   });
 
   it("saves the New PC name and shows the default game image new PCs get", async () => {
     const mock = stubHost();
     render(<NetworkBoot />);
-    const name = await screen.findByLabelText("Name");
+    const name = await screen.findByLabelText(/^Name/);
     expect(await screen.findByText("games")).toBeInTheDocument();
     await userEvent.clear(name);
     await userEvent.type(name, "komp-{{nn}");
@@ -180,24 +192,23 @@ describe("NetworkBoot", () => {
       mok_enroll: false,
       mok_password: "ggnet",
       new_pc_name: "komp-{nn}",
+      network_boot: true,
     });
   });
 
-  it("shows the web UI's HTTPS and offers its certificate to trust", async () => {
-    stubHost(BOOT, PXE, {
-      enabled: true, url: "https://192.168.0.40:8443", subject: "CN=ggNet pve", names: ["192.168.0.40", "pve"],
-      not_after: "Nov  5 12:00:00 2036 GMT", sha256: "AB:CD", self_signed: true,
-    });
-    render(<NetworkBoot />);
-    expect(await screen.findByText("https://192.168.0.40:8443")).toBeInTheDocument();
-    expect(screen.getByText("192.168.0.40, pve")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /download the certificate/ })).toHaveAttribute(
-      "href", "/api/v1/settings/tls/certificate");
-  });
 
-  it("says when the web UI still runs on plain HTTP", async () => {
-    stubHost();
+  it("turns network boot off only after a warning", async () => {
+    const mock = stubHost();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
     render(<NetworkBoot />);
-    expect(await screen.findByText(/The web UI runs on plain HTTP/)).toBeInTheDocument();
+    const box = await screen.findByRole("checkbox", { name: /Network boot/ });
+    expect(box).toBeChecked();
+    await userEvent.click(box);
+    expect(screen.getByText("Off: every PC boots its own disk")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Save/ }));
+    expect(actions(mock)).toEqual([]);                        // cancelled
+    await userEvent.click(screen.getByRole("button", { name: /Save/ }));
+    expect(confirm.mock.calls[0][0]).toContain("Turn network boot off?");
+    expect(actions(mock)[0].body).toMatchObject({ network_boot: false });
   });
 });

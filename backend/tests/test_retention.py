@@ -132,6 +132,29 @@ def test_preview_and_run_delete_only_unused_old_versions(client, host, disk):
     assert client.get("/api/v1/settings/retention").json()["last_run"]["actions"][0]["target"] == "cs2@v2"
 
 
+def test_a_version_counts_as_unused_from_its_last_use(client, host, disk, make_session, prov):
+    _five_versions(client, disk)
+    # v2 is old (2025) but was in use until a day ago: kept.
+    host.snap_props.setdefault(f"{MASTER}@v2", {})["ggnet:last-used"] = str(
+        int((datetime.now(timezone.utc) - timedelta(days=1)).timestamp()))
+    assert client.post("/api/v1/settings/retention/preview", json=SAVE).json() == []
+    # In use 30 days ago: it goes, and the reason says so.
+    host.snap_props[f"{MASTER}@v2"]["ggnet:last-used"] = str(
+        int((datetime.now(timezone.utc) - timedelta(days=30)).timestamp()))
+    (action,) = client.post("/api/v1/settings/retention/preview", json=SAVE).json()
+    assert action["target"] == "cs2@v2" and "not used for 30 days" in action["reason"]
+
+
+def test_every_round_stamps_the_versions_in_use(client, host, disk, make_session, prov):
+    _five_versions(client, disk)
+    now = datetime(2026, 11, 9, 12, 0, tzinfo=timezone.utc)
+    assert retention.tick(make_session, prov, now=now) is None          # removal is off ...
+    stamped = {n.partition("@")[2] for n, p in host.snap_props.items()
+               if n.startswith(MASTER + "@") and "ggnet:last-used" in p}
+    assert stamped == {"base", "v5"}                                    # ... but base (pc02) and v5 (active) are stamped
+    assert host.snap_props[f"{MASTER}@v5"]["ggnet:last-used"] == str(int(now.timestamp()))
+
+
 def test_locked_versions_are_kept(client, disk):
     _five_versions(client, disk)
     client.put(f"/api/v1/images/{disk['id']}/snapshots/v2/lock", json={"locked": True})

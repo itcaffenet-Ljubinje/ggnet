@@ -49,4 +49,32 @@ describe("Updates", () => {
     expect(screen.getByText(/ggNet v0.2.0 is available/)).toBeInTheDocument();
     expect(onOpen).toHaveBeenCalled();
   });
+
+  it("lists the releases with their notes, the previous updates with their log, and goes back after a warning", async () => {
+    const releases = [
+      { ...LATEST, tag: "v0.2.1", version: "0.2.1", installed: true, notes: "- Uninstall hint" },
+      { ...LATEST, can_downgrade: true },
+    ];
+    const history = [{ id: "20261109034740", kind: "update" as const, version: "v0.2.1", from_version: "0.2.0",
+                       by: "admin", started_at: "2026-11-09T03:47:40Z", finished_at: null, state: "done" as const,
+                       exit: 0, database: null }];
+    const status = { ...STATUS, current: "0.2.1", available: false, latest: releases[0], releases, history };
+    const calls: { method: string; url: string; body?: unknown }[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ method: init?.method ?? "GET", url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      if (url.endsWith("/log")) return new Response(JSON.stringify(["==> ggNet updated."]));
+      return new Response(JSON.stringify(status));
+    }));
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<Updates />);
+    expect(await screen.findByText("- Uninstall hint")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Go back to v0.2.1" })).toBeNull();     // the installed one
+    await userEvent.click(screen.getByRole("button", { name: "Go back to v0.2.0" }));
+    expect(confirm.mock.calls[0][0]).toContain("whatever was changed in the web UI since then");
+    expect(calls.find((c) => c.method === "POST")).toMatchObject({
+      url: "/api/v1/server/update/downgrade", body: { version: "v0.2.0" } });
+    expect(screen.getByText(/Update 0.2.0 → v0.2.1/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Log" }));
+    expect(await screen.findByText("==> ggNet updated.")).toBeInTheDocument();
+  });
 });

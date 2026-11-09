@@ -5,6 +5,8 @@ export interface Health {
   version: string;
   pool: string;
   server_ip: string;
+  /** "development": runs from a source checkout (git); "installed": from a release in /opt/ggnet. */
+  install?: "installed" | "development";
 }
 
 /** Prepare image's options beyond what every image gets. */
@@ -239,6 +241,8 @@ export interface Snapshot {
   update?: string[] | null;
   /** What automatic removal (Settings → Retention) does with it, in words. */
   retention?: string | null;
+  /** When it was last in use (active, pinned, a PC on it); stamped hourly. */
+  last_used_at?: string | null;
 }
 
 /** The disk a new PC gets from `list`: the default one, else the only one; "" when there is a choice. */
@@ -396,6 +400,8 @@ export interface BootSettings {
   mok_password: string;
   /** New PC template: name with {n} or {nn} (the first free number), e.g. komp-{nn}. */
   new_pc_name: string;
+  /** Off: every PC boots its own disk (server maintenance); Disk Mode PCs are not affected. */
+  network_boot: boolean;
   /** Game image of a new PC; null: unknown PCs are not registered by Add new hardware. */
 }
 
@@ -414,9 +420,35 @@ export interface SecureBootKey {
 
 /** The PXE service (proxyDHCP + TFTP) as systemd sees it. */
 /** Settings → Updates: the installed and the newest ggNet. */
+export interface ReleaseInfo {
+  tag: string;
+  version: string;
+  name: string;
+  notes: string;
+  url: string;
+  published_at: string;
+  /** The version running now. */
+  installed?: boolean;
+  /** Older, and the database backup from before the update away from it is on the server. */
+  can_downgrade?: boolean;
+}
+
+export interface UpdateHistoryEntry {
+  id: string;
+  kind: "update" | "downgrade";
+  version: string | null;
+  from_version: string | null;
+  by: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  state: "running" | "done" | "failed";
+  exit: number | null;
+  database: string | null;
+}
+
 export interface UpdateStatus {
   current: string;
-  latest: { tag: string; version: string; name: string; notes: string; url: string; published_at: string } | null;
+  latest: ReleaseInfo | null;
   available: boolean;
   can_update: boolean;
   reason: string | null;
@@ -424,11 +456,14 @@ export interface UpdateStatus {
   job: {
     version: string | null;
     from_version: string | null;
+    kind?: "update" | "downgrade";
     started_at: string | null;
     state: "running" | "done" | "failed";
     exit: number | null;
     log: string[];
   } | null;
+  releases?: ReleaseInfo[];
+  history?: UpdateHistoryEntry[];
 }
 
 /** The web UI's HTTPS (Settings → Network boot). */
@@ -440,6 +475,8 @@ export interface TlsStatus {
   not_after: string | null;
   sha256: string | null;
   self_signed: boolean;
+  /** After a new certificate: ggNet restarts to use it. */
+  restarting?: boolean;
 }
 
 export interface PxeStatus {
@@ -527,6 +564,9 @@ export interface HostService {
 export interface General {
   hostname: string;
   version: string;
+  install: "installed" | "development";
+  app_dir: string;
+  config_file: string;
   server_ip: string;
   proxmox: string | null;
   kernel: string;
@@ -932,7 +972,10 @@ export const api = {
   getPxe: () => request<PxeStatus>("GET", "/v1/pxe"),
   getUpdate: (check = false) => request<UpdateStatus>("GET", `/v1/server/update${check ? "?check=true" : ""}`),
   startUpdate: (version: string) => request<UpdateStatus>("POST", "/v1/server/update", { version }),
+  startDowngrade: (version: string) => request<UpdateStatus>("POST", "/v1/server/update/downgrade", { version }),
+  updateLog: (id: string) => request<string[]>("GET", `/v1/server/update/history/${encodeURIComponent(id)}/log`),
   getTls: () => request<TlsStatus>("GET", "/v1/settings/tls"),
+  newCertificate: (names: string[]) => request<TlsStatus>("PUT", "/v1/settings/tls", { names }),
   restartPxe: () => request<PxeStatus>("POST", "/v1/pxe/restart"),
   saveRetention: (body: RetentionSettings) => request<Retention>("PUT", "/v1/settings/retention", body),
   previewRetention: (body: RetentionSettings) =>
