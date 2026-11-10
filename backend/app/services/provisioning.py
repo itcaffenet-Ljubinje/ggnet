@@ -550,11 +550,21 @@ class Provisioner:
                 raise self._fail(f"{'Locking' if locked else 'Unlocking'} {zvol_path}@{name} failed")
 
     def delete_snapshot(self, zvol_path: str, name: str) -> None:
+        """
+        Delete one version. A master's live data is its newest version (Apply
+        writebacks makes it so): when the newest is deleted, the live data
+        goes back to the version that is now the newest, or it would keep the
+        deleted version's blocks on the pool for nothing.
+        """
         with self.lock:
             self._clear()
+            snaps = self.zfs.list_snapshots(zvol_path) or []
             self._drop_spares_from(f"{zvol_path}@{name}")
             if not self.zfs.destroy_snapshot(f"{zvol_path}@{name}"):
                 raise self._fail(f"Deleting {zvol_path}@{name} failed")
+            rest = [s for s in snaps if s != name]
+            if snaps and snaps[-1] == name and rest and not self.zfs.rollback(f"{zvol_path}@{rest[-1]}"):
+                logger.warning("%s keeps the deleted version's data: %s", zvol_path, self.zfs.runner.last_error)
 
     def merge_into_base(self, zvol_path: str, name: str) -> list[str]:
         """

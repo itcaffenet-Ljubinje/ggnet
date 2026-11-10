@@ -450,6 +450,13 @@ class FakeHost:
                     p["origin"] = dst
             return self._ok()
 
+        if sub == "rollback":
+            if a[-1] not in self.snapshots:
+                return self._err(f"cannot open '{a[-1]}': dataset does not exist")
+            newer = [s for s in self.snapshots if s.split("@")[0] == a[-1].split("@")[0]]
+            if newer and newer[-1] != a[-1]:
+                return self._err("cannot rollback: more recent snapshots exist")
+            return self._ok()
         if sub == "destroy":
             name = a[-1]
             recursive = "-r" in a

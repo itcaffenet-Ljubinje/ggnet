@@ -901,6 +901,20 @@ class ZFSManager:
         logger.info("Snapshot %s deleted", snapshot)
         return True
 
+    def rollback(self, snapshot: str) -> bool:
+        """
+        Make a master's live data its newest version again (zfs rollback to
+        its newest snapshot; never -r, so no snapshot or clone is touched).
+        """
+        if "@" not in snapshot or not self._is_managed(snapshot):
+            return False
+        ok, _, err = self._run(["zfs", "rollback", snapshot])
+        if not ok:
+            self.runner.last_error = err
+            return False
+        logger.info("%s: live data back to %s", snapshot.partition("@")[0], snapshot)
+        return True
+
 if __name__ == "__main__":
     # Manual smoke test (runs `zpool list` on the host): python -m app.zfs_manager
     logging.basicConfig(level=logging.INFO)
