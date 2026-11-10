@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from datetime import datetime, timezone
 from functools import lru_cache
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, status
@@ -22,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_provisioner
 from app.api.v1.errors import conflict, host_failed, not_found
-from app.api.v1.machines import DUPLICATE, _published_disk, _provision, delete_machine
+from app.api.v1.machines import DUPLICATE, _published_disk, _provision, agent_online, delete_machine
 from app.api.v1.schemas import MachineOut, VmAction, VmCreate, VmOut, VmSettingsIn, VmUpdate
 from app.config import get_config
 from app.db.models import ImageKind, Machine, MachineMode, MachineStatus
@@ -216,8 +217,12 @@ def update_vm(machine_id: int, body: VmUpdate, db: Session = Depends(get_db),
 def vm_action(machine_id: int, body: VmAction, db: Session = Depends(get_db),
               host: ProxmoxHost = Depends(get_vm_host)):
     """
-    Start, Stop (power off) and Reset are done when this answers; Shutdown
-    and Reboot (Windows does them) are started and the list shows when the VM is off.
+    Start, Stop (power off) and Reset are done when this answers. Shutdown
+    and Reboot go through the agent in the VM while it reports, as on a PC
+    (shutdown.exe): the power button (ACPI) does whatever the image's power
+    button setting says, often Sleep or nothing, which a VM cannot do. Without
+    an agent they fall back to the power button. Either way they are only
+    started; the list shows when the VM is off.
     """
     m = _get_vm(db, machine_id)
     state = host.status(m.vm_id)
@@ -232,6 +237,12 @@ def vm_action(machine_id: int, body: VmAction, db: Session = Depends(get_db),
             conflict(f"'{m.name}' has no writebacks to start from ({m.status.value})")
     elif state == "stopped":
         conflict(f"'{m.name}' is off")
+    if body.action in ("shutdown", "reboot") and agent_online(m):
+        m.pending_command = body.action
+        m.pending_command_at = datetime.now(timezone.utc)
+        db.commit()
+        logger.info("VM %s of '%s': %s through its agent", m.vm_id, m.name, body.action)
+        return m
     if not host.action(m.vm_id, body.action):
         host_failed(f"{body.action.capitalize()} of VM {m.vm_id} failed: {host.runner.last_error}",
                     machine_id=m.id)

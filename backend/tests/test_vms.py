@@ -161,6 +161,20 @@ def test_shutdown_and_restart_are_asked_of_windows_with_a_timeout(client, host, 
     assert host.vms[100]["status"] == "stopped"
 
 
+def test_shutdown_goes_through_the_agent_while_it_reports(client, host, disks):
+    m = _vm(client, disks)
+    _action(client, m, "start")
+    beat = client.post("/api/v1/agent/heartbeat", json={"name": "work-vm", "agent_version": "0.1.21"})
+    assert beat.status_code == 200, beat.text
+    host.calls.clear()
+    r = _action(client, m, "shutdown")
+    assert r.status_code == 200, r.text
+    assert r.json()["pending_command"] == "shutdown"
+    assert not any(c[:2] == ["qm", "shutdown"] for c in host.calls)   # not the power button
+    nxt = client.post("/api/v1/agent/heartbeat", json={"name": "work-vm", "agent_version": "0.1.21"})
+    assert nxt.json()["command"] == "shutdown"                          # shutdown.exe in the VM
+
+
 def test_list_shows_the_live_state_not_the_cluster_cache(client, host, disks, monkeypatch):
     m = _vm(client, disks)
     _action(client, m, "start")
