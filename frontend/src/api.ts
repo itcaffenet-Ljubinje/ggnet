@@ -742,6 +742,8 @@ export interface VmInfo {
   cores: number | null;
   memory_mb: number | null;
   node: string;
+  /** "local": writebacks are the VM's SATA drives; "network": it PXE-boots over iSCSI. */
+  drives: "local" | "network";
 }
 
 export interface VmBridge {
@@ -790,6 +792,7 @@ export interface VmCreate {
   cores: number;
   memory_mb: number;
   keep_writeback: boolean;
+  drives: "local" | "network";
 }
 
 export type VmActionKind = "start" | "shutdown" | "stop" | "reset" | "reboot";

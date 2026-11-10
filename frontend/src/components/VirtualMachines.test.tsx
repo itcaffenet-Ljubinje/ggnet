@@ -55,6 +55,7 @@ describe("virtual machines", () => {
     const post = mock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "POST")!;
     expect(JSON.parse((post[1] as RequestInit).body as string)).toEqual({
       name: "work-vm", os_image_id: 1, game_image_id: 2, cores: 4, memory_mb: 8192, keep_writeback: true,
+      drives: "local",
     });
     expect(onClose).toHaveBeenCalled();
   });
@@ -70,7 +71,7 @@ describe("virtual machines", () => {
   it("offers Start for a stopped VM and the console for a running one", async () => {
     const mock = vi.fn().mockImplementation(async () => new Response(JSON.stringify(machine()), { status: 200 }));
     vi.stubGlobal("fetch", mock);
-    const vm = { machine_id: 7, vm_id: 104, status: "stopped", cores: 4, memory_mb: 8192, node: "pve1" };
+    const vm = { machine_id: 7, vm_id: 104, status: "stopped", cores: 4, memory_mb: 8192, node: "pve1", drives: "local" as const };
     const run = async (_key: string, fn: () => Promise<unknown>) => {
       await fn();
       return true;

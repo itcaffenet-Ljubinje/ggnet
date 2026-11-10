@@ -476,7 +476,10 @@ LUNs on the shared target.
   random 8-character VNC password; the browser opens `wss://…/api/v1/vm-console/<ticket>` and the backend pipes
   it to `qm vncproxy <vmid>` with `LC_PVE_TICKET=<password>`. No Proxmox sign-in is needed. Shutdown and Restart
   ask Windows (`qm shutdown|reboot --timeout 600`) in the background; Start, Power off and Reset are waited for.
-- Planned: a VM that starts from the network like a PC (only on the bridge ggNet's network boot answers on).
+- Drives connection, chosen at Create VM: **Local Drives** (above) or **Network**. A Network VM boots like a
+  diskless PC: `--boot order=net0`, no SATA drives, its NIC on ggNet's own interface (where PXE is answered),
+  its IQN derived from its MAC like a PC's, so the Provisioner maps its writebacks on the shared target and
+  the per-MAC iPXE script logs in with the same IQN. It checks that an image boots over the network.
 
 ---
 

@@ -387,3 +387,61 @@ def test_a_vm_writeback_is_discarded_after_shutdown_unless_kept(client, host, pr
     # Discarded or kept, the VM has its drives again.
     assert host.vms[100]["config"]["sata0"].startswith(f"/dev/zvol/{WB}/work-vm-os,")
     assert host.vms[100]["config"]["sata1"].startswith(f"/dev/zvol/{WB}/work-vm,")
+
+
+# ── Network (PXE) boot VMs ────────────────────────────────────────────
+
+@pytest.fixture
+def pxe_bridge(monkeypatch):
+    """ggNet's own interface is a bridge the host has, so network boot is allowed."""
+    monkeypatch.setattr("app.api.v1.vms._interface", lambda: "vmbr1")
+
+
+def test_network_vm_boots_over_iscsi_like_a_diskless_pc(client, host, disks, pxe_bridge):
+    m = _vm(client, disks, drives="network")
+    # A diskless PC: its IQN comes from the MAC, so iPXE and the ACL match.
+    assert m["vm_id"] == 100 and m["mode"] == "boot"
+    digits = m["mac"].replace(":", "")
+    assert m["initiator_iqn"].endswith(f":pc-{digits}")
+    cfg = host.vms[100]["config"]
+    assert cfg["boot"] == "order=net0"
+    assert "sata0" not in cfg and "sata1" not in cfg       # no local drives
+    # The writebacks are on the shared iSCSI target (OS = LUN 0, game = LUN 1).
+    assert host.visible(m["initiator_iqn"]) == [
+        f"/dev/zvol/{WB}/work-vm-os", f"/dev/zvol/{WB}/work-vm"]
+    [vm] = client.get("/api/v1/vms").json()
+    assert vm["drives"] == "network"
+
+
+def test_network_boot_needs_ggnet_on_a_bridge(client, host, disks, monkeypatch):
+    monkeypatch.setattr("app.api.v1.vms._interface", lambda: "lo")   # not a bridge
+    os_image, game = disks
+    r = client.post("/api/v1/vms", json={"name": "netvm", "os_image_id": os_image["id"],
+                                         "game_image_id": game["id"], "drives": "network"})
+    assert r.status_code == 409 and "Network boot needs" in r.json()["detail"]["error"]
+    assert host.vms == {}
+
+
+def test_local_vm_stays_on_local_drives(client, host, disks):
+    m = _vm(client, disks, drives="local")
+    assert m["initiator_iqn"].endswith(":vm-100")
+    assert host.vms[100]["config"]["sata0"].startswith(f"/dev/zvol/{WB}/work-vm-os,")
+    assert host.visible(m["initiator_iqn"]) == []           # nothing on the iSCSI target
+    assert client.get("/api/v1/vms").json()[0]["drives"] == "local"
+
+
+def test_network_vm_pxe_script_matches_its_acl(client, host, disks, pxe_bridge):
+    m = _vm(client, disks, drives="network")
+    r = client.get(f"/api/v1/boot/ipxe?mac={m['mac'].replace(':', '-')}")
+    assert r.status_code == 200, r.text
+    assert f"set initiator-iqn {m['initiator_iqn']}" in r.text
+    assert ":storage" in r.text                             # the shared target
+
+
+def test_deleting_a_network_vm_removes_the_target_and_the_vm(client, host, disks, pxe_bridge):
+    m = _vm(client, disks, drives="network")
+    assert host.visible(m["initiator_iqn"])
+    assert client.delete(f"/api/v1/vms/{m['id']}").status_code == 204
+    assert host.vms == {}
+    assert host.visible(m["initiator_iqn"]) == []
+    assert f"{WB}/work-vm" not in host.datasets and f"{WB}/work-vm-os" not in host.datasets

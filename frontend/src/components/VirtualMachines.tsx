@@ -46,6 +46,7 @@ export function CreateVm({ disks, reload, onClose }: CreateVmProps) {
   const [cores, setCores] = useState(4);
   const [memoryGb, setMemoryGb] = useState(8);
   const [keep, setKeep] = useState(true);
+  const [drives, setDrives] = useState<"local" | "network">("local");
 
   useEffect(() => {
     api
@@ -67,6 +68,7 @@ export function CreateVm({ disks, reload, onClose }: CreateVmProps) {
         cores,
         memory_mb: memoryGb * GB,
         keep_writeback: keep,
+        drives,
       }),
     );
     await reload();
@@ -161,6 +163,20 @@ export function CreateVm({ disks, reload, onClose }: CreateVmProps) {
                 required
               />
               {limit !== null && <div className="form-hint">At most {Math.floor(limit / GB)} GB.</div>}
+            </div>
+          </div>
+          <div className="form-group">
+            <label htmlFor="vm-drives">Drives</label>
+            <select id="vm-drives" value={drives} onChange={(e) => setDrives(e.target.value as "local" | "network")}>
+              <option value="local">Local Drives (fastest)</option>
+              <option value="network">Network (boots like a diskless PC)</option>
+            </select>
+            <div className="form-hint">
+              {drives === "local"
+                ? "The writebacks are the VM's own disks, straight from the server's pool."
+                : `The VM starts from the network over iSCSI, exactly as a PC in Boot Mode, on ggNet's own interface${
+                    host?.service_interface ? ` (${host.service_interface})` : ""
+                  }. Use it to check that the image boots over the network.`}
             </div>
           </div>
           <label className="check">

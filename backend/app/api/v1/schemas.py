@@ -582,7 +582,7 @@ class MachineOut(BaseModel):
 # ── Virtual machines ──────────────────────────────────────────────────
 
 class VmCreate(BaseModel):
-    """A VM for working on images: an OS image and a game image as its local drives."""
+    """A VM for working on images: an OS image and a game image as its drives."""
 
     name: str
     os_image_id: int
@@ -590,6 +590,10 @@ class VmCreate(BaseModel):
     cores: int = Field(4, ge=1, le=512)
     memory_mb: int = Field(8192, ge=2048, le=4 * 1024 * 1024)
     keep_writeback: bool = True         # it is where images are worked on
+    # "local": the writebacks are the VM's SATA drives (fastest). "network":
+    # the VM boots from the network like a diskless PC, its writebacks on the
+    # shared iSCSI target (to check the image boots over the network).
+    drives: Literal["local", "network"] = "local"
 
     @field_validator("name")
     @classmethod
@@ -619,6 +623,7 @@ class VmOut(BaseModel):
     cores: int | None
     memory_mb: int | None
     node: str
+    drives: Literal["local", "network"]
 
 
 # ── Agent ─────────────────────────────────────────────────────────────
