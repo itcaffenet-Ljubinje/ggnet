@@ -314,3 +314,18 @@ def test_console_websocket_pipes_the_vnc_proxy(client, host, disks, monkeypatch)
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect(c["path"]) as ws:
             ws.receive_bytes()
+
+
+# ── The agent in the VM ───────────────────────────────────────────────
+
+def test_the_agent_in_a_vm_connects_nothing_and_hides_no_disk(client, host, disks):
+    m = _vm(client, disks)
+    r = client.post("/api/v1/agent/heartbeat", json={
+        "name": "work-vm", "agent_version": "0.1.21",
+        "initiator_iqn": "iqn.2025-05.net.ggnet:pc-10ffe066bdec"})   # the image's PC
+    assert r.status_code == 200, r.text
+    c = r.json()
+    # Agents hide local disks only in "boot" and connect only a target they are sent:
+    # the game writeback is the VM's SATA disk, so it must stay online.
+    assert c["machine_id"] == m["id"] and c["mode"] == "vm"
+    assert c["iscsi_target_iqn"] is None and c["secure_boot"] is None and c["update"] is None

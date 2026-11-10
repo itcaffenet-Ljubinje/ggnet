@@ -54,6 +54,19 @@ describe("AgentState", () => {
       .toBeInTheDocument();
   });
 
+  it("says nothing about iSCSI for a VM: Proxmox attaches its drives", () => {
+    const m = machine({
+      vm_id: 109,
+      last_seen_at: "2026-10-07T12:09:40Z",
+      reported_iqn: "iqn.2025-05.net.ggnet:pc-10ffe066bdec",   // the image's PC
+      iscsi_connected: false,
+    });
+    render(<AgentState machine={m} now={NOW} />);
+    expect(screen.getByText("Online")).toBeInTheDocument();
+    expect(screen.queryByText("Disk not connected")).not.toBeInTheDocument();
+    expect(screen.queryByText(/PC reports IQN/)).not.toBeInTheDocument();
+  });
+
   it("shows IP, link speed and uptime while online, and flags a slow link", () => {
     const now = Date.parse("2026-10-09T12:00:30Z");
     render(

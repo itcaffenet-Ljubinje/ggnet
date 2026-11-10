@@ -709,7 +709,11 @@ class AgentConfig(BaseModel):
 
     machine_id: int
     name: str
-    mode: MachineMode
+    # "vm": a virtual machine (app.services.vms). Its drives are attached by
+    # Proxmox, so the agent connects nothing, keeps every disk online (the
+    # game writeback is a local SATA disk there) and enrolls no key; agents
+    # do only what "disk" and "boot" ask for, so any agent version is right.
+    mode: Literal["disk", "boot", "vm"]
     status: MachineStatus
     initiator_iqn: str                  # the IQN the server's ACL expects
     iscsi_target_iqn: str | None

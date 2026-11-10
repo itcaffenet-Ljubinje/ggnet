@@ -37,6 +37,15 @@ public class LocalDisksTests
     }
 
     [Fact]
+    public async Task A_virtual_machine_keeps_its_disks_online()
+    {
+        // The server's VMs: the game writeback is the VM's own SATA disk.
+        _server.Body = ConfigJson.Replace("\"mode\": \"disk\"", "\"mode\": \"vm\"");
+        await Worker().TickAsync(CancellationToken.None);
+        Assert.Equal(0, _disks.Calls);
+    }
+
+    [Fact]
     public async Task Nothing_is_hidden_when_the_setting_is_off()
     {
         BootMode();
