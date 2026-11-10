@@ -445,3 +445,25 @@ def test_deleting_a_network_vm_removes_the_target_and_the_vm(client, host, disks
     assert host.vms == {}
     assert host.visible(m["initiator_iqn"]) == []
     assert f"{WB}/work-vm" not in host.datasets and f"{WB}/work-vm-os" not in host.datasets
+
+
+# ── BitLocker (Device encryption) ─────────────────────────────────────
+
+@pytest.mark.parametrize("which", ["work-vm-os", "work-vm"])
+def test_apply_refuses_a_bitlocker_writeback(client, host, disks, which):
+    m = _vm(client, disks)
+    host.bitlocker.add(f"{WB}/{which}")
+    r = client.post(f"/api/v1/machines/{m['id']}/apply-writebacks", json={"os": True, "game": True})
+    assert r.status_code == 409, r.text
+    d = r.json()["detail"]
+    assert "BitLocker" in d["error"] and "manage-bde -off" in d["error"]
+    assert d["bitlocker"] == [f"/dev/zvol/{WB}/{which}-part1"]
+    images = client.get("/api/v1/images").json()
+    assert {i["snapshot"] for i in images} == {"base"}                 # nothing applied
+
+
+def test_every_os_writeback_forbids_device_encryption():
+    from app.windows_setup import OsSetup, image_patch, registry_patch
+
+    for text in (registry_patch(OsSetup("vip-05", {}), 1), image_patch(1)):
+        assert '[\\ControlSet001\\Control\\BitLocker]\n"PreventDeviceEncryption"=dword:00000001' in text

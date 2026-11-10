@@ -37,6 +37,7 @@ class FakeHost:
         self.lio_batch_missing = False                  # rtslib-fb not installed
         self.copy_bytes = 1000                          # size of a `zfs send` stream
         self.image_files: dict[str, int] = {}           # path -> virtual size, for qemu-img
+        self.bitlocker: set[str] = set()                # zvols whose partition Windows encrypted
         # Proxmox: VM ID -> {"status": ..., "config": {option: value}}
         self.vms: dict[int, dict] = {}
         self.next_vmid = 100
@@ -61,6 +62,8 @@ class FakeHost:
             return self._targetcli(cmd[1:])
         if cmd[0] == "udevadm":
             return self._ok()
+        if cmd[0] == "lsblk":
+            return self._lsblk(cmd[-1])
         if cmd[0] == "qm":
             return self._qm(cmd[1:])
         if cmd[0] == "pvesh":
@@ -77,6 +80,15 @@ class FakeHost:
                 return self._cat_stats(cmd[1:])
             return self._cat(cmd[1])
         raise AssertionError(f"FakeHost does not know command: {cmd}")
+
+    def _lsblk(self, device: str):
+        """One data partition per zvol: NTFS, or BitLocker for one in `bitlocker`."""
+        ds = device.removeprefix("/dev/zvol/")
+        if ds not in self.datasets:
+            return self._err(f"lsblk: {device}: not a block device")
+        part = {"path": f"{device}-part1", "type": "part", "size": 1 << 30,
+                "fstype": "BitLocker" if ds in self.bitlocker else "ntfs"}
+        return self._ok(json.dumps({"blockdevices": [{"path": device, "type": "disk", "children": [part]}]}))
 
     # ── Proxmox (qm, pvesh) ───────────────────────────────────────────
 

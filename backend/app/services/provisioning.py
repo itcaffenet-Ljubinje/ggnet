@@ -33,7 +33,7 @@ from typing import Callable
 from app.disk_grow import GrowResult, PartitionGrower
 from app.iscsi_manager import SLOTS, Disk, ISCSIManager
 from app.services.vms import VmDisks, vmid_of
-from app.windows_setup import ImagePrep, OsSetup, WindowsSetup
+from app.windows_setup import ImagePrep, OsSetup, WindowsSetup, partitions
 from app.zfs_manager import ZFSManager
 
 logger = logging.getLogger("ggnet.provisioning")
@@ -403,6 +403,10 @@ class Provisioner:
         if isinstance(found, list) and not self.zfs.set_snapshot_update(f"{master}@{snapshot}", found):
             logger.warning("The update state of %s@%s could not be recorded", master, snapshot)
         return found
+
+    def bitlocker(self, clone_zvol: str) -> list[str]:
+        """Partitions of a writeback that Windows encrypted with BitLocker (Device encryption)."""
+        return partitions(self.zfs.runner, self.zfs.zvol_device_path(clone_zvol), "BitLocker")
 
     def writeback_update(self, clone_zvol: str) -> list[str] | str:
         """WindowsSetup.pending_update() on a PC's OS writeback (the PC is off)."""
