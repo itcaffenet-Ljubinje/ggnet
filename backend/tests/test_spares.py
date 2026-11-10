@@ -88,6 +88,18 @@ def test_a_stale_os_spare_is_not_used_and_is_renewed(host, boot):
     assert host.datasets[f"{OS_CLONE}_spare"]["props"][SETUP_PROP] == setup_tag(renamed)
 
 
+def test_a_spare_set_up_by_an_older_ggnet_is_not_used(host, boot, monkeypatch):
+    """A newer ggNet writes more into each OS writeback (e.g. no Device encryption)."""
+    from app.services import provisioning
+
+    monkeypatch.setattr(provisioning, "SETUP_VERSION", provisioning.SETUP_VERSION - 1)
+    boot.make_spares("pc01", CLONE, f"{GAME}@base", OS_CLONE, f"{OS}@base", SETUP)
+    monkeypatch.undo()
+    host.calls.clear()
+    _reset(boot)
+    assert [c[-1] for c in host.calls if c[:2] == ["zfs", "clone"]] == [OS_CLONE]   # set up anew
+
+
 def test_a_new_image_version_makes_the_spares_stale(host, boot):
     boot.make_spares("pc01", CLONE, f"{GAME}@base", OS_CLONE, f"{OS}@base", SETUP)
     host.snapshots[f"{OS}@v2"] = set()

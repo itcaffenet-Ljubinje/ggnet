@@ -105,11 +105,17 @@ SETUP_PROP = "ggnet:setup"         # on an OS spare: which setup it was made wit
 SPARE_RETRY = 600.0                # seconds before spares that failed are tried again
 
 
+# Raised whenever personalize() writes something new into an OS writeback, so
+# spares set up by an older ggNet are made again instead of used.
+# 2: Control\BitLocker\PreventDeviceEncryption.
+SETUP_VERSION = 2
+
+
 def setup_tag(setup: OsSetup | None) -> str:
     """A short fingerprint of what personalize() writes, to tell a stale OS spare."""
     if setup is None:
         return "none"
-    data = json.dumps([setup.computer_name, sorted(setup.env.items())])
+    data = json.dumps([SETUP_VERSION, setup.computer_name, sorted(setup.env.items())])
     return hashlib.sha256(data.encode()).hexdigest()[:16]
 
 

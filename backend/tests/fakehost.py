@@ -64,6 +64,9 @@ class FakeHost:
             return self._ok()
         if cmd[0] == "lsblk":
             return self._lsblk(cmd[-1])
+        if cmd[0] == "blkid":
+            ds = cmd[-1].removeprefix("/dev/zvol/").removesuffix("-part1")
+            return self._ok("BitLocker\n" if ds in self.bitlocker else "ntfs\n")
         if cmd[0] == "qm":
             return self._qm(cmd[1:])
         if cmd[0] == "pvesh":

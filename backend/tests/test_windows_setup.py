@@ -59,7 +59,8 @@ def _windows_on(windows: WindowsSetup, name: str = "vip-05") -> Path:
 
 
 def _cmds(runner: FakeRunner) -> list[list[str]]:
-    return [c for c in runner.calls if c[0] != "udevadm"]
+    """What was done, without udev waits and file system probes (blkid -p)."""
+    return [c for c in runner.calls if c[0] not in ("udevadm", "blkid")]
 
 
 # ── The registry patch ───────────────────────────────────────────────
@@ -953,3 +954,10 @@ def test_bitlocker_windows_is_named_not_mounted(windows, runner):
     problem = windows.personalize(DEVICE, SETUP)
     assert "encrypted with BitLocker (/dev/zd16p3)" in problem
     assert not any(c[0] == "ntfs-3g" for c in runner.calls)
+
+
+def test_encryption_since_the_disk_appeared_is_seen(windows, runner):
+    """udev still says ntfs; the disk itself (blkid -p) says BitLocker."""
+    runner.responses[("blkid", "-p", "-o", "value", "-s", "TYPE", "/dev/zd16p3")] = (True, "BitLocker\n", "")
+    assert windows.bitlocker_partitions(DEVICE) == ["/dev/zd16p3"]
+    assert "/dev/zd16p3" not in windows.ntfs_partitions(DEVICE)

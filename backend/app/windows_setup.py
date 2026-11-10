@@ -771,9 +771,19 @@ def partitions(runner, device: str, fstype: str) -> list[str]:
         d = todo.pop()
         flat.append(d)
         todo.extend(d.get("children") or [])
-    parts = [d for d in flat if d.get("type") == "part" and d.get("fstype") == fstype]
+    parts = [d for d in flat if d.get("type") == "part" and _fstype(runner, d) == fstype]
     parts.sort(key=lambda c: int(c.get("size") or 0), reverse=True)
     return [c["path"] for c in parts]
+
+
+def _fstype(runner, part: dict) -> str | None:
+    """
+    What is on a partition now, read from the disk (blkid -p). lsblk's FSTYPE
+    is udev's note from when the device appeared: a Windows that encrypted
+    itself in a VM since then still shows "ntfs" there.
+    """
+    ok, out, _ = runner.run(["blkid", "-p", "-o", "value", "-s", "TYPE", part["path"]], quiet=True)
+    return out.strip() if ok and out.strip() else part.get("fstype")
 
 
 class WindowsSetup:
