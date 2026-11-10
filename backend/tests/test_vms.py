@@ -329,3 +329,47 @@ def test_the_agent_in_a_vm_connects_nothing_and_hides_no_disk(client, host, disk
     # the game writeback is the VM's SATA disk, so it must stay online.
     assert c["machine_id"] == m["id"] and c["mode"] == "vm"
     assert c["iscsi_target_iqn"] is None and c["secure_boot"] is None and c["update"] is None
+
+
+# ── Writebacks follow the VM's power state (production watcher rules) ─
+
+@pytest.fixture
+def make_session(db_url):
+    from sqlalchemy.orm import sessionmaker
+
+    from app.db.session import make_engine
+
+    engine = make_engine(db_url)
+    yield sessionmaker(bind=engine, expire_on_commit=False)
+    engine.dispose()
+
+
+def _watch(make_session, prov, at):
+    from app.services import writebacks
+    from app.services.writebacks import WritebackSettings
+
+    writebacks.tick(make_session, prov, WritebackSettings(auto_discard=True), now=at)
+
+
+def _clones(host, name):
+    return sum(1 for c in host.calls if c[:2] == ["zfs", "clone"] and c[-1].endswith(f"/{name}"))
+
+
+@pytest.mark.parametrize("keep", [False, True])
+def test_a_vm_writeback_is_discarded_after_shutdown_unless_kept(client, host, prov, disks, make_session, keep):
+    from datetime import datetime, timedelta, timezone
+
+    t0 = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
+    m = _vm(client, disks, keep_writeback=keep)
+    _action(client, m, "start")
+    _watch(make_session, prov, t0)                                  # running: written to
+    assert client.get(f"/api/v1/machines/{m['id']}").json()["writeback_dirty"] is True
+    _action(client, m, "shutdown")
+    host.calls.clear()
+    _watch(make_session, prov, t0 + timedelta(seconds=5))
+    _watch(make_session, prov, t0 + timedelta(seconds=60))          # off, after the grace time
+    made = (_clones(host, "work-vm"), _clones(host, "work-vm-os"))
+    assert made == ((0, 0) if keep else (1, 1))
+    # Discarded or kept, the VM has its drives again.
+    assert host.vms[100]["config"]["sata0"].startswith(f"/dev/zvol/{WB}/work-vm-os,")
+    assert host.vms[100]["config"]["sata1"].startswith(f"/dev/zvol/{WB}/work-vm,")
