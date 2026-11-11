@@ -16,6 +16,8 @@ if (File.Exists(Path.Combine(ToolchainJob.Folder, ToolchainJob.JobFile)))
     builder.Services.AddSingleton<IDeviceInstaller, SetupApiInstaller>();
     builder.Services.AddSingleton<IPowerControl, WindowsPowerControl>();
     builder.Services.AddHostedService<ToolchainWorker>();
+    builder.Logging.AddProvider(new FileLoggerProvider(Path.Combine(ToolchainJob.Folder, "agent.log")));
+    SafeLogging.Apply(builder.Services);
     builder.Build().Run();
     return;
 }
@@ -42,6 +44,7 @@ builder.Services.AddSingleton<IUpdateLauncher, PowerShellUpdateLauncher>();
 builder.Services.AddSingleton<AgentUpdater>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddHostedService<AgentWorker>();
+SafeLogging.Apply(builder.Services);
 
 builder.Build().Run();
 
