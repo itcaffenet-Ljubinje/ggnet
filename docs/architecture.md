@@ -43,16 +43,19 @@ same ARC blocks. A clone only costs the space of what that PC wrote since its la
 | Dataset | volblocksize | compression | sync | other |
 |---|---|---|---|---|
 | game master (`images/<game>`) | `64k` | `lz4` | `standard` | `readonly=on` after publish |
-| OS master (`images/<os>`) | `16k` | `lz4` | `standard` | `readonly=on` after publish |
+| OS master (`images/<os>`) | `32k` | `lz4` | `standard` | `readonly=on` after publish |
 | PC writeback (`writebacks/*`) | inherited from origin | inherited | **`disabled`** | discarded on every disconnect unless Keep Writeback |
 
 Why these values:
 
 - `64k` for games: game files are large and read sequentially. Format the game image in Windows as **NTFS with a
   64K allocation unit** so one NTFS cluster is one ZFS block (no read-modify-write).
-- `16k` for the OS (the OpenZFS 2.2+ default): Windows does small random I/O. `4k`/`8k` zvols on a mirror waste
-  metadata and compress badly; on RAIDZ they waste a lot of space. On this host's ZFS RAID10 `16k` is the right
-  trade-off.
+- `32k` for the OS. Windows does small random I/O, but a writeback copies a whole block at the first write to
+  it, so the block size trades write amplification against compression and metadata. Measured on vip-05 with the
+  same image at `16k` and `32k` (Boot Mode, three boots each): iPXE → agent 79–80 s for both, OS writeback ~90 s
+  after boot ~670 MB (`16k`) vs ~555 MB (`32k`), image 54.8 vs 52.0 GB (lz4 1.24× vs 1.31×). `4k`/`8k` zvols
+  on a mirror waste metadata and compress badly; on RAIDZ they waste a lot of space. Images made before this
+  keep their block size (it is fixed at creation).
 - `lz4`: costs almost nothing and gives up early on data that is already compressed, so it is safe for game
   files too. `zstd` saves a little more space on OS images for more CPU; not worth it for hot game data.
 - `sync=disabled` on writebacks: they are thrown away on every disconnect anyway. A PC with **Keep Writeback**
