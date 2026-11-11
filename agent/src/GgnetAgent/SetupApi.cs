@@ -109,7 +109,14 @@ public sealed class SetupApiInstaller : IDeviceInstaller
             if (!SetupDiGetSelectedDriverW(set, ref data, ref driver))
                 return Fail(device, "read the selected driver");
             if (!DiInstallDevice(IntPtr.Zero, set, ref data, ref driver, 0, out _))
-                return Fail(device, $"install {driver.Description}");
+            {
+                // "Removed unexpectedly": Windows dropped the device it was still
+                // configuring (seen when committing the driver's files took
+                // minutes). The driver is in place by then, so a retry is quick.
+                var removed = Marshal.GetLastWin32Error() == ErrorNoSuchDevinst;   // before Fail() reads it
+                var failed = Fail(device, $"install {driver.Description}");
+                return removed ? failed with { Deferred = true } : failed;
+            }
             // A deferred install runs in the background: wait for it, then check
             // that the card really got a driver (a retry removes and remakes it).
             CMP_WaitNoPendingInstallEvents(InstallWaitMs);
@@ -162,6 +169,7 @@ public sealed class SetupApiInstaller : IDeviceInstaller
     private static readonly IntPtr InvalidHandle = new(-1);
     private const int ErrorDevinstAlreadyExists = unchecked((int)0xE0000207);
     private const int ErrorInvalidRegProperty = unchecked((int)0xE0000209);
+    private const int ErrorNoSuchDevinst = unchecked((int)0xE000020B);
     private const int SpdrpHardwareId = 0x01;
     private const int SpdrpCompatibleIds = 0x02;
     private const int SpdrpDriver = 0x09;
