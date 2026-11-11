@@ -232,8 +232,10 @@ class ZFSManager:
         """`path` is the full ZFS path, e.g. `tank/ggnet/images/steam-main`."""
         if not self._is_managed(path, allow_snapshot=False):
             return False
+        # Sparse (-s): the image takes only what is written to it; the pool
+        # keeps its own free space (set_reserved()), not every zvol.
         ok, _, err = self._run([
-            "zfs", "create",
+            "zfs", "create", "-s",
             "-V", f"{size_gb}G",
             "-o", f"volblocksize={volblocksize}",
             "-o", f"compression={compression}",
@@ -271,10 +273,15 @@ class ZFSManager:
         return ok
 
     def set_readonly(self, path: str, readonly: bool = True) -> bool:
+        """
+        A read-only master is never written, so it reserves nothing: an image
+        made thick by an older ggNet held its whole size on the pool for
+        nothing (the pool keeps its own free space, see set_reserved()).
+        """
         if not self._is_managed(path, allow_snapshot=False):
             return False
-        value = "on" if readonly else "off"
-        ok, _, _ = self._run(["zfs", "set", f"readonly={value}", path])
+        props = ["readonly=on", "refreservation=none"] if readonly else ["readonly=off"]
+        ok, _, _ = self._run(["zfs", "set", *props, path])
         return ok
 
     def publish_master(self, zvol_path: str, snap_name: str = "base") -> bool:

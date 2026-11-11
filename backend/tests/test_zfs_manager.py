@@ -205,7 +205,7 @@ def test_setup_dataset_tree_stops_on_failure(zfs, runner):
 def test_create_zvol(zfs, runner):
     assert zfs.create_zvol(MASTER, 50)
     assert runner.calls == [[
-        "zfs", "create", "-V", "50G",
+        "zfs", "create", "-s", "-V", "50G",
         "-o", "volblocksize=64k", "-o", "compression=off", "-o", "sync=disabled",
         MASTER,
     ]]
@@ -216,7 +216,7 @@ def test_publish_master_order(zfs, runner):
     assert runner.calls == [
         ["zfs", "snapshot", MASTER_SNAP],
         ["zfs", "hold", "ggnet:protected", MASTER_SNAP],
-        ["zfs", "set", "readonly=on", MASTER],
+        ["zfs", "set", "readonly=on", "refreservation=none", MASTER],
     ]
 
 

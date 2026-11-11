@@ -359,13 +359,14 @@ class FakeHost:
             return self._ok()
 
         if sub == "set":
-            prop, name = a[1], a[2]
+            name = a[-1]
             if name not in self.datasets:
                 return self._err(f"cannot open '{name}': dataset does not exist")
-            key, _, value = prop.partition("=")
-            if key == "readonly":
-                self.datasets[name]["readonly"] = value == "on"
-            self.datasets[name].setdefault("props", {})[key] = value
+            for prop in a[1:-1]:                       # zfs set p1=v1 p2=v2 name
+                key, _, value = prop.partition("=")
+                if key == "readonly":
+                    self.datasets[name]["readonly"] = value == "on"
+                self.datasets[name].setdefault("props", {})[key] = value
             return self._ok()
 
         if sub == "get" and "@" in a[-1]:
