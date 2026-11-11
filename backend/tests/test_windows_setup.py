@@ -879,6 +879,17 @@ def test_toolchain_result_without_a_result(windows, runner):
     assert "no result" in windows.toolchain_result(DEVICE, label="win11")
 
 
+def test_the_agents_log_of_the_run_is_kept_on_the_server(windows, runner):
+    folder = _toolchain_image(windows) / "ProgramData" / "ggNet" / "toolchain"
+    folder.mkdir(parents=True)
+    (folder / "agent.log").write_text("12:07:34 Information ToolchainWorker: Toolchain job found\n")
+    problem = windows.toolchain_result(DEVICE, label="win11")      # the agent stopped: no result
+    saved = windows.run_dir / "toolchain-win11-agent.log"
+    assert "stopped before it finished" in problem and str(saved) in problem
+    assert "Toolchain job found" in saved.read_text()
+    assert not (folder / "agent.log").exists()                       # not left in the image
+
+
 def test_a_card_whose_install_failed_is_not_ready():
     # Windows left the entry without a driver (ConfigFlags 0x20, reinstall): it cannot start the card.
     failed = ENUM + (

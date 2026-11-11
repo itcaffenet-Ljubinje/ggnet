@@ -249,6 +249,7 @@ def nic_known(export: str, nic: str, instance: str | None = None) -> bool:
 # booted in a VM, installs the devices of this job (agent/src/GgnetAgent/Toolchain.cs).
 TOOLCHAIN_DIR = ("ProgramData", "ggNet", "toolchain")
 TOOLCHAIN_JOB, TOOLCHAIN_RESULT, TOOLCHAIN_DONE = "job.json", "result.json", "job.done"
+TOOLCHAIN_LOG = "agent.log"        # the agent's own log of the run (agent 0.1.24+)
 # The VM's disk is on its SATA controller: that driver has to start at boot.
 TOOLCHAIN_BOOT_DRIVERS = ("storahci",)
 
@@ -1009,8 +1010,21 @@ class WindowsSetup:
                 except OSError as e:
                     logger.warning("Could not save %s: %s", log, e)
             folder = _toolchain_dir(root)
+            # The agent's log, for how long each step took and why one failed.
+            agent_log = folder / TOOLCHAIN_LOG if folder else None
+            saved_log = None
+            if agent_log is not None and agent_log.is_file():
+                saved_log = self.run_dir / f"toolchain-{label}-agent.log"
+                try:
+                    shutil.copyfile(agent_log, saved_log)
+                    agent_log.unlink()
+                    logger.info("The agent's log of the toolchain run saved in %s", saved_log)
+                except OSError as e:
+                    logger.warning("Could not save %s: %s", agent_log, e)
             path = folder / TOOLCHAIN_RESULT if folder else None
             if path is None or not path.is_file():
+                if saved_log is not None:
+                    return f"the agent stopped before it finished (its log: {saved_log})"
                 return "the VM left no result: Windows did not start the agent"
             try:
                 data = json.loads(path.read_text(encoding="utf-8-sig"))

@@ -41,8 +41,10 @@ logger = logging.getLogger("ggnet.toolchain")
 
 VM_NAME_PREFIX = "ggnet-hw-"
 VM_TAG = "ggnet-toolchain"
-VM_MEMORY_MB = 4096
-VM_CORES = 4
+# Windows settles for minutes after its first boot on the VM's devices
+# before the agent can install anything; more cores and memory shorten that.
+VM_MEMORY_MB = 8192
+VM_CORES = 8
 # Windows' first start on the VM's devices plus the install; then it is stuck.
 VM_TIMEOUT = 30 * 60
 POLL_EVERY = 5.0
