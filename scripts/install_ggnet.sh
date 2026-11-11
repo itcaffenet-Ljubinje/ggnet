@@ -494,6 +494,11 @@ fi
 for ds in images snapshots iscsi_targets imports; do
     zfs list -H "$DS_ROOT/$ds" >/dev/null 2>&1 || zfs create "$DS_ROOT/$ds"
 done
+# images: a master must survive a power loss while it is written (import,
+# copy, restore, grow), whatever the pool is set to (Proxmox hosts often run
+# their VM pool with sync=disabled). Set on every install and update: it
+# only applies to future writes, nothing is rewritten.
+zfs set sync=standard "$DS_ROOT/images"
 # writebacks: thrown away at every restart, so no waiting for the disk on
 # Windows' flushes (a PC with Keep Writeback gets sync=standard while it keeps it).
 zfs list -H "$DS_ROOT/writebacks" >/dev/null 2>&1 || zfs create -o sync=disabled "$DS_ROOT/writebacks"

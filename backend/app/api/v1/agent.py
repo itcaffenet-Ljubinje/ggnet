@@ -158,19 +158,20 @@ def heartbeat(
     # While editing, the draft master is the machine's game image.
     mapped = machine.status in (MachineStatus.PROVISIONED, MachineStatus.EDITING)
     disk = machine.game_image or machine.editing_image
+    vm = machine.vm_id is not None
     return AgentConfig(
         machine_id=machine.id,
         name=machine.name,
-        mode=machine.mode,
+        mode="vm" if vm else machine.mode.value,
         status=machine.status,
         initiator_iqn=machine.initiator_iqn,
-        iscsi_target_iqn=machine.iscsi_target_iqn if mapped else None,
+        iscsi_target_iqn=machine.iscsi_target_iqn if mapped and not vm else None,
         portal_ip=prov.iscsi.portal_ip,
         portal_port=prov.iscsi.portal_port,
         game_image=disk.name if disk else None,
         drive_letter=machine.drive_letter if machine.mode is MachineMode.DISK else "D",
         command=command,
-        secure_boot=_secure_boot_key(db, pxe_service) if machine.mode is MachineMode.BOOT else None,
+        secure_boot=_secure_boot_key(db, pxe_service) if machine.mode is MachineMode.BOOT and not vm else None,
         update=_update(db, machine, body.agent_version, package, body.stopping),
     )
 

@@ -701,6 +701,16 @@ def _cleanup_lines(cs: str, dhcp_interfaces: Sequence[str], forget_letters: Sequ
     return lines
 
 
+def no_device_encryption_lines(cs: str) -> list[str]:
+    """
+    Windows never encrypts by itself. Windows 11 turns on Device encryption
+    where it finds a TPM and Secure Boot (a VM has both): an encrypted image
+    can no longer be prepared or personalized, every PC that runs it goes on
+    encrypting into its writeback, and an applied one would carry it on.
+    """
+    return ["", f"[{cs}\\Control\\BitLocker]", '"PreventDeviceEncryption"=dword:00000001']
+
+
 def image_patch(control_set: int, dhcp_interfaces: Sequence[str] = (), forget_letters: Sequence[str] = (),
                 agent_service: bool = False, tuning: bool = False, net_class_export: str = "",
                 group_order_export: str = "") -> str:
@@ -708,6 +718,7 @@ def image_patch(control_set: int, dhcp_interfaces: Sequence[str] = (), forget_le
     cs = f"\\ControlSet{control_set:03d}"
     lines = ["Windows Registry Editor Version 5.00"]
     lines += _cleanup_lines(cs, dhcp_interfaces, forget_letters)
+    lines += no_device_encryption_lines(cs)
     if agent_service:
         lines += agent_service_patch(control_set)
     if tuning:
@@ -738,7 +749,41 @@ def registry_patch(setup: OsSetup, control_set: int, dhcp_interfaces: Sequence[s
                 raise ValueError(f"Invalid environment variable name: {key!r}")
             lines.append(f"{_reg_string(key)}={_reg_string(value)}")
     lines += _cleanup_lines(cs, dhcp_interfaces, forget_letters)
+    lines += no_device_encryption_lines(cs)
     return "\n".join(lines) + "\n"
+
+
+def partitions(runner, device: str, fstype: str) -> list[str]:
+    """A disk's partitions with one file system type, largest first."""
+    # A clone made a moment ago: wait for udev to create its partition devices.
+    runner.run(["udevadm", "settle", "--timeout=10"], quiet=True)
+    ok, out, _ = runner.run(["lsblk", "-J", "-b", "-p", "-o", "PATH,TYPE,FSTYPE,SIZE", device])
+    if not ok:
+        return []
+    try:
+        devices = json.loads(out).get("blockdevices") or []
+    except ValueError:
+        return []
+    # lsblk nests partitions under their disk, or (for a disk named on the
+    # command line, as on PVE 9) lists them next to it: take both.
+    flat, todo = [], list(devices)
+    while todo:
+        d = todo.pop()
+        flat.append(d)
+        todo.extend(d.get("children") or [])
+    parts = [d for d in flat if d.get("type") == "part" and _fstype(runner, d) == fstype]
+    parts.sort(key=lambda c: int(c.get("size") or 0), reverse=True)
+    return [c["path"] for c in parts]
+
+
+def _fstype(runner, part: dict) -> str | None:
+    """
+    What is on a partition now, read from the disk (blkid -p). lsblk's FSTYPE
+    is udev's note from when the device appeared: a Windows that encrypted
+    itself in a VM since then still shows "ntfs" there.
+    """
+    ok, out, _ = runner.run(["blkid", "-p", "-o", "value", "-s", "TYPE", part["path"]], quiet=True)
+    return out.strip() if ok and out.strip() else part.get("fstype")
 
 
 class WindowsSetup:
@@ -751,25 +796,11 @@ class WindowsSetup:
 
     def ntfs_partitions(self, device: str) -> list[str]:
         """The NTFS partitions of a disk, largest first (Windows is the big one)."""
-        # A clone made a moment ago: wait for udev to create its partition devices.
-        self._run(["udevadm", "settle", "--timeout=10"], quiet=True)
-        ok, out, _ = self._run(["lsblk", "-J", "-b", "-p", "-o", "PATH,TYPE,FSTYPE,SIZE", device])
-        if not ok:
-            return []
-        try:
-            devices = json.loads(out).get("blockdevices") or []
-        except ValueError:
-            return []
-        # lsblk nests partitions under their disk, or (for a disk named on the
-        # command line, as on PVE 9) lists them next to it: take both.
-        flat, todo = [], list(devices)
-        while todo:
-            d = todo.pop()
-            flat.append(d)
-            todo.extend(d.get("children") or [])
-        parts = [d for d in flat if d.get("type") == "part" and d.get("fstype") == "ntfs"]
-        parts.sort(key=lambda c: int(c.get("size") or 0), reverse=True)
-        return [c["path"] for c in parts]
+        return partitions(self.runner, device, "ntfs")
+
+    def bitlocker_partitions(self, device: str) -> list[str]:
+        """Partitions Windows encrypted with BitLocker: no Linux tool can read them."""
+        return partitions(self.runner, device, "BitLocker")
 
     def control_set(self, hive: Path) -> int:
         """The control set Windows boots with (SYSTEM\\Select\\Current); 1 when unreadable."""
@@ -1006,6 +1037,11 @@ class WindowsSetup:
                     readonly: bool = False) -> str | None:
         """Mount the disk's Windows partition and run `work(root, SYSTEM hive)` on it."""
         parts = self.ntfs_partitions(device)
+        encrypted = self.bitlocker_partitions(device)
+        if encrypted:
+            # Windows turned on Device encryption (a TPM and Secure Boot were there).
+            return (f"Windows is encrypted with BitLocker ({', '.join(encrypted)}); "
+                    "turn Device encryption off in that Windows and let it decrypt")
         if not parts:
             return f"no Windows partition found on {device}"
         mount = self.run_dir / name

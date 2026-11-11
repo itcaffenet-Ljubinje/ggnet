@@ -161,6 +161,20 @@ def test_shutdown_and_restart_are_asked_of_windows_with_a_timeout(client, host, 
     assert host.vms[100]["status"] == "stopped"
 
 
+def test_shutdown_goes_through_the_agent_while_it_reports(client, host, disks):
+    m = _vm(client, disks)
+    _action(client, m, "start")
+    beat = client.post("/api/v1/agent/heartbeat", json={"name": "work-vm", "agent_version": "0.1.21"})
+    assert beat.status_code == 200, beat.text
+    host.calls.clear()
+    r = _action(client, m, "shutdown")
+    assert r.status_code == 200, r.text
+    assert r.json()["pending_command"] == "shutdown"
+    assert not any(c[:2] == ["qm", "shutdown"] for c in host.calls)   # not the power button
+    nxt = client.post("/api/v1/agent/heartbeat", json={"name": "work-vm", "agent_version": "0.1.21"})
+    assert nxt.json()["command"] == "shutdown"                          # shutdown.exe in the VM
+
+
 def test_list_shows_the_live_state_not_the_cluster_cache(client, host, disks, monkeypatch):
     m = _vm(client, disks)
     _action(client, m, "start")
@@ -314,3 +328,142 @@ def test_console_websocket_pipes_the_vnc_proxy(client, host, disks, monkeypatch)
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect(c["path"]) as ws:
             ws.receive_bytes()
+
+
+# ── The agent in the VM ───────────────────────────────────────────────
+
+def test_the_agent_in_a_vm_connects_nothing_and_hides_no_disk(client, host, disks):
+    m = _vm(client, disks)
+    r = client.post("/api/v1/agent/heartbeat", json={
+        "name": "work-vm", "agent_version": "0.1.21",
+        "initiator_iqn": "iqn.2025-05.net.ggnet:pc-10ffe066bdec"})   # the image's PC
+    assert r.status_code == 200, r.text
+    c = r.json()
+    # Agents hide local disks only in "boot" and connect only a target they are sent:
+    # the game writeback is the VM's SATA disk, so it must stay online.
+    assert c["machine_id"] == m["id"] and c["mode"] == "vm"
+    assert c["iscsi_target_iqn"] is None and c["secure_boot"] is None and c["update"] is None
+
+
+# ── Writebacks follow the VM's power state (production watcher rules) ─
+
+@pytest.fixture
+def make_session(db_url):
+    from sqlalchemy.orm import sessionmaker
+
+    from app.db.session import make_engine
+
+    engine = make_engine(db_url)
+    yield sessionmaker(bind=engine, expire_on_commit=False)
+    engine.dispose()
+
+
+def _watch(make_session, prov, at):
+    from app.services import writebacks
+    from app.services.writebacks import WritebackSettings
+
+    writebacks.tick(make_session, prov, WritebackSettings(auto_discard=True), now=at)
+
+
+def _clones(host, name):
+    return sum(1 for c in host.calls if c[:2] == ["zfs", "clone"] and c[-1].endswith(f"/{name}"))
+
+
+@pytest.mark.parametrize("keep", [False, True])
+def test_a_vm_writeback_is_discarded_after_shutdown_unless_kept(client, host, prov, disks, make_session, keep):
+    from datetime import datetime, timedelta, timezone
+
+    t0 = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
+    m = _vm(client, disks, keep_writeback=keep)
+    _action(client, m, "start")
+    _watch(make_session, prov, t0)                                  # running: written to
+    assert client.get(f"/api/v1/machines/{m['id']}").json()["writeback_dirty"] is True
+    _action(client, m, "shutdown")
+    host.calls.clear()
+    _watch(make_session, prov, t0 + timedelta(seconds=5))
+    _watch(make_session, prov, t0 + timedelta(seconds=60))          # off, after the grace time
+    made = (_clones(host, "work-vm"), _clones(host, "work-vm-os"))
+    assert made == ((0, 0) if keep else (1, 1))
+    # Discarded or kept, the VM has its drives again.
+    assert host.vms[100]["config"]["sata0"].startswith(f"/dev/zvol/{WB}/work-vm-os,")
+    assert host.vms[100]["config"]["sata1"].startswith(f"/dev/zvol/{WB}/work-vm,")
+
+
+# ── Network (PXE) boot VMs ────────────────────────────────────────────
+
+@pytest.fixture
+def pxe_bridge(monkeypatch):
+    """ggNet's own interface is a bridge the host has, so network boot is allowed."""
+    monkeypatch.setattr("app.api.v1.vms._interface", lambda: "vmbr1")
+
+
+def test_network_vm_boots_over_iscsi_like_a_diskless_pc(client, host, disks, pxe_bridge):
+    m = _vm(client, disks, drives="network")
+    # A diskless PC: its IQN comes from the MAC, so iPXE and the ACL match.
+    assert m["vm_id"] == 100 and m["mode"] == "boot"
+    digits = m["mac"].replace(":", "")
+    assert m["initiator_iqn"].endswith(f":pc-{digits}")
+    cfg = host.vms[100]["config"]
+    assert cfg["boot"] == "order=net0"
+    assert "sata0" not in cfg and "sata1" not in cfg       # no local drives
+    # The writebacks are on the shared iSCSI target (OS = LUN 0, game = LUN 1).
+    assert host.visible(m["initiator_iqn"]) == [
+        f"/dev/zvol/{WB}/work-vm-os", f"/dev/zvol/{WB}/work-vm"]
+    [vm] = client.get("/api/v1/vms").json()
+    assert vm["drives"] == "network"
+
+
+def test_network_boot_needs_ggnet_on_a_bridge(client, host, disks, monkeypatch):
+    monkeypatch.setattr("app.api.v1.vms._interface", lambda: "lo")   # not a bridge
+    os_image, game = disks
+    r = client.post("/api/v1/vms", json={"name": "netvm", "os_image_id": os_image["id"],
+                                         "game_image_id": game["id"], "drives": "network"})
+    assert r.status_code == 409 and "Network boot needs" in r.json()["detail"]["error"]
+    assert host.vms == {}
+
+
+def test_local_vm_stays_on_local_drives(client, host, disks):
+    m = _vm(client, disks, drives="local")
+    assert m["initiator_iqn"].endswith(":vm-100")
+    assert host.vms[100]["config"]["sata0"].startswith(f"/dev/zvol/{WB}/work-vm-os,")
+    assert host.visible(m["initiator_iqn"]) == []           # nothing on the iSCSI target
+    assert client.get("/api/v1/vms").json()[0]["drives"] == "local"
+
+
+def test_network_vm_pxe_script_matches_its_acl(client, host, disks, pxe_bridge):
+    m = _vm(client, disks, drives="network")
+    r = client.get(f"/api/v1/boot/ipxe?mac={m['mac'].replace(':', '-')}")
+    assert r.status_code == 200, r.text
+    assert f"set initiator-iqn {m['initiator_iqn']}" in r.text
+    assert ":storage" in r.text                             # the shared target
+
+
+def test_deleting_a_network_vm_removes_the_target_and_the_vm(client, host, disks, pxe_bridge):
+    m = _vm(client, disks, drives="network")
+    assert host.visible(m["initiator_iqn"])
+    assert client.delete(f"/api/v1/vms/{m['id']}").status_code == 204
+    assert host.vms == {}
+    assert host.visible(m["initiator_iqn"]) == []
+    assert f"{WB}/work-vm" not in host.datasets and f"{WB}/work-vm-os" not in host.datasets
+
+
+# ── BitLocker (Device encryption) ─────────────────────────────────────
+
+@pytest.mark.parametrize("which", ["work-vm-os", "work-vm"])
+def test_apply_refuses_a_bitlocker_writeback(client, host, disks, which):
+    m = _vm(client, disks)
+    host.bitlocker.add(f"{WB}/{which}")
+    r = client.post(f"/api/v1/machines/{m['id']}/apply-writebacks", json={"os": True, "game": True})
+    assert r.status_code == 409, r.text
+    d = r.json()["detail"]
+    assert "BitLocker" in d["error"] and "manage-bde -off" in d["error"]
+    assert d["bitlocker"] == [f"/dev/zvol/{WB}/{which}-part1"]
+    images = client.get("/api/v1/images").json()
+    assert {i["snapshot"] for i in images} == {"base"}                 # nothing applied
+
+
+def test_every_os_writeback_forbids_device_encryption():
+    from app.windows_setup import OsSetup, image_patch, registry_patch
+
+    for text in (registry_patch(OsSetup("vip-05", {}), 1), image_patch(1)):
+        assert '[\\ControlSet001\\Control\\BitLocker]\n"PreventDeviceEncryption"=dword:00000001' in text

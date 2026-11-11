@@ -162,7 +162,14 @@ class ProxmoxHost:
         except ValueError:
             return None
 
-    def create(self, vmid: int, name: str, cores: int, memory_mb: int, bridge: str, storage: str) -> bool:
+    def create(self, vmid: int, name: str, cores: int, memory_mb: int, bridge: str, storage: str,
+               netboot: bool = False) -> bool:
+        """
+        A VM shell: q35, OVMF with Secure Boot keys enrolled, TPM 2.0, an
+        e1000e card. `netboot` boots it from the network (like a diskless PC,
+        its writebacks on the shared iSCSI target); otherwise its writebacks
+        are attached as local SATA drives and it boots from sata0.
+        """
         return self.runner.run([
             "qm", "create", str(vmid), "--name", f"{VM_NAME_PREFIX}{name}"[:63],
             "--description", "ggNet virtual machine: its drives are ggNet writebacks. "
@@ -172,6 +179,7 @@ class ProxmoxHost:
             "--tpmstate0", f"{storage}:1,version=v2.0",
             "--cpu", "host", "--cores", str(cores), "--memory", str(memory_mb), "--balloon", "0",
             "--net0", f"e1000e,bridge={bridge}", "--vga", "std", "--onboot", "0",
+            *(["--boot", "order=net0"] if netboot else []),
         ])[0]
 
     def config(self, vmid: int) -> dict | None:
@@ -244,8 +252,16 @@ class ProxmoxHost:
         return self.runner.run(args)[0]
 
     def remove_drives(self, vmid: int) -> bool:
-        """Detach the writebacks; Proxmox never deletes a device it only had attached."""
-        return self.runner.run(["qm", "set", str(vmid), "--delete", ",".join(DRIVES.values())])[0]
+        """
+        Detach the writebacks Proxmox only had attached (Local Drives); it never
+        deletes them. A Network VM has none (its writebacks are iSCSI LUNs), so
+        only the drives the VM really has are detached.
+        """
+        config = self.config(vmid) or {}
+        drives = [d for d in DRIVES.values() if d in config]
+        if not drives:
+            return True
+        return self.runner.run(["qm", "set", str(vmid), "--delete", ",".join(drives)])[0]
 
     def destroy(self, vmid: int) -> bool:
         """Stop the VM and remove it with its EFI and TPM state; detach the writebacks first."""

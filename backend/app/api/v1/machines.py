@@ -685,6 +685,21 @@ def apply_writebacks(
     if session:
         conflict(f"'{machine.name}' is still connected; shut it down first")
 
+    # Windows turns on Device encryption where it finds a TPM and Secure Boot
+    # (a VM has both). An encrypted version could no longer be prepared or set
+    # up per PC, and every PC running it would go on encrypting into its writeback.
+    for disk, clone in targets:
+        encrypted = prov.bitlocker(clone)
+        if encrypted:
+            raise HTTPException(409, detail={
+                "error": f"The {'OS' if disk.kind is ImageKind.OS else 'game'} writeback of '{machine.name}' is "
+                         "encrypted with BitLocker (Windows turned on Device encryption). Start it, turn "
+                         "encryption off (Settings -> Privacy & security -> Device encryption, or "
+                         "'manage-bde -off C:' and 'manage-bde -off D:'), wait until 'manage-bde -status' "
+                         "says Fully Decrypted, shut it down and apply again.",
+                "bitlocker": encrypted,
+            })
+
     # An unfinished Windows update would be redone by every PC at every boot.
     update: list[str] | None = None
     if boot and body.os:

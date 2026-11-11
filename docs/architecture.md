@@ -57,7 +57,15 @@ Why these values:
   files too. `zstd` saves a little more space on OS images for more CPU; not worth it for hot game data.
 - `sync=disabled` on writebacks: they are thrown away on every disconnect anyway. A PC with **Keep Writeback**
   is switched to `sync=standard` while the flag is on, because the admin's game installs on it must survive a
-  host crash. Masters keep `sync=standard`.
+  host crash. Masters keep `sync=standard`: the installer sets it on `images` itself (every install and
+  update), so a pool run with `sync=disabled` for VMs does not reach the masters.
+- Sparse, no reservation: images are created with `zfs create -s`, and a master made read-only gets
+  `refreservation=none`. A read-only master is never written; the pool keeps its own free space (Settings →
+  Storage, reserved %).
+- `checksum=blake3` (on the ggNet root): with compression it turns on nop-write, so a block Windows rewrites with
+  the same data stays shared with the image. Measured here: writeback after per-PC setup 6.42 MB → 0.79 MB,
+  7 min after boot 213 MB → 156 MB. Its CPU cost is small next to the network (blake3-avx2 ~2.1 GB/s per core
+  vs fletcher4 ~6 GB/s; reads served from ARC are not checksummed again).
 - `volblocksize` is fixed at creation and a clone inherits it from its origin. Changing it later means a new
   master and copying the data.
 
@@ -476,7 +484,10 @@ LUNs on the shared target.
   random 8-character VNC password; the browser opens `wss://…/api/v1/vm-console/<ticket>` and the backend pipes
   it to `qm vncproxy <vmid>` with `LC_PVE_TICKET=<password>`. No Proxmox sign-in is needed. Shutdown and Restart
   ask Windows (`qm shutdown|reboot --timeout 600`) in the background; Start, Power off and Reset are waited for.
-- Planned: a VM that starts from the network like a PC (only on the bridge ggNet's network boot answers on).
+- Drives connection, chosen at Create VM: **Local Drives** (above) or **Network**. A Network VM boots like a
+  diskless PC: `--boot order=net0`, no SATA drives, its NIC on ggNet's own interface (where PXE is answered),
+  its IQN derived from its MAC like a PC's, so the Provisioner maps its writebacks on the shared target and
+  the per-MAC iPXE script logs in with the same IQN. It checks that an image boots over the network.
 
 ---
 

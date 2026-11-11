@@ -33,7 +33,7 @@ from typing import Callable
 from app.disk_grow import GrowResult, PartitionGrower
 from app.iscsi_manager import SLOTS, Disk, ISCSIManager
 from app.services.vms import VmDisks, vmid_of
-from app.windows_setup import ImagePrep, OsSetup, WindowsSetup
+from app.windows_setup import ImagePrep, OsSetup, WindowsSetup, partitions
 from app.zfs_manager import ZFSManager
 
 logger = logging.getLogger("ggnet.provisioning")
@@ -105,11 +105,17 @@ SETUP_PROP = "ggnet:setup"         # on an OS spare: which setup it was made wit
 SPARE_RETRY = 600.0                # seconds before spares that failed are tried again
 
 
+# Raised whenever personalize() writes something new into an OS writeback, so
+# spares set up by an older ggNet are made again instead of used.
+# 2: Control\BitLocker\PreventDeviceEncryption.
+SETUP_VERSION = 2
+
+
 def setup_tag(setup: OsSetup | None) -> str:
     """A short fingerprint of what personalize() writes, to tell a stale OS spare."""
     if setup is None:
         return "none"
-    data = json.dumps([setup.computer_name, sorted(setup.env.items())])
+    data = json.dumps([SETUP_VERSION, setup.computer_name, sorted(setup.env.items())])
     return hashlib.sha256(data.encode()).hexdigest()[:16]
 
 
@@ -404,6 +410,10 @@ class Provisioner:
             logger.warning("The update state of %s@%s could not be recorded", master, snapshot)
         return found
 
+    def bitlocker(self, clone_zvol: str) -> list[str]:
+        """Partitions of a writeback that Windows encrypted with BitLocker (Device encryption)."""
+        return partitions(self.zfs.runner, self.zfs.zvol_device_path(clone_zvol), "BitLocker")
+
     def writeback_update(self, clone_zvol: str) -> list[str] | str:
         """WindowsSetup.pending_update() on a PC's OS writeback (the PC is off)."""
         if self.windows is None:
@@ -540,11 +550,21 @@ class Provisioner:
                 raise self._fail(f"{'Locking' if locked else 'Unlocking'} {zvol_path}@{name} failed")
 
     def delete_snapshot(self, zvol_path: str, name: str) -> None:
+        """
+        Delete one version. A master's live data is its newest version (Apply
+        writebacks makes it so): when the newest is deleted, the live data
+        goes back to the version that is now the newest, or it would keep the
+        deleted version's blocks on the pool for nothing.
+        """
         with self.lock:
             self._clear()
+            snaps = self.zfs.list_snapshots(zvol_path) or []
             self._drop_spares_from(f"{zvol_path}@{name}")
             if not self.zfs.destroy_snapshot(f"{zvol_path}@{name}"):
                 raise self._fail(f"Deleting {zvol_path}@{name} failed")
+            rest = [s for s in snaps if s != name]
+            if snaps and snaps[-1] == name and rest and not self.zfs.rollback(f"{zvol_path}@{rest[-1]}"):
+                logger.warning("%s keeps the deleted version's data: %s", zvol_path, self.zfs.runner.last_error)
 
     def merge_into_base(self, zvol_path: str, name: str) -> list[str]:
         """

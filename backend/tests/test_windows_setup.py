@@ -59,7 +59,8 @@ def _windows_on(windows: WindowsSetup, name: str = "vip-05") -> Path:
 
 
 def _cmds(runner: FakeRunner) -> list[list[str]]:
-    return [c for c in runner.calls if c[0] != "udevadm"]
+    """What was done, without udev waits and file system probes (blkid -p)."""
+    return [c for c in runner.calls if c[0] not in ("udevadm", "blkid")]
 
 
 # ── The registry patch ───────────────────────────────────────────────
@@ -78,6 +79,9 @@ def test_registry_patch():
         "[\\ControlSet002\\Control\\Session Manager\\Environment]\n"
         '"GGNET_SERVER"="http://192.168.0.40:8088"\n'
         '"GGNET_MACHINE_ID"="7"\n'
+        "\n"
+        "[\\ControlSet002\\Control\\BitLocker]\n"
+        '"PreventDeviceEncryption"=dword:00000001\n'
     )
 
 
@@ -104,6 +108,7 @@ def test_personalize_merges_into_the_windows_partition(windows, runner):
     assert windows.personalize(DEVICE, SETUP) is None
     assert _cmds(runner) == [
         ["lsblk", "-J", "-b", "-p", "-o", "PATH,TYPE,FSTYPE,SIZE", DEVICE],
+        ["lsblk", "-J", "-b", "-p", "-o", "PATH,TYPE,FSTYPE,SIZE", DEVICE],     # BitLocker?
         ["ntfs-3g", "-o", "rw,noatime", "/dev/zd16p3", mount],   # the big NTFS partition
         ["hivexregedit", "--export", str(hive), "\\Select"],
         ["hivexregedit", "--export", str(hive),
@@ -223,8 +228,12 @@ def test_static_interfaces_finds_only_fixed_addresses():
     assert static_interfaces("") == []
 
 
+# Every patch ends with this (no_device_encryption_lines).
+NO_ENCRYPTION = '\n[\\ControlSet002\\Control\\BitLocker]\n"PreventDeviceEncryption"=dword:00000001\n'
+
+
 def test_registry_patch_switches_interfaces_to_dhcp():
-    patch = registry_patch(SETUP, 2, [FIXED])
+    patch = registry_patch(SETUP, 2, [FIXED]).removesuffix(NO_ENCRYPTION)
     assert patch.endswith(
         f"[\\ControlSet002\\Services\\Tcpip\\Parameters\\Interfaces\\{FIXED}]\n"
         '"EnableDHCP"=dword:00000001\n'
@@ -268,7 +277,7 @@ def test_reserved_letters_keeps_c():
 
 
 def test_registry_patch_forgets_letters():
-    patch = registry_patch(SETUP, 2, forget_letters=["D", "E"])
+    patch = registry_patch(SETUP, 2, forget_letters=["D", "E"]).removesuffix(NO_ENCRYPTION)
     assert patch.endswith('[\\MountedDevices]\n"\\\\DosDevices\\\\D:"=-\n"\\\\DosDevices\\\\E:"=-\n')
     for bad in (["C"], ["DE"], ["1"]):
         with pytest.raises(ValueError):
@@ -936,3 +945,19 @@ def test_installed_nics_lists_the_net_cards_with_a_driver_and_their_model():
         ("VEN_8086&DEV_15BC&SUBSYS_86721043&REV_10", "3&11583659&0&FE", "Intel(R) Ethernet Connection (7) I219-V"),
         ("VEN_10EC&DEV_8168&SUBSYS_E0001458&REV_16", "01000000684CE00000", "Realtek Gaming GbE Family Controller"),
     ]   # the REV_15 card in ENUM has no ClassGUID: not a Net class device here; the chipset device is not a card
+
+
+def test_bitlocker_windows_is_named_not_mounted(windows, runner):
+    """Windows encrypted itself (Device encryption): say so instead of "no Windows"."""
+    runner.responses[("lsblk",)] = (True, _lsblk(("/dev/zd16p3", "BitLocker", 90 << 30),
+                                               ("/dev/zd16p4", "ntfs", 900 << 20)), "")
+    problem = windows.personalize(DEVICE, SETUP)
+    assert "encrypted with BitLocker (/dev/zd16p3)" in problem
+    assert not any(c[0] == "ntfs-3g" for c in runner.calls)
+
+
+def test_encryption_since_the_disk_appeared_is_seen(windows, runner):
+    """udev still says ntfs; the disk itself (blkid -p) says BitLocker."""
+    runner.responses[("blkid", "-p", "-o", "value", "-s", "TYPE", "/dev/zd16p3")] = (True, "BitLocker\n", "")
+    assert windows.bitlocker_partitions(DEVICE) == ["/dev/zd16p3"]
+    assert "/dev/zd16p3" not in windows.ntfs_partitions(DEVICE)

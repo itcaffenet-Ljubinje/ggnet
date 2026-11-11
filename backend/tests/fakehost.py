@@ -37,6 +37,7 @@ class FakeHost:
         self.lio_batch_missing = False                  # rtslib-fb not installed
         self.copy_bytes = 1000                          # size of a `zfs send` stream
         self.image_files: dict[str, int] = {}           # path -> virtual size, for qemu-img
+        self.bitlocker: set[str] = set()                # zvols whose partition Windows encrypted
         # Proxmox: VM ID -> {"status": ..., "config": {option: value}}
         self.vms: dict[int, dict] = {}
         self.next_vmid = 100
@@ -61,6 +62,11 @@ class FakeHost:
             return self._targetcli(cmd[1:])
         if cmd[0] == "udevadm":
             return self._ok()
+        if cmd[0] == "lsblk":
+            return self._lsblk(cmd[-1])
+        if cmd[0] == "blkid":
+            ds = cmd[-1].removeprefix("/dev/zvol/").removesuffix("-part1")
+            return self._ok("BitLocker\n" if ds in self.bitlocker else "ntfs\n")
         if cmd[0] == "qm":
             return self._qm(cmd[1:])
         if cmd[0] == "pvesh":
@@ -77,6 +83,15 @@ class FakeHost:
                 return self._cat_stats(cmd[1:])
             return self._cat(cmd[1])
         raise AssertionError(f"FakeHost does not know command: {cmd}")
+
+    def _lsblk(self, device: str):
+        """One data partition per zvol: NTFS, or BitLocker for one in `bitlocker`."""
+        ds = device.removeprefix("/dev/zvol/")
+        if ds not in self.datasets:
+            return self._err(f"lsblk: {device}: not a block device")
+        part = {"path": f"{device}-part1", "type": "part", "size": 1 << 30,
+                "fstype": "BitLocker" if ds in self.bitlocker else "ntfs"}
+        return self._ok(json.dumps({"blockdevices": [{"path": device, "type": "disk", "children": [part]}]}))
 
     # ── Proxmox (qm, pvesh) ───────────────────────────────────────────
 
@@ -344,13 +359,14 @@ class FakeHost:
             return self._ok()
 
         if sub == "set":
-            prop, name = a[1], a[2]
+            name = a[-1]
             if name not in self.datasets:
                 return self._err(f"cannot open '{name}': dataset does not exist")
-            key, _, value = prop.partition("=")
-            if key == "readonly":
-                self.datasets[name]["readonly"] = value == "on"
-            self.datasets[name].setdefault("props", {})[key] = value
+            for prop in a[1:-1]:                       # zfs set p1=v1 p2=v2 name
+                key, _, value = prop.partition("=")
+                if key == "readonly":
+                    self.datasets[name]["readonly"] = value == "on"
+                self.datasets[name].setdefault("props", {})[key] = value
             return self._ok()
 
         if sub == "get" and "@" in a[-1]:
@@ -435,6 +451,13 @@ class FakeHost:
                     p["origin"] = dst
             return self._ok()
 
+        if sub == "rollback":
+            if a[-1] not in self.snapshots:
+                return self._err(f"cannot open '{a[-1]}': dataset does not exist")
+            newer = [s for s in self.snapshots if s.split("@")[0] == a[-1].split("@")[0]]
+            if newer and newer[-1] != a[-1]:
+                return self._err("cannot rollback: more recent snapshots exist")
+            return self._ok()
         if sub == "destroy":
             name = a[-1]
             recursive = "-r" in a

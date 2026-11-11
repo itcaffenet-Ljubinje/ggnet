@@ -460,9 +460,13 @@ export function MachinesPage({ disks, machines, traffic = {}, discovered = [], r
                             {m.vm_id != null ? (
                               <span
                                 className="mode-pill mode-pill-vm"
-                                title={`Virtual machine ${m.vm_id} on this server: its OS and game writebacks are its drives`}
+                                title={
+                                  vm?.drives === "network"
+                                    ? `Virtual machine ${m.vm_id} on this server: it boots from the network like a diskless PC`
+                                    : `Virtual machine ${m.vm_id} on this server: its OS and game writebacks are its drives`
+                                }
                               >
-                                VM
+                                {vm?.drives === "network" ? "VM · NET" : "VM"}
                               </span>
                             ) : (
                               <span

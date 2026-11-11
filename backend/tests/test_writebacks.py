@@ -458,6 +458,27 @@ def test_going_back_to_a_version_deletes_the_newer_ones(client, host, disk):
     assert client.post(f"{url}/v9/delete-newer").status_code == 404
 
 
+def test_deleting_the_newest_version_frees_its_data(client, host, disk):
+    """The live data is the newest version; it goes back to the one that is newest now."""
+    m = _keeper(client, disk)
+    client.post(f"/api/v1/machines/{m['id']}/apply-writebacks")              # -> v2, active
+    client.put(f"/api/v1/images/{disk['id']}/active-snapshot", json={"snapshot": "base"})
+    client.post(f"/api/v1/machines/{m['id']}/discard-writeback")             # off v2
+    host.calls.clear()
+    assert client.delete(f"/api/v1/images/{disk['id']}/snapshots/v2").status_code == 204
+    assert ["zfs", "rollback", f"{MASTER}@base"] in host.calls
+
+
+def test_deleting_an_older_version_leaves_the_live_data(client, host, disk):
+    m = _keeper(client, disk)
+    other = _machine(client, disk, "pc02")
+    client.post(f"/api/v1/machines/{m['id']}/apply-writebacks")
+    client.post(f"/api/v1/machines/{other['id']}/discard-writeback")
+    host.calls.clear()
+    assert client.delete(f"/api/v1/images/{disk['id']}/snapshots/base").status_code == 204
+    assert not any(c[:2] == ["zfs", "rollback"] for c in host.calls)
+
+
 def test_delete_version_failure_keeps_the_hold(client, host, disk):
     m = _keeper(client, disk)
     client.post(f"/api/v1/machines/{m['id']}/apply-writebacks")

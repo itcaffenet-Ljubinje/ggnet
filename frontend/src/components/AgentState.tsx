@@ -39,14 +39,15 @@ export function AgentState({ machine: m, now = Date.now() }: Props) {
   if (!m.last_seen_at) return <span className="muted small">No agent yet</span>;
 
   const online = isOnline(m, now);
-  const iqnMismatch = m.reported_iqn !== null && m.reported_iqn !== m.initiator_iqn;
+  // A VM's drives are attached by Proxmox, not over iSCSI: its Windows' IQN does not matter.
+  const iqnMismatch = m.vm_id == null && m.reported_iqn !== null && m.reported_iqn !== m.initiator_iqn;
 
   return (
     <div className="small">
       <span className={online ? "badge badge-provisioned" : "badge"}>
         {online ? "Online" : "Offline"}
       </span>
-      {online && m.iscsi_connected !== null && (
+      {online && m.iscsi_connected !== null && m.vm_id == null && (
         <span className={m.iscsi_connected ? "badge badge-provisioned" : "badge badge-warn"}>
           {m.iscsi_connected ? "Disk connected" : "Disk not connected"}
         </span>
