@@ -10,6 +10,7 @@ image_prep(): what every OS image version gets once (app.windows_setup.prepare_i
 from __future__ import annotations
 
 from app.config import get_config, server_url
+from app.services.vms import vmid_of
 from app.db.models import Machine, MachineMode
 from app.services.agent_package import AGENT_EXE_NAME, default_package
 from app.windows_setup import AgentInstall, ImagePrep, OsSetup
@@ -39,7 +40,7 @@ def os_setup_for(m: Machine) -> OsSetup | None:
         "GGNET_SERVER": server_url(),
         "GGNET_MACHINE_ID": str(m.id),
         "GGNET_MACHINE_NAME": m.name,
-    })
+    }, vm=vmid_of(m.initiator_iqn) is not None)   # a Local Drives VM (PVSCSI disks)
 
 
 def image_prep(defender_off: bool = False, services_off: bool = False) -> ImagePrep:

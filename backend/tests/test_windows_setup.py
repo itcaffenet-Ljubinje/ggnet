@@ -82,16 +82,6 @@ def test_registry_patch():
         "\n"
         "[\\ControlSet002\\Control\\BitLocker]\n"
         '"PreventDeviceEncryption"=dword:00000001\n'
-        "\n"
-        "[\\ControlSet002\\Services\\pvscsi]\n"
-        '"Start"=dword:00000000\n'
-        "\n"
-        "[-\\ControlSet002\\Services\\pvscsi\\StartOverride]\n"
-        "\n"
-        "[\\ControlSet002\\Services\\storahci]\n"
-        '"Start"=dword:00000000\n'
-        "\n"
-        "[-\\ControlSet002\\Services\\storahci\\StartOverride]\n"
     )
 
 
@@ -238,12 +228,8 @@ def test_static_interfaces_finds_only_fixed_addresses():
     assert static_interfaces("") == []
 
 
-# Every per-PC patch ends with this (no_device_encryption_lines, vm_boot_lines).
-NO_ENCRYPTION = ('\n[\\ControlSet002\\Control\\BitLocker]\n"PreventDeviceEncryption"=dword:00000001\n'
-                 '\n[\\ControlSet002\\Services\\pvscsi]\n"Start"=dword:00000000\n'
-                 '\n[-\\ControlSet002\\Services\\pvscsi\\StartOverride]\n'
-                 '\n[\\ControlSet002\\Services\\storahci]\n"Start"=dword:00000000\n'
-                 '\n[-\\ControlSet002\\Services\\storahci\\StartOverride]\n')
+# Every per-PC patch ends with this (no_device_encryption_lines).
+NO_ENCRYPTION = '\n[\\ControlSet002\\Control\\BitLocker]\n"PreventDeviceEncryption"=dword:00000001\n'
 
 
 def test_registry_patch_switches_interfaces_to_dhcp():
@@ -986,3 +972,16 @@ def test_encryption_since_the_disk_appeared_is_seen(windows, runner):
     runner.responses[("blkid", "-p", "-o", "value", "-s", "TYPE", "/dev/zd16p3")] = (True, "BitLocker\n", "")
     assert windows.bitlocker_partitions(DEVICE) == ["/dev/zd16p3"]
     assert "/dev/zd16p3" not in windows.ntfs_partitions(DEVICE)
+
+
+def test_pvscsi_starts_at_boot_only_in_a_vms_writeback():
+    """A PC with pvscsi at boot stops with INACCESSIBLE_BOOT_DEVICE (seen on komp-06)."""
+    from app.windows_setup import image_patch
+
+    pc = registry_patch(OsSetup("komp-06", {}), 1)
+    vm = registry_patch(OsSetup("work-vm", {}, vm=True), 1)
+    assert "pvscsi" not in pc and "storahci" not in pc
+    assert '[\\ControlSet001\\Services\\pvscsi]\n"Start"=dword:00000000' in vm
+    assert "[-\\ControlSet001\\Services\\pvscsi\\StartOverride]" in vm
+    # Prepare image (also on Apply from a VM) puts it back on demand for every PC.
+    assert '[\\ControlSet001\\Services\\pvscsi]\n"Start"=dword:00000003' in image_patch(1)

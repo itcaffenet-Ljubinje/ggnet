@@ -487,3 +487,23 @@ def test_a_vm_from_an_older_ggnet_moves_from_sata_to_pvscsi(client, host, disks)
     assert "sata0" not in cfg and "sata1" not in cfg                     # never the same zvol twice
     assert cfg["scsi0"].startswith(f"/dev/zvol/{WB}/work-vm-os,") and cfg["scsihw"] == "pvscsi"
     assert cfg["boot"] == "order=scsi0"
+
+
+
+def test_only_a_local_drives_vm_gets_pvscsi_at_boot(client, host, disks, pxe_bridge):
+    from app.db.models import Machine, MachineMode
+    from app.services.os_setup import os_setup_for
+
+    local = _vm(client, disks)
+    os_image, game = disks
+    net = client.post("/api/v1/vms", json={"name": "net-vm", "os_image_id": os_image["id"],
+                                           "game_image_id": game["id"], "drives": "network",
+                                           "keep_writeback": False}).json()
+    pc = client.post("/api/v1/machines", json={"name": "komp-06", "mode": "boot", "mac": "18:c0:4d:4f:ab:84"}).json()
+
+    def setup(m):
+        return os_setup_for(Machine(id=m["id"], name=m["name"], mode=MachineMode(m["mode"]),
+                                    initiator_iqn=m["initiator_iqn"]))
+    assert setup(local).vm is True
+    assert setup(net).vm is False            # boots like a PC, over iSCSI
+    assert setup(pc).vm is False

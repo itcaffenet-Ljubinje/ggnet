@@ -13,7 +13,7 @@ server
      its service and a job naming the cards (PCI hardware ID + instance ID,
      as the PC's agent or the hardware scan reports them);
   2. boots the clone in a temporary Proxmox VM (ToolchainVm: OVMF, the
-     clone as its PVSCSI disk, no network). The agent finds the job, creates
+     clone as its SATA disk, no network). The agent finds the job, creates
      each card's device under its instance ID with SetupAPI and lets
      Windows install its best driver (inbox or from the driver store),
      writes the result and shuts the VM down;
@@ -99,8 +99,9 @@ class ToolchainVm:
             "--description", "ggNet Add new hardware: temporary, removed when the run ends",
             "--tags", VM_TAG, "--ostype", "win11", "--machine", "q35", "--bios", "ovmf",
             "--cpu", "host", "--cores", str(cores), "--memory", str(memory),
-            "--scsihw", "pvscsi", "--scsi0", f"{device},cache=none,discard=on,ssd=1",
-            "--boot", "order=scsi0", "--vga", "std",
+            # SATA, not PVSCSI: the clone becomes the image every PC boots,
+            # and pvscsi at boot stops a PC with INACCESSIBLE_BOOT_DEVICE.
+            "--sata0", f"{device},cache=none", "--boot", "order=sata0", "--vga", "std",
         ]
 
     def status(self, vmid: int) -> str | None:
@@ -112,7 +113,7 @@ class ToolchainVm:
         """Stop the VM and remove it; its disk (the clone) is only detached."""
         if self.status(vmid) == "running":
             self.runner.run(["qm", "stop", str(vmid), "--skiplock", "1"])
-        self.runner.run(["qm", "set", str(vmid), "--delete", "scsi0"])
+        self.runner.run(["qm", "set", str(vmid), "--delete", "sata0"])
         if not self.runner.run(["qm", "destroy", str(vmid), "--skiplock", "1"])[0]:
             logger.error("Could not remove the toolchain VM %s: %s", vmid, self.runner.last_error)
 

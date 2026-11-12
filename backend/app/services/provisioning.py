@@ -115,7 +115,7 @@ def setup_tag(setup: OsSetup | None) -> str:
     """A short fingerprint of what personalize() writes, to tell a stale OS spare."""
     if setup is None:
         return "none"
-    data = json.dumps([SETUP_VERSION, setup.computer_name, sorted(setup.env.items())])
+    data = json.dumps([SETUP_VERSION, setup.computer_name, sorted(setup.env.items()), setup.vm])
     return hashlib.sha256(data.encode()).hexdigest()[:16]
 
 
