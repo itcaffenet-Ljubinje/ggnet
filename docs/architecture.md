@@ -470,12 +470,18 @@ the images' next versions. The difference is where the writebacks are exposed: t
 LUNs on the shared target.
 
 - The machine's initiator IQN is `<iqn_prefix>:vm-<vmid>`; the Provisioner sends such a machine's attach /
-  remove / session calls to `VmDisks` instead of the iSCSI manager: attach = `qm set --sata0 <os writeback>
-  --sata1 <game writeback> --boot order=sata0`, remove = `qm set --delete sata0,sata1`, "logged in" = the VM is
+  remove / session calls to `VmDisks` instead of the iSCSI manager: attach = `qm set --scsihw pvscsi --scsi0 <os
+  writeback> --scsi1 <game writeback> --boot order=scsi0`, remove = `qm set --delete scsi0,scsi1` (and the
+  `sata0,sata1` an older ggNet used), "logged in" = the VM is
   not stopped. Every rule that waits for a PC to be off (discard, apply, rename, delete) works unchanged.
 - The VM: q35, OVMF with the Secure Boot keys enrolled (`efidisk0 …,pre-enrolled-keys=1`), TPM 2.0
   (`tpmstate0 …,version=v2.0`), `cpu host`, no ballooning, an e1000e card. Proxmox gives the MAC; it is the
   machine's MAC.
+- Disk controller: VMware PVSCSI for Local Drives and the toolchain VM. Measured in a VM with `winsat disk` on
+  two images: SATA 73 MB/s read / 73 MB/s write / 1.8 ms; NVMe (raw QEMU args) 96 / 82 MB/s / 1.4 ms and 0x7B
+  on one image; PVSCSI 98–107 / 114–117 MB/s / 0.8–1.0 ms. Windows has the PVSCSI driver inbox; MegaRAID SAS
+  and LSI have none, VirtIO needs virtio-win in every image. Every OS writeback and toolchain clone gets
+  `pvscsi` and `storahci` as boot drivers (Start=0, StartOverride removed), so an image from any PC boots.
 - Nothing about the host is assumed. The node name comes from `/cluster/status`, the VM ID from
   `/cluster/nextid`, the bridge and the storage for the EFI and TPM state from what the host has (Settings →
   Virtual machines; automatic: ggNet's own interface when it is a bridge, else the first bridge; a ZFS storage
@@ -488,7 +494,7 @@ LUNs on the shared target.
   it to `qm vncproxy <vmid>` with `LC_PVE_TICKET=<password>`. No Proxmox sign-in is needed. Shutdown and Restart
   ask Windows (`qm shutdown|reboot --timeout 600`) in the background; Start, Power off and Reset are waited for.
 - Drives connection, chosen at Create VM: **Local Drives** (above) or **Network**. A Network VM boots like a
-  diskless PC: `--boot order=net0`, no SATA drives, its NIC on ggNet's own interface (where PXE is answered),
+  diskless PC: `--boot order=net0`, no local drives, its NIC on ggNet's own interface (where PXE is answered),
   its IQN derived from its MAC like a PC's, so the Provisioner maps its writebacks on the shared target and
   the per-MAC iPXE script logs in with the same IQN. It checks that an image boots over the network.
 

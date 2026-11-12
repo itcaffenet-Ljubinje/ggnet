@@ -98,9 +98,9 @@ def test_create_vm_gives_it_both_writebacks_as_drives(client, host, disks):
     assert m["initiator_iqn"].endswith(":vm-100") and m["keep_writeback"] is True
     assert m["mac"] == "bc:24:11:00:00:64"                      # read back from the VM
     cfg = host.vms[100]["config"]
-    assert cfg["sata0"].startswith(f"/dev/zvol/{WB}/work-vm-os,")
-    assert cfg["sata1"].startswith(f"/dev/zvol/{WB}/work-vm,")
-    assert cfg["boot"] == "order=sata0"
+    assert cfg["scsi0"].startswith(f"/dev/zvol/{WB}/work-vm-os,")
+    assert cfg["scsi1"].startswith(f"/dev/zvol/{WB}/work-vm,")
+    assert cfg["boot"] == "order=scsi0"
     assert cfg["bios"] == "ovmf" and cfg["machine"] == "q35"
     assert "pre-enrolled-keys=1" in cfg["efidisk0"] and cfg["efidisk0"].startswith("tank-vm:")
     assert cfg["tpmstate0"] == "tank-vm:1,version=v2.0"
@@ -215,10 +215,10 @@ def test_running_vm_is_connected_for_the_writeback_rules(client, host, disks):
 
 def test_discard_re_clones_and_attaches_the_drives_again(client, host, disks):
     m = _vm(client, disks)
-    host.vms[100]["config"].pop("sata1")
+    host.vms[100]["config"].pop("scsi1")
     r = client.post(f"/api/v1/machines/{m['id']}/discard-writeback")
     assert r.status_code == 200, r.text
-    assert host.vms[100]["config"]["sata1"].startswith(f"/dev/zvol/{WB}/work-vm,")
+    assert host.vms[100]["config"]["scsi1"].startswith(f"/dev/zvol/{WB}/work-vm,")
 
 
 def test_apply_writebacks_from_a_vm(client, host, disks):
@@ -228,7 +228,7 @@ def test_apply_writebacks_from_a_vm(client, host, disks):
     assert r.status_code == 200, r.text
     images = {d["id"]: d for d in client.get("/api/v1/images").json()}
     assert images[os_image["id"]]["snapshot"] == "v2" and images[game["id"]]["snapshot"] == "v2"
-    assert host.vms[100]["config"]["sata0"].startswith(f"/dev/zvol/{WB}/work-vm-os,")
+    assert host.vms[100]["config"]["scsi0"].startswith(f"/dev/zvol/{WB}/work-vm-os,")
 
 
 def test_rename_renames_the_writebacks_and_the_vm(client, host, disks):
@@ -237,7 +237,7 @@ def test_rename_renames_the_writebacks_and_the_vm(client, host, disks):
     assert r.status_code == 200, r.text
     cfg = host.vms[100]["config"]
     assert cfg["name"] == "ggnet-img-vm"
-    assert cfg["sata0"].startswith(f"/dev/zvol/{WB}/img-vm-os,")
+    assert cfg["scsi0"].startswith(f"/dev/zvol/{WB}/img-vm-os,")
 
 
 def test_what_ties_a_vm_to_its_machine_cannot_change(client, host, disks):
@@ -385,8 +385,8 @@ def test_a_vm_writeback_is_discarded_after_shutdown_unless_kept(client, host, pr
     made = (_clones(host, "work-vm"), _clones(host, "work-vm-os"))
     assert made == ((0, 0) if keep else (1, 1))
     # Discarded or kept, the VM has its drives again.
-    assert host.vms[100]["config"]["sata0"].startswith(f"/dev/zvol/{WB}/work-vm-os,")
-    assert host.vms[100]["config"]["sata1"].startswith(f"/dev/zvol/{WB}/work-vm,")
+    assert host.vms[100]["config"]["scsi0"].startswith(f"/dev/zvol/{WB}/work-vm-os,")
+    assert host.vms[100]["config"]["scsi1"].startswith(f"/dev/zvol/{WB}/work-vm,")
 
 
 # ── Network (PXE) boot VMs ────────────────────────────────────────────
@@ -405,7 +405,7 @@ def test_network_vm_boots_over_iscsi_like_a_diskless_pc(client, host, disks, pxe
     assert m["initiator_iqn"].endswith(f":pc-{digits}")
     cfg = host.vms[100]["config"]
     assert cfg["boot"] == "order=net0"
-    assert "sata0" not in cfg and "sata1" not in cfg       # no local drives
+    assert "scsi0" not in cfg and "scsi1" not in cfg       # no local drives
     # The writebacks are on the shared iSCSI target (OS = LUN 0, game = LUN 1).
     assert host.visible(m["initiator_iqn"]) == [
         f"/dev/zvol/{WB}/work-vm-os", f"/dev/zvol/{WB}/work-vm"]
@@ -425,7 +425,7 @@ def test_network_boot_needs_ggnet_on_a_bridge(client, host, disks, monkeypatch):
 def test_local_vm_stays_on_local_drives(client, host, disks):
     m = _vm(client, disks, drives="local")
     assert m["initiator_iqn"].endswith(":vm-100")
-    assert host.vms[100]["config"]["sata0"].startswith(f"/dev/zvol/{WB}/work-vm-os,")
+    assert host.vms[100]["config"]["scsi0"].startswith(f"/dev/zvol/{WB}/work-vm-os,")
     assert host.visible(m["initiator_iqn"]) == []           # nothing on the iSCSI target
     assert client.get("/api/v1/vms").json()[0]["drives"] == "local"
 
@@ -467,3 +467,23 @@ def test_every_os_writeback_forbids_device_encryption():
 
     for text in (registry_patch(OsSetup("vip-05", {}), 1), image_patch(1)):
         assert '[\\ControlSet001\\Control\\BitLocker]\n"PreventDeviceEncryption"=dword:00000001' in text
+
+
+# ── PVSCSI ────────────────────────────────────────────────────────────
+
+def test_local_drives_are_on_a_pvscsi_controller(client, host, disks):
+    _vm(client, disks)
+    cfg = host.vms[100]["config"]
+    assert cfg["scsihw"] == "pvscsi"
+    assert "sata0" not in cfg and "sata1" not in cfg
+
+
+def test_a_vm_from_an_older_ggnet_moves_from_sata_to_pvscsi(client, host, disks):
+    m = _vm(client, disks)
+    cfg = host.vms[100]["config"]
+    cfg["sata0"], cfg["sata1"] = cfg.pop("scsi0"), cfg.pop("scsi1")     # as an older ggNet left it
+    cfg.pop("scsihw")
+    assert client.post(f"/api/v1/machines/{m['id']}/discard-writeback").status_code == 200
+    assert "sata0" not in cfg and "sata1" not in cfg                     # never the same zvol twice
+    assert cfg["scsi0"].startswith(f"/dev/zvol/{WB}/work-vm-os,") and cfg["scsihw"] == "pvscsi"
+    assert cfg["boot"] == "order=scsi0"

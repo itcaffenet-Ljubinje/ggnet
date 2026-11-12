@@ -250,8 +250,10 @@ def nic_known(export: str, nic: str, instance: str | None = None) -> bool:
 TOOLCHAIN_DIR = ("ProgramData", "ggNet", "toolchain")
 TOOLCHAIN_JOB, TOOLCHAIN_RESULT, TOOLCHAIN_DONE = "job.json", "result.json", "job.done"
 TOOLCHAIN_LOG = "agent.log"        # the agent's own log of the run (agent 0.1.24+)
-# The VM's disk is on its SATA controller: that driver has to start at boot.
-TOOLCHAIN_BOOT_DRIVERS = ("storahci",)
+# ggNet's VMs (toolchain and Local Drives) give Windows its disk on a VMware
+# PVSCSI controller (measured ~1.5x SATA, half the latency; Windows has the
+# driver inbox); SATA is the fallback. Both drivers start at boot.
+VM_BOOT_DRIVERS = ("pvscsi", "storahci")
 
 
 def pci_ids(nic: str) -> tuple[list[str], list[str]]:
@@ -285,11 +287,14 @@ def toolchain_job(nics: Sequence[tuple[str, str]]) -> dict:
     return {"devices": devices}
 
 
-def toolchain_boot_lines(control_set: int) -> list[str]:
-    """The VM's disk driver started at boot (it may be off in an image made on an NVMe PC)."""
+def vm_boot_lines(control_set: int) -> list[str]:
+    """
+    The VM's disk drivers started at boot: an image made on another PC may have
+    them on demand, or blocked by StartOverride, and would stop with 0x7B.
+    """
     cs = f"\\ControlSet{control_set:03d}"
     lines: list[str] = []
-    for name in TOOLCHAIN_BOOT_DRIVERS:
+    for name in VM_BOOT_DRIVERS:
         lines += ["", f"[{cs}\\Services\\{name}]", '"Start"=dword:00000000',
                   "", f"[-{cs}\\Services\\{name}\\StartOverride]"]
     return lines
@@ -751,6 +756,8 @@ def registry_patch(setup: OsSetup, control_set: int, dhcp_interfaces: Sequence[s
             lines.append(f"{_reg_string(key)}={_reg_string(value)}")
     lines += _cleanup_lines(cs, dhcp_interfaces, forget_letters)
     lines += no_device_encryption_lines(cs)
+    # The same OS writeback may start in a ggNet VM (Local Drives).
+    lines += vm_boot_lines(control_set)
     return "\n".join(lines) + "\n"
 
 
@@ -969,7 +976,7 @@ class WindowsSetup:
                 return problem or "the agent could not be copied into the image"
             control_set = self.control_set(hive)
             patch = "\n".join(["Windows Registry Editor Version 5.00", *agent_service_patch(control_set),
-                               *toolchain_boot_lines(control_set)]) + "\n"
+                               *vm_boot_lines(control_set)]) + "\n"
             problem = self._merge_reg(hive, f"toolchain-{label}", patch)
             if problem:
                 return problem

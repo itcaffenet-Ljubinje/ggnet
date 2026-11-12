@@ -82,6 +82,16 @@ def test_registry_patch():
         "\n"
         "[\\ControlSet002\\Control\\BitLocker]\n"
         '"PreventDeviceEncryption"=dword:00000001\n'
+        "\n"
+        "[\\ControlSet002\\Services\\pvscsi]\n"
+        '"Start"=dword:00000000\n'
+        "\n"
+        "[-\\ControlSet002\\Services\\pvscsi\\StartOverride]\n"
+        "\n"
+        "[\\ControlSet002\\Services\\storahci]\n"
+        '"Start"=dword:00000000\n'
+        "\n"
+        "[-\\ControlSet002\\Services\\storahci\\StartOverride]\n"
     )
 
 
@@ -228,8 +238,12 @@ def test_static_interfaces_finds_only_fixed_addresses():
     assert static_interfaces("") == []
 
 
-# Every patch ends with this (no_device_encryption_lines).
-NO_ENCRYPTION = '\n[\\ControlSet002\\Control\\BitLocker]\n"PreventDeviceEncryption"=dword:00000001\n'
+# Every per-PC patch ends with this (no_device_encryption_lines, vm_boot_lines).
+NO_ENCRYPTION = ('\n[\\ControlSet002\\Control\\BitLocker]\n"PreventDeviceEncryption"=dword:00000001\n'
+                 '\n[\\ControlSet002\\Services\\pvscsi]\n"Start"=dword:00000000\n'
+                 '\n[-\\ControlSet002\\Services\\pvscsi\\StartOverride]\n'
+                 '\n[\\ControlSet002\\Services\\storahci]\n"Start"=dword:00000000\n'
+                 '\n[-\\ControlSet002\\Services\\storahci\\StartOverride]\n')
 
 
 def test_registry_patch_switches_interfaces_to_dhcp():

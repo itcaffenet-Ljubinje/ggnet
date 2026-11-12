@@ -36,13 +36,14 @@ def test_the_vm_boots_the_clone_and_is_removed_when_windows_shuts_down():
 
     create = next(c for c in runner.calls if c[:2] == ["qm", "create"])
     assert create[2] == "105"
-    assert create[create.index("--sata0") + 1] == f"{DEVICE},cache=none"
+    assert create[create.index("--scsi0") + 1] == f"{DEVICE},cache=none,discard=on,ssd=1"
+    assert create[create.index("--scsihw") + 1] == "pvscsi"
     assert create[create.index("--bios") + 1] == "ovmf" and create[create.index("--cpu") + 1] == "host"
     assert "--net0" not in create                           # Windows needs no network for the install
     assert ["qm", "start", "105"] in runner.calls
     # The clone is detached before the VM goes, so removing the VM never touches it.
     tail = [c for c in runner.calls if c[:2] in (["qm", "set"], ["qm", "destroy"])]
-    assert tail == [["qm", "set", "105", "--delete", "sata0"], ["qm", "destroy", "105", "--skiplock", "1"]]
+    assert tail == [["qm", "set", "105", "--delete", "scsi0"], ["qm", "destroy", "105", "--skiplock", "1"]]
     assert ["qm", "stop", "105", "--skiplock", "1"] not in runner.calls
 
 
