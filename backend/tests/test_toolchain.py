@@ -8,7 +8,7 @@ import pytest
 
 from app.api.deps import get_hardware_adder
 from app.main import app
-from app.services.toolchain import HardwareAdder, ToolchainVm
+from app.services.toolchain import HardwareAdder, ToolchainVm, vm_size
 from app.windows_setup import ImagePrep
 
 from .conftest import FakeRunner
@@ -19,6 +19,26 @@ DEVICE = "/dev/zvol/tank/ggnet/writebacks/win11_ggnet_hwadd"
 
 
 # ── The VM ────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("cpus, memory_mb, expected", [
+    (32, 192 * 1024, (8, 8192)),      # the dev host
+    (12, 64 * 1024, (6, 8192)),
+    (8, 32 * 1024, (4, 4096)),
+    (6, 16 * 1024, (3, 4096)),
+    (4, 16 * 1024, (2, 4096)),
+    (2, 8 * 1024, (2, 4096)),
+    (0, 0, (2, 4096)),                # size unknown: the minimum
+])
+def test_the_vm_fits_the_host(cpus, memory_mb, expected):
+    assert vm_size(cpus, memory_mb) == expected
+
+
+def test_the_vm_is_sized_from_the_host():
+    runner = _vm_runner(["stopped"])
+    vm = ToolchainVm(runner, sleep=lambda s: None, resources=lambda: {"cpus": 6, "memory_mb": 16384})
+    vm.run(DEVICE, "win11")
+    create = next(c for c in runner.calls if c[:2] == ["qm", "create"])
+    assert (create[create.index("--cores") + 1], create[create.index("--memory") + 1]) == ("3", "4096")
 
 def _vm_runner(statuses: list[str]) -> FakeRunner:
     r = FakeRunner()
