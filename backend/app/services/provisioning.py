@@ -511,8 +511,13 @@ class Provisioner:
         return snap_name
 
     def snapshots(self, zvol_path: str) -> list[dict]:
-        """Versions of a master with their sizes and clones (see ZFSManager.snapshot_details)."""
-        details = self.zfs.snapshot_details(zvol_path)
+        """
+        Versions of a master with their sizes and clones (see ZFSManager.snapshot_details).
+        Waits for a running apply: for a moment the master is renamed away, and
+        a listing then would say it is not on the server any more.
+        """
+        with self.lock:
+            details = self.zfs.snapshot_details(zvol_path)
         if details is None:
             raise self._fail(f"Listing versions of {zvol_path} failed")
         for d in details:            # a spare is not a PC using the version
