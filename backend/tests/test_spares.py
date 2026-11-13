@@ -144,3 +144,13 @@ def test_spares_never_keep_an_old_version_alive(host, boot):
     assert base["clones"] == []                            # a spare is not a PC using the version
     assert boot.merge_into_base(OS, "v2") == ["base"]      # and does not stop the merge
     assert f"{OS_CLONE}_spare" not in host.datasets
+
+
+def test_spares_of_a_machine_that_is_gone_are_removed(host, prov):
+    """A machine deleted while its spares were made left them behind (seen: fix-26h2)."""
+    wb = prov.zfs.layout.writebacks
+    for ds in (f"{wb}/gone-os_spare", f"{wb}/gone_spare", f"{wb}/pc01_spare", f"{wb}/pc01"):
+        host.add_dataset(ds)
+    dropped = prov.drop_orphan_spares({f"{wb}/pc01", f"{wb}/pc01-os"})
+    assert sorted(dropped) == [f"{wb}/gone-os_spare", f"{wb}/gone_spare"]
+    assert f"{wb}/pc01_spare" in host.datasets and f"{wb}/pc01" in host.datasets

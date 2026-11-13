@@ -82,7 +82,7 @@ def test_os_image_is_created_for_windows_io(client, host):
     assert r.status_code == 201, r.text
     assert r.json()["kind"] == "os"
     create = next(c for c in host.calls if c[:2] == ["zfs", "create"])
-    assert {"volblocksize=16k", "compression=lz4", "sync=standard"} <= set(create)
+    assert {"volblocksize=32k", "compression=lz4", "sync=standard"} <= set(create)
 
 
 def test_game_image_is_the_default_kind(client, host):

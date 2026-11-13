@@ -43,16 +43,19 @@ same ARC blocks. A clone only costs the space of what that PC wrote since its la
 | Dataset | volblocksize | compression | sync | other |
 |---|---|---|---|---|
 | game master (`images/<game>`) | `64k` | `lz4` | `standard` | `readonly=on` after publish |
-| OS master (`images/<os>`) | `16k` | `lz4` | `standard` | `readonly=on` after publish |
+| OS master (`images/<os>`) | `32k` | `lz4` | `standard` | `readonly=on` after publish |
 | PC writeback (`writebacks/*`) | inherited from origin | inherited | **`disabled`** | discarded on every disconnect unless Keep Writeback |
 
 Why these values:
 
 - `64k` for games: game files are large and read sequentially. Format the game image in Windows as **NTFS with a
   64K allocation unit** so one NTFS cluster is one ZFS block (no read-modify-write).
-- `16k` for the OS (the OpenZFS 2.2+ default): Windows does small random I/O. `4k`/`8k` zvols on a mirror waste
-  metadata and compress badly; on RAIDZ they waste a lot of space. On this host's ZFS RAID10 `16k` is the right
-  trade-off.
+- `32k` for the OS. Windows does small random I/O, but a writeback copies a whole block at the first write to
+  it, so the block size trades write amplification against compression and metadata. Measured on vip-05 with the
+  same image at `16k` and `32k` (Boot Mode, three boots each): iPXE → agent 79–80 s for both, OS writeback ~90 s
+  after boot ~670 MB (`16k`) vs ~555 MB (`32k`), image 54.8 vs 52.0 GB (lz4 1.24× vs 1.31×). `4k`/`8k` zvols
+  on a mirror waste metadata and compress badly; on RAIDZ they waste a lot of space. Images made before this
+  keep their block size (it is fixed at creation).
 - `lz4`: costs almost nothing and gives up early on data that is already compressed, so it is safe for game
   files too. `zstd` saves a little more space on OS images for more CPU; not worth it for hot game data.
 - `sync=disabled` on writebacks: they are thrown away on every disconnect anyway. A PC with **Keep Writeback**
@@ -467,12 +470,18 @@ the images' next versions. The difference is where the writebacks are exposed: t
 LUNs on the shared target.
 
 - The machine's initiator IQN is `<iqn_prefix>:vm-<vmid>`; the Provisioner sends such a machine's attach /
-  remove / session calls to `VmDisks` instead of the iSCSI manager: attach = `qm set --sata0 <os writeback>
-  --sata1 <game writeback> --boot order=sata0`, remove = `qm set --delete sata0,sata1`, "logged in" = the VM is
+  remove / session calls to `VmDisks` instead of the iSCSI manager: attach = `qm set --scsihw pvscsi --scsi0 <os
+  writeback> --scsi1 <game writeback> --boot order=scsi0`, remove = `qm set --delete scsi0,scsi1` (and the
+  `sata0,sata1` an older ggNet used), "logged in" = the VM is
   not stopped. Every rule that waits for a PC to be off (discard, apply, rename, delete) works unchanged.
 - The VM: q35, OVMF with the Secure Boot keys enrolled (`efidisk0 …,pre-enrolled-keys=1`), TPM 2.0
   (`tpmstate0 …,version=v2.0`), `cpu host`, no ballooning, an e1000e card. Proxmox gives the MAC; it is the
   machine's MAC.
+- Disk controller: VMware PVSCSI for Local Drives and the toolchain VM. Measured in a VM with `winsat disk` on
+  two images: SATA 73 MB/s read / 73 MB/s write / 1.8 ms; NVMe (raw QEMU args) 96 / 82 MB/s / 1.4 ms and 0x7B
+  on one image; PVSCSI 98–107 / 114–117 MB/s / 0.8–1.0 ms. Windows has the PVSCSI driver inbox; MegaRAID SAS
+  and LSI have none, VirtIO needs virtio-win in every image. Every OS writeback and toolchain clone gets
+  `pvscsi` and `storahci` as boot drivers (Start=0, StartOverride removed), so an image from any PC boots.
 - Nothing about the host is assumed. The node name comes from `/cluster/status`, the VM ID from
   `/cluster/nextid`, the bridge and the storage for the EFI and TPM state from what the host has (Settings →
   Virtual machines; automatic: ggNet's own interface when it is a bridge, else the first bridge; a ZFS storage
@@ -485,7 +494,7 @@ LUNs on the shared target.
   it to `qm vncproxy <vmid>` with `LC_PVE_TICKET=<password>`. No Proxmox sign-in is needed. Shutdown and Restart
   ask Windows (`qm shutdown|reboot --timeout 600`) in the background; Start, Power off and Reset are waited for.
 - Drives connection, chosen at Create VM: **Local Drives** (above) or **Network**. A Network VM boots like a
-  diskless PC: `--boot order=net0`, no SATA drives, its NIC on ggNet's own interface (where PXE is answered),
+  diskless PC: `--boot order=net0`, no local drives, its NIC on ggNet's own interface (where PXE is answered),
   its IQN derived from its MAC like a PC's, so the Provisioner maps its writebacks on the shared target and
   the per-MAC iPXE script logs in with the same IQN. It checks that an image boots over the network.
 

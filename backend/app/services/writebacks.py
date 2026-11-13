@@ -309,6 +309,16 @@ def refresh_spares(db: Session, prov: Provisioner) -> None:
                 prov.drop_spares(m.name, m.clone_zvol, m.os_clone_zvol)
         except Exception:             # one bad machine must not stop the others
             logger.exception("Spare writebacks of %s failed", m.name)
+    # Spares of machines that are gone (deleted while their spares were made).
+    # Read after the loop: a machine made meanwhile is in this list too.
+    known: set[str] = set()
+    for m in db.scalars(select(Machine)).all():
+        known |= {p for p in (m.clone_zvol, m.os_clone_zvol) if p}
+        known |= {prov.client_path(m.name), prov.os_client_path(m.name)}
+    try:
+        prov.drop_orphan_spares(known)
+    except Exception:
+        logger.exception("Removing orphan spares failed")
 
 
 class SpareMaker:

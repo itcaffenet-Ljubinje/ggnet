@@ -128,6 +128,10 @@ class OsSetup:
 
     computer_name: str                        # the machine name, [a-z0-9-], at most 15
     env: Mapping[str, str] = field(default_factory=dict)
+    # A ggNet VM with Local Drives: its disks are on a PVSCSI controller, so
+    # that driver starts at boot (vm_boot_lines). Never on a PC: a PC with
+    # pvscsi at boot stops with INACCESSIBLE_BOOT_DEVICE.
+    vm: bool = False
 
 
 @dataclass(frozen=True)
@@ -249,7 +253,15 @@ def nic_known(export: str, nic: str, instance: str | None = None) -> bool:
 # booted in a VM, installs the devices of this job (agent/src/GgnetAgent/Toolchain.cs).
 TOOLCHAIN_DIR = ("ProgramData", "ggNet", "toolchain")
 TOOLCHAIN_JOB, TOOLCHAIN_RESULT, TOOLCHAIN_DONE = "job.json", "result.json", "job.done"
-# The VM's disk is on its SATA controller: that driver has to start at boot.
+TOOLCHAIN_LOG = "agent.log"        # the agent's own log of the run (agent 0.1.24+)
+# ggNet's Local Drives VMs give Windows its disks on a VMware PVSCSI
+# controller (measured ~1.5x SATA, half the latency; Windows has the driver
+# inbox). Only a VM's own writeback gets it as a boot driver: on a PC it stops
+# Windows with INACCESSIBLE_BOOT_DEVICE, so it never reaches an image (the
+# toolchain VM stays on SATA, and Prepare image puts pvscsi back on demand).
+VM_BOOT_DRIVERS = ("pvscsi", "storahci")
+# The toolchain VM's disk is on its SATA controller; its clone becomes the
+# image's next version, so only storahci (which every PC may have at boot).
 TOOLCHAIN_BOOT_DRIVERS = ("storahci",)
 
 
@@ -284,11 +296,14 @@ def toolchain_job(nics: Sequence[tuple[str, str]]) -> dict:
     return {"devices": devices}
 
 
-def toolchain_boot_lines(control_set: int) -> list[str]:
-    """The VM's disk driver started at boot (it may be off in an image made on an NVMe PC)."""
+def vm_boot_lines(control_set: int, drivers: Sequence[str] = VM_BOOT_DRIVERS) -> list[str]:
+    """
+    The VM's disk drivers started at boot: an image made on another PC may have
+    them on demand, or blocked by StartOverride, and would stop with 0x7B.
+    """
     cs = f"\\ControlSet{control_set:03d}"
     lines: list[str] = []
-    for name in TOOLCHAIN_BOOT_DRIVERS:
+    for name in drivers:
         lines += ["", f"[{cs}\\Services\\{name}]", '"Start"=dword:00000000',
                   "", f"[-{cs}\\Services\\{name}\\StartOverride]"]
     return lines
@@ -719,6 +734,10 @@ def image_patch(control_set: int, dhcp_interfaces: Sequence[str] = (), forget_le
     lines = ["Windows Registry Editor Version 5.00"]
     lines += _cleanup_lines(cs, dhcp_interfaces, forget_letters)
     lines += no_device_encryption_lines(cs)
+    # A version applied from a Local Drives VM had pvscsi at boot: on a PC that
+    # stops Windows with INACCESSIBLE_BOOT_DEVICE. On demand it never loads on
+    # a PC (it has no PVSCSI controller); a VM's writeback turns it on again.
+    lines += ["", f"[{cs}\\Services\\pvscsi]", '"Start"=dword:00000003']
     if agent_service:
         lines += agent_service_patch(control_set)
     if tuning:
@@ -750,6 +769,8 @@ def registry_patch(setup: OsSetup, control_set: int, dhcp_interfaces: Sequence[s
             lines.append(f"{_reg_string(key)}={_reg_string(value)}")
     lines += _cleanup_lines(cs, dhcp_interfaces, forget_letters)
     lines += no_device_encryption_lines(cs)
+    if setup.vm:
+        lines += vm_boot_lines(control_set)
     return "\n".join(lines) + "\n"
 
 
@@ -968,7 +989,7 @@ class WindowsSetup:
                 return problem or "the agent could not be copied into the image"
             control_set = self.control_set(hive)
             patch = "\n".join(["Windows Registry Editor Version 5.00", *agent_service_patch(control_set),
-                               *toolchain_boot_lines(control_set)]) + "\n"
+                               *vm_boot_lines(control_set, TOOLCHAIN_BOOT_DRIVERS)]) + "\n"
             problem = self._merge_reg(hive, f"toolchain-{label}", patch)
             if problem:
                 return problem
@@ -1009,8 +1030,21 @@ class WindowsSetup:
                 except OSError as e:
                     logger.warning("Could not save %s: %s", log, e)
             folder = _toolchain_dir(root)
+            # The agent's log, for how long each step took and why one failed.
+            agent_log = folder / TOOLCHAIN_LOG if folder else None
+            saved_log = None
+            if agent_log is not None and agent_log.is_file():
+                saved_log = self.run_dir / f"toolchain-{label}-agent.log"
+                try:
+                    shutil.copyfile(agent_log, saved_log)
+                    agent_log.unlink()
+                    logger.info("The agent's log of the toolchain run saved in %s", saved_log)
+                except OSError as e:
+                    logger.warning("Could not save %s: %s", agent_log, e)
             path = folder / TOOLCHAIN_RESULT if folder else None
             if path is None or not path.is_file():
+                if saved_log is not None:
+                    return f"the agent stopped before it finished (its log: {saved_log})"
                 return "the VM left no result: Windows did not start the agent"
             try:
                 data = json.loads(path.read_text(encoding="utf-8-sig"))

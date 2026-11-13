@@ -35,29 +35,51 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from app.services.provisioning import Provisioner, ProvisioningError
+from app.services.vms import ProxmoxHost
 from app.windows_setup import ImagePrep
 
 logger = logging.getLogger("ggnet.toolchain")
 
 VM_NAME_PREFIX = "ggnet-hw-"
 VM_TAG = "ggnet-toolchain"
-VM_MEMORY_MB = 4096
-VM_CORES = 4
+# Windows settles for minutes after its first boot on the VM's devices
+# before the agent can install anything; more cores and memory shorten that,
+# but the VM must fit the host (Proxmox refuses more cores than it has) and
+# leave it room for the PCs it serves meanwhile. See vm_size().
+VM_CORES_MIN, VM_CORES_MAX = 2, 8
+VM_MEMORY_MIN_MB, VM_MEMORY_MAX_MB = 4096, 8192     # 4 GB: Windows 11's minimum
 # Windows' first start on the VM's devices plus the install; then it is stuck.
 VM_TIMEOUT = 30 * 60
 POLL_EVERY = 5.0
 _STATUS = re.compile(r"^status:\s*(\w+)", re.MULTILINE)
 
 
+def vm_size(host_cpus: int, host_memory_mb: int) -> tuple[int, int]:
+    """
+    Cores and memory for the toolchain VM on a host of this size: half its
+    CPU threads (2..8) and an eighth of its memory (4..8 GB). 32 threads and
+    192 GB give 8 cores and 8 GB; 8 threads and 32 GB give 4 cores and 4 GB.
+    An unknown size (0) gets the minimum.
+    """
+    cores = min(max(host_cpus // 2, VM_CORES_MIN), VM_CORES_MAX)
+    if host_cpus:
+        cores = min(cores, host_cpus)           # never more than the host has
+    memory = min(max(host_memory_mb // 8, VM_MEMORY_MIN_MB), VM_MEMORY_MAX_MB)
+    return cores, memory
+
+
 class ToolchainVm:
     """A temporary Proxmox VM that boots one zvol until Windows shuts down."""
 
     def __init__(self, runner, timeout: float = VM_TIMEOUT, poll: float = POLL_EVERY,
-                 sleep: Callable[[float], None] = time.sleep):
+                 sleep: Callable[[float], None] = time.sleep,
+                 resources: Callable[[], dict] | None = None):
         self.runner = runner
         self.timeout = timeout
         self.poll = poll
         self.sleep = sleep
+        # The host's CPU threads and memory ({"cpus", "memory_mb"}), read when a VM is made.
+        self.resources = resources or (lambda: ProxmoxHost(runner).resources())
 
     def next_id(self) -> int | None:
         ok, out, _ = self.runner.run(["pvesh", "get", "/cluster/nextid"])
@@ -67,11 +89,18 @@ class ToolchainVm:
             return None
 
     def create_args(self, vmid: int, device: str, label: str) -> list[str]:
+        try:
+            res = self.resources()
+        except Exception:                       # a size it cannot read is no reason to fail
+            res = {}
+        cores, memory = vm_size(int(res.get("cpus") or 0), int(res.get("memory_mb") or 0))
         return [
             "qm", "create", str(vmid), "--name", f"{VM_NAME_PREFIX}{label}"[:63],
             "--description", "ggNet Add new hardware: temporary, removed when the run ends",
             "--tags", VM_TAG, "--ostype", "win11", "--machine", "q35", "--bios", "ovmf",
-            "--cpu", "host", "--cores", str(VM_CORES), "--memory", str(VM_MEMORY_MB),
+            "--cpu", "host", "--cores", str(cores), "--memory", str(memory),
+            # SATA, not PVSCSI: the clone becomes the image every PC boots,
+            # and pvscsi at boot stops a PC with INACCESSIBLE_BOOT_DEVICE.
             "--sata0", f"{device},cache=none", "--boot", "order=sata0", "--vga", "std",
         ]
 

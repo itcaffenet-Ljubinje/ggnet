@@ -228,7 +228,7 @@ def test_static_interfaces_finds_only_fixed_addresses():
     assert static_interfaces("") == []
 
 
-# Every patch ends with this (no_device_encryption_lines).
+# Every per-PC patch ends with this (no_device_encryption_lines).
 NO_ENCRYPTION = '\n[\\ControlSet002\\Control\\BitLocker]\n"PreventDeviceEncryption"=dword:00000001\n'
 
 
@@ -879,6 +879,17 @@ def test_toolchain_result_without_a_result(windows, runner):
     assert "no result" in windows.toolchain_result(DEVICE, label="win11")
 
 
+def test_the_agents_log_of_the_run_is_kept_on_the_server(windows, runner):
+    folder = _toolchain_image(windows) / "ProgramData" / "ggNet" / "toolchain"
+    folder.mkdir(parents=True)
+    (folder / "agent.log").write_text("12:07:34 Information ToolchainWorker: Toolchain job found\n")
+    problem = windows.toolchain_result(DEVICE, label="win11")      # the agent stopped: no result
+    saved = windows.run_dir / "toolchain-win11-agent.log"
+    assert "stopped before it finished" in problem and str(saved) in problem
+    assert "Toolchain job found" in saved.read_text()
+    assert not (folder / "agent.log").exists()                       # not left in the image
+
+
 def test_a_card_whose_install_failed_is_not_ready():
     # Windows left the entry without a driver (ConfigFlags 0x20, reinstall): it cannot start the card.
     failed = ENUM + (
@@ -961,3 +972,16 @@ def test_encryption_since_the_disk_appeared_is_seen(windows, runner):
     runner.responses[("blkid", "-p", "-o", "value", "-s", "TYPE", "/dev/zd16p3")] = (True, "BitLocker\n", "")
     assert windows.bitlocker_partitions(DEVICE) == ["/dev/zd16p3"]
     assert "/dev/zd16p3" not in windows.ntfs_partitions(DEVICE)
+
+
+def test_pvscsi_starts_at_boot_only_in_a_vms_writeback():
+    """A PC with pvscsi at boot stops with INACCESSIBLE_BOOT_DEVICE (seen on komp-06)."""
+    from app.windows_setup import image_patch
+
+    pc = registry_patch(OsSetup("komp-06", {}), 1)
+    vm = registry_patch(OsSetup("work-vm", {}, vm=True), 1)
+    assert "pvscsi" not in pc and "storahci" not in pc
+    assert '[\\ControlSet001\\Services\\pvscsi]\n"Start"=dword:00000000' in vm
+    assert "[-\\ControlSet001\\Services\\pvscsi\\StartOverride]" in vm
+    # Prepare image (also on Apply from a VM) puts it back on demand for every PC.
+    assert '[\\ControlSet001\\Services\\pvscsi]\n"Start"=dword:00000003' in image_patch(1)

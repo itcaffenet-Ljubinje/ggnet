@@ -115,7 +115,7 @@ def setup_tag(setup: OsSetup | None) -> str:
     """A short fingerprint of what personalize() writes, to tell a stale OS spare."""
     if setup is None:
         return "none"
-    data = json.dumps([SETUP_VERSION, setup.computer_name, sorted(setup.env.items())])
+    data = json.dumps([SETUP_VERSION, setup.computer_name, sorted(setup.env.items()), setup.vm])
     return hashlib.sha256(data.encode()).hexdigest()[:16]
 
 
@@ -299,17 +299,38 @@ class Provisioner:
                 if self.zfs.dataset_exists(spare) and not self.zfs.destroy(spare, recursive=True):
                     logger.warning("Could not remove the spare %s", spare)
 
+    def drop_orphan_spares(self, writebacks: set[str]) -> list[str]:
+        """
+        Remove spares whose writeback belongs to no machine (`writebacks`: every
+        machine's clone paths): a machine deleted while its spares were being
+        made left them, and they kept the versions they came from in use.
+        """
+        dropped = []
+        for c in self.zfs.list_clients():
+            spare = c["zvol"]
+            if not spare.endswith(SPARE_SUFFIX) or spare[:-len(SPARE_SUFFIX)] in writebacks:
+                continue
+            owner = spare[:-len(SPARE_SUFFIX)].rsplit("/", 1)[-1].removesuffix("-os")
+            with self._machine_lock(owner):
+                if self.zfs.destroy(spare, recursive=True):
+                    dropped.append(spare)
+                    logger.info("Removed %s: no machine has its writeback", spare)
+                else:
+                    logger.warning("Could not remove the orphan spare %s", spare)
+        return dropped
+
     # ── Game image (master) ────────────────────────────────────────────
 
     def create_disk(self, name: str, size_gb: int, is_os: bool = False) -> str:
         """
         Empty zvol for a master (draft). Returns the ZFS path. An OS image
-        gets 16k blocks for Windows' small random I/O, a game image 64k for
+        gets 32k blocks (measured on a diskless PC: the same boot time as 16k,
+        ~17% smaller writebacks and ~5% less space), a game image 64k for
         large game files read in one go; both lz4 and sync=standard (a
         master must survive a host crash). See docs/architecture.md, "Properties".
         """
         path = self.image_path(name)
-        props = dict(volblocksize="16k" if is_os else "64k", compression="lz4", sync="standard")
+        props = dict(volblocksize="32k" if is_os else "64k", compression="lz4", sync="standard")
         with self.lock:
             self._clear()
             if self.zfs.dataset_exists(path):
@@ -510,8 +531,13 @@ class Provisioner:
         return snap_name
 
     def snapshots(self, zvol_path: str) -> list[dict]:
-        """Versions of a master with their sizes and clones (see ZFSManager.snapshot_details)."""
-        details = self.zfs.snapshot_details(zvol_path)
+        """
+        Versions of a master with their sizes and clones (see ZFSManager.snapshot_details).
+        Waits for a running apply: for a moment the master is renamed away, and
+        a listing then would say it is not on the server any more.
+        """
+        with self.lock:
+            details = self.zfs.snapshot_details(zvol_path)
         if details is None:
             raise self._fail(f"Listing versions of {zvol_path} failed")
         for d in details:            # a spare is not a PC using the version

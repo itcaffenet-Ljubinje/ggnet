@@ -106,7 +106,7 @@ def test_new_game_images_get_64k_blocks_and_lz4(host, prov):
     creates = {c[-1]: c for c in host.calls if c[:2] == ["zfs", "create"]}
     game, os_ = creates["tank/ggnet/images/cs2"], creates["tank/ggnet/images/win11"]
     assert "volblocksize=64k" in game and "compression=lz4" in game and "sync=standard" in game
-    assert "volblocksize=16k" in os_ and "compression=lz4" in os_
+    assert "volblocksize=32k" in os_ and "compression=lz4" in os_
 
 
 def test_reset_of_an_old_per_client_machine_still_cleans_up(host, prov, published):
