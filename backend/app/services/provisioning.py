@@ -299,6 +299,26 @@ class Provisioner:
                 if self.zfs.dataset_exists(spare) and not self.zfs.destroy(spare, recursive=True):
                     logger.warning("Could not remove the spare %s", spare)
 
+    def drop_orphan_spares(self, writebacks: set[str]) -> list[str]:
+        """
+        Remove spares whose writeback belongs to no machine (`writebacks`: every
+        machine's clone paths): a machine deleted while its spares were being
+        made left them, and they kept the versions they came from in use.
+        """
+        dropped = []
+        for c in self.zfs.list_clients():
+            spare = c["zvol"]
+            if not spare.endswith(SPARE_SUFFIX) or spare[:-len(SPARE_SUFFIX)] in writebacks:
+                continue
+            owner = spare[:-len(SPARE_SUFFIX)].rsplit("/", 1)[-1].removesuffix("-os")
+            with self._machine_lock(owner):
+                if self.zfs.destroy(spare, recursive=True):
+                    dropped.append(spare)
+                    logger.info("Removed %s: no machine has its writeback", spare)
+                else:
+                    logger.warning("Could not remove the orphan spare %s", spare)
+        return dropped
+
     # ── Game image (master) ────────────────────────────────────────────
 
     def create_disk(self, name: str, size_gb: int, is_os: bool = False) -> str:
