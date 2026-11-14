@@ -402,7 +402,11 @@ export function MachineSettings({ machine: m, disks, onClose, reload }: Props) {
         <div className="modal-footer">
           <div className="footer-left" />
           <div className="footer-right">
-            {saved && <span className="save-success-tag">Saved</span>}
+            {saved && (
+              <span className="save-success-tag">
+                {m.image_change_pending ? `Saved: ${m.name} is on and gets the new image at its next restart` : "Saved"}
+              </span>
+            )}
             <button type="button" className="secondary" onClick={onClose} disabled={busy !== null}>
               Close
             </button>

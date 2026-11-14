@@ -145,6 +145,11 @@ def observe(db: Session, prov: Provisioner, m: Machine, settings: WritebackSetti
         discard(db, prov, m, "client disconnected")
 
 
+def is_booting(m: Machine, settings: WritebackSettings, now: datetime | None = None) -> bool:
+    """A Boot Mode PC between its iPXE request and Windows' own iSCSI login."""
+    return _booting(m, settings, now or _now())
+
+
 def _booting(m: Machine, settings: WritebackSettings, now: datetime) -> bool:
     """A Boot Mode PC between its iPXE request and Windows' own iSCSI login."""
     return (m.mode is MachineMode.BOOT and m.ipxe_at is not None

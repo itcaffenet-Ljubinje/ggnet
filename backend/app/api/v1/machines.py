@@ -29,7 +29,13 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_provisioner, get_traffic_monitor, get_wol_sender, require_user
+from app.api.deps import (
+    get_provisioner,
+    get_traffic_monitor,
+    get_wol_sender,
+    get_writeback_settings,
+    require_user,
+)
 from app.api.v1.errors import conflict, host_failed, not_found
 from app.api.v1.schemas import (
     BOOT_MODE_LETTER,
@@ -61,7 +67,7 @@ from app.services.provisioning import (
 )
 from app.services.traffic import TrafficMonitor
 from app.services.vms import vmid_of
-from app.services.writebacks import discard
+from app.services.writebacks import discard, is_booting
 
 logger = logging.getLogger("ggnet.api.machines")
 
@@ -150,6 +156,20 @@ def _shut_down_first(prov: Provisioner, m: Machine) -> None:
             host_failed(f"Cannot read the iSCSI session state of '{m.name}'")
         if session:
             conflict(f"'{m.name}' is still connected; shut it down first")
+
+
+def _in_use(prov: Provisioner, m: Machine, booting: bool = True) -> bool:
+    """
+    Whether the PC may be running on its disks right now: an iSCSI session,
+    a reporting agent, or (`booting`) a Boot Mode PC between iPXE and
+    Windows' own login, when it has no session for a moment. Its disks must
+    not be replaced then.
+    """
+    if not _has_host_state(m):
+        return False
+    if agent_online(m) or (booting and is_booting(m, get_writeback_settings())):
+        return True
+    return bool(m.iscsi_target_iqn) and prov.session_active(m.initiator_iqn, m.iscsi_target_iqn) is True
 
 
 def _set_provisioned(m: Machine, cd: ClientDisk) -> None:
@@ -445,7 +465,11 @@ def assign_disk(
     Assign (or with `null` remove) a game image, and in Boot Mode the OS
     image with it (`os_image_id`; not sent keeps the current one). Changing a
     disk destroys the old clones, so everything the client wrote is lost.
-    The client must be powered off or disconnected.
+
+    A PC that is on keeps running on its disks: the new images are only
+    recorded, and its writebacks are made from them at its next restart (the
+    automatic discard, as for a new version). Removing the disks, and
+    changing them on a PC that keeps its writeback, need the PC off.
     """
     machine = _get(db, machine_id)
     _not_editing(machine)
@@ -462,6 +486,23 @@ def assign_disk(
             and machine.game_image_id == disk.id
             and machine.os_image_id == (os_image.id if os_image else None)):
         return machine   # already so; nothing is touched on the host
+
+    if _in_use(prov, machine):
+        if disk is None:
+            conflict(f"'{machine.name}' is on; shut it down first to remove its disks")
+        if machine.status is not MachineStatus.PROVISIONED:
+            conflict(f"'{machine.name}' is on; shut it down first")
+        if machine.keep_writeback:
+            conflict(f"'{machine.name}' is on and keeps its writeback, which a new image discards; "
+                     "shut it down first")
+        if machine.game_image_id != disk.id:
+            machine.pinned_snapshot = None   # a pin names a version of the old disk
+        machine.game_image_id = disk.id
+        machine.os_image_id = os_image.id if os_image else None
+        db.commit()
+        logger.info("%s is on: it gets %s at its next restart", machine.name,
+                    " + ".join(i.name for i in (os_image, disk) if i is not None))
+        return machine
 
     if _has_host_state(machine):
         _deprovision(db, prov, machine)
@@ -482,7 +523,7 @@ def reset_machine(
 ):
     """
     Return the machine's disk to a clean state of the disk's CURRENT
-    snapshot. The client must be powered off or disconnected.
+    snapshot. Refused while the PC is on.
 
     Not in the UI: the server discards writebacks on its own after every
     disconnect. Kept for recovery (e.g. after an `error`).
@@ -490,6 +531,9 @@ def reset_machine(
     machine = _get(db, machine_id)
     if machine.game_image_id is None:
         conflict(f"Machine '{machine.name}' has no disk assigned")
+    # A recovery tool: the boot window alone (a PC that failed to start) does not stop it.
+    if _in_use(prov, machine, booting=False):
+        conflict(f"'{machine.name}' is on; shut it down first")
     disk = _published_disk(db, machine.game_image_id)
 
     clone = machine.clone_zvol or prov.client_path(machine.name)

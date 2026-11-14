@@ -561,6 +561,8 @@ class MachineOut(BaseModel):
     os_clone_snapshot: str | None
     iscsi_target_iqn: str | None
     outdated: bool
+    # The image was changed while the PC was on: it gets it at its next restart.
+    image_change_pending: bool = False
     last_seen_at: datetime | None
     agent_version: str | None
     reported_iqn: str | None
