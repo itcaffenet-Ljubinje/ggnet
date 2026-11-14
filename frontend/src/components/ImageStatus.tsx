@@ -22,6 +22,17 @@ export function ImageStatus({ machine: m, disk }: Props) {
   if (m.status !== "provisioned" || !current || !disk?.snapshot) return null;
   const active = disk.snapshot;
 
+  if (m.image_change_pending) {
+    return (
+      <span
+        className="badge badge-warn"
+        title="Its image was changed while it was on. It keeps running on the old one and starts from the new image at its next restart."
+      >
+        New image at reboot
+      </span>
+    );
+  }
+
   if (m.keep_writeback) {
     const where = current === active ? "" : ` · @${current}`;
     return (

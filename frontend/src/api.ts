@@ -714,6 +714,8 @@ export interface Machine {
   clone_snapshot: string | null;
   iscsi_target_iqn: string | null;
   outdated: boolean;
+  /** Its image was changed while it was on: it gets it at its next restart. */
+  image_change_pending?: boolean;
   last_seen_at: string | null;
   agent_version: string | null;
   reported_iqn: string | null;

@@ -938,6 +938,12 @@ def delete_disk(
     )
     if assigned:
         conflict(f"Image '{disk.name}' is assigned to {assigned} machine(s); move them first")
+    # A PC moved to another image while it was on runs on this one until it restarts.
+    prefix = f"{disk.zvol_path}@"
+    running = [m.name for m in db.scalars(select(Machine)).all()
+               if (m.clone_snapshot or "").startswith(prefix) or (m.os_clone_snapshot or "").startswith(prefix)]
+    if running:
+        conflict(f"Image '{disk.name}' is still used by {', '.join(sorted(running))} until its next restart")
     try:
         prov.delete_disk(disk.zvol_path, disk.published)
     except ProvisioningError as e:

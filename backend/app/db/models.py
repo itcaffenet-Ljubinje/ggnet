@@ -344,6 +344,21 @@ class Machine(Base):
         )
         return game or os_
 
+    @property
+    def image_change_pending(self) -> bool:
+        """
+        The writebacks still come from another image than the assigned one:
+        the image was changed while the PC was on, and its disks are never
+        taken from under a running Windows. They are replaced at the PC's
+        next restart, like a move to a newer version.
+        """
+        def other(clone_snapshot: str | None, image: "Image | None") -> bool:
+            return (clone_snapshot is not None and image is not None
+                    and not clone_snapshot.startswith(f"{image.zvol_path}@"))
+
+        return other(self.clone_snapshot, self.game_image) or (
+            self.mode is MachineMode.BOOT and other(self.os_clone_snapshot, self.os_image))
+
 
 class AppSetting(Base):
     """

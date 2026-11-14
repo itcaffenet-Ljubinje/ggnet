@@ -830,3 +830,60 @@ def test_network_boot_off_sends_every_pc_to_its_own_disk(client, host, disks):
     client.put("/api/v1/settings/boot", json={"gateway": "none", "network_boot": True})
     assert "sanboot" in _ipxe(client)
     assert _get(client, m)["status"] == "provisioned"
+
+
+# ── Changing the image of a PC that is on ─────────────────────────────
+
+def test_a_running_pc_keeps_its_disks_when_its_image_changes(client, host, disks, auto):
+    """Seen on vip-05: a new OS image replaced the writeback under a running Windows."""
+    m = _boot_machine(client, disks)
+    other = _disk(client, "win11-b", "os")
+    host.sessions.add(IQN)
+    host.calls.clear()
+
+    r = client.post(f"/api/v1/machines/{m['id']}/assign",
+                    json={"game_image_id": disks[1]["id"], "os_image_id": other["id"]})
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["os_image_id"] == other["id"] and out["image_change_pending"] is True
+    assert out["os_clone_snapshot"] == "tank/ggnet/images/win11@base"     # still what it runs on
+    assert _clones_made(host) == [] and not any(c[:2] == ["zfs", "destroy"] for c in host.calls)
+    assert host.visible(IQN) == [f"/dev/zvol/{OS_CLONE}", f"/dev/zvol/{GAME_CLONE}"]
+
+    # The old image is still under the running PC.
+    assert client.delete(f"/api/v1/images/{disks[0]['id']}").status_code == 409
+
+    # Its next boot starts from the new image.
+    host.sessions.discard(IQN)
+    assert "sanboot" in _ipxe(client)
+    out = _get(client, m)
+    assert out["os_clone_snapshot"] == "tank/ggnet/images/win11-b@base"
+    assert out["image_change_pending"] is False
+    assert host.datasets[OS_CLONE]["origin"] == "tank/ggnet/images/win11-b@base"
+
+
+def test_a_running_pc_cannot_lose_its_disks_or_a_kept_writeback(client, host, disks, auto):
+    m = _boot_machine(client, disks)
+    other = _disk(client, "win11-b", "os")
+    host.sessions.add(IQN)
+
+    r = client.post(f"/api/v1/machines/{m['id']}/assign", json={"game_image_id": None})
+    assert r.status_code == 409 and "shut it down first" in r.json()["detail"]["error"]
+    assert client.post(f"/api/v1/machines/{m['id']}/reset").status_code == 409
+
+    assert client.put(f"/api/v1/machines/{m['id']}/keep-writeback", json={"enabled": True}).status_code == 200
+    r = client.post(f"/api/v1/machines/{m['id']}/assign",
+                    json={"game_image_id": disks[1]["id"], "os_image_id": other["id"]})
+    assert r.status_code == 409 and "keeps its writeback" in r.json()["detail"]["error"]
+    assert _get(client, m)["os_image_id"] == disks[0]["id"]
+    assert host.exists(OS_CLONE) and host.exists(GAME_CLONE)
+
+
+def test_a_pc_that_is_off_gets_its_new_image_at_once(client, host, disks):
+    m = _boot_machine(client, disks)
+    other = _disk(client, "win11-b", "os")
+    r = client.post(f"/api/v1/machines/{m['id']}/assign",
+                    json={"game_image_id": disks[1]["id"], "os_image_id": other["id"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["os_clone_snapshot"] == "tank/ggnet/images/win11-b@base"
+    assert r.json()["image_change_pending"] is False
